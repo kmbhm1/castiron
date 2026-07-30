@@ -1,0 +1,152 @@
+from __future__ import annotations
+from enum import Enum
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import Json
+from pydantic import StringConstraints
+from pydantic import UUID4
+from typing import Annotated
+from typing import Any
+import datetime
+
+
+# ENUM TYPES
+# These are generated from Postgres user-defined enum types.
+
+
+class PublicUserStatusEnum(str, Enum):
+    ACTIVE = "active"
+    PENDING = "pending"
+    IMPORT_ = "import"  # original name was import (reserved keyword)
+
+
+# CUSTOM CLASSES
+# Custom model classes defining common features shared by the generated schemas.
+
+
+class CustomModel(BaseModel):
+    """Base model class with common features."""
+
+
+class CustomModelInsert(CustomModel):
+    """Base model for insert operations with common features."""
+
+
+class CustomModelUpdate(CustomModel):
+    """Base model for update operations with common features."""
+
+
+# BASE CLASSES
+# These are the base Row models that include all fields.
+
+
+class UserBaseSchema(CustomModel):
+    """User Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    bio: Annotated[str, StringConstraints(**{'max_length': 500})] | None = Field(default=None)
+    company_id: UUID4
+    created_at: datetime.datetime
+    email: str | None = Field(default=None, description="User email")
+    flags: list[PublicUserStatusEnum] | None = Field(default=None)
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    roles: list[str] | None = Field(default=None)
+    sku: Annotated[str, StringConstraints(**{'min_length': 10, 'max_length': 10})]
+    status: PublicUserStatusEnum
+
+
+class CompanyBaseSchema(CustomModel):
+    """Company Base Schema."""
+
+    # Primary Keys
+    id: UUID4
+
+    # Columns
+    name: str
+
+
+# INSERT CLASSES
+# Models for insert operations; auto-generated fields are optional.
+
+
+class UserInsert(CustomModelInsert):
+    """User Insert Schema."""
+
+    # Required fields
+    company_id: UUID4
+    created_at: datetime.datetime
+    sku: Annotated[str, StringConstraints(**{'min_length': 10, 'max_length': 10})]
+    status: PublicUserStatusEnum
+
+    # Optional fields
+    bio: Annotated[str, StringConstraints(**{'max_length': 500})] | None = Field(default=None)
+    email: str | None = Field(default=None, description="User email")
+    flags: list[PublicUserStatusEnum] | None = Field(default=None)
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    roles: list[str] | None = Field(default=None)
+
+
+class CompanyInsert(CustomModelInsert):
+    """Company Insert Schema."""
+
+    # Primary Keys
+    id: UUID4
+
+    # Required fields
+    name: str
+
+
+# UPDATE CLASSES
+# Models for update operations; all fields are optional.
+
+
+class UserUpdate(CustomModelUpdate):
+    """User Update Schema."""
+
+    # Columns
+    bio: Annotated[str, StringConstraints(**{'max_length': 500})] | None = Field(default=None)
+    company_id: UUID4 | None = Field(default=None)
+    created_at: datetime.datetime | None = Field(default=None)
+    email: str | None = Field(default=None, description="User email")
+    flags: list[PublicUserStatusEnum] | None = Field(default=None)
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    roles: list[str] | None = Field(default=None)
+    sku: Annotated[str, StringConstraints(**{'min_length': 10, 'max_length': 10})] | None = Field(default=None)
+    status: PublicUserStatusEnum | None = Field(default=None)
+
+
+class CompanyUpdate(CustomModelUpdate):
+    """Company Update Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Columns
+    name: str | None = Field(default=None)
+
+
+# OPERATIONAL CLASSES
+# Extend these models to add custom behavior; they carry relationship fields.
+
+
+class User(UserBaseSchema):
+    """User Schema for Pydantic.
+
+    Inherits from UserBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    company: Company | None = Field(default=None)
+
+
+class Company(CompanyBaseSchema):
+    """Company Schema for Pydantic.
+
+    Inherits from CompanyBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    users: list[User] | None = Field(default=None)

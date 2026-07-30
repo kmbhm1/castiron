@@ -36,6 +36,8 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.1.7",
+    "inflection>=0.5.1",
+    "pydantic>=2.13.4",
 ]
 
 [project.urls]

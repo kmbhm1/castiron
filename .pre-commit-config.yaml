@@ -1,0 +1,51 @@
+default_language_version:
+  python: python3
+fail_fast: true
+exclude: '^(docs/.*|\.venv/.*|uv\.lock|Makefile)$'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        stages: [pre-commit]
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+        exclude: mkdocs.yml
+      - id: check-toml
+        stages: [pre-commit]
+      - id: check-added-large-files
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit]
+      - id: check-case-conflict
+        stages: [pre-commit]
+      - id: debug-statements
+        stages: [pre-commit]
+      - id: detect-private-key
+        stages: [pre-commit]
+      - id: no-commit-to-branch
+        stages: [pre-commit]
+        args: [--branch, staging, --branch, main, --branch, master]
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.29.1
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        stages: [pre-push]
+        types_or: [python, pyi]
+      - id: ruff-format
+        stages: [pre-push]
+        types_or: [python, pyi]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        stages: [pre-push]
+        files: ^src/
+        args: [--strict, --ignore-missing-imports]

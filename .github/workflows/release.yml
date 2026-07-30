@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Release — python-semantic-release → GitHub Release → PyPI (trusted publish).
+#
+# GATED ON PURPOSE. While castiron is pre-alpha this runs only via manual
+# `workflow_dispatch`, so a work-in-progress never publishes itself. When you
+# are ready to start cutting automatic releases on merge to main:
+#
+#   1. Add the trigger:            on: push: branches: [main]
+#   2. Create a GitHub App with contents:write and set repo variables/secrets
+#      VERSION_BUMPER_APPID / VERSION_BUMPER_SECRET (used to push the version
+#      bump past branch protection).
+#   3. Configure PyPI Trusted Publishing for the `castiron` project pointing at
+#      this workflow (no API token needed — uses OIDC id-token below).
+#
+# Until then, run it by hand from the Actions tab to cut the first release.
+# ---------------------------------------------------------------------------
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (OIDC)
+      contents: write   # push the version-bump commit + tag
+    steps:
+      - name: Create GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.VERSION_BUMPER_APPID }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Python Semantic Release (version + changelog + tag)
+        id: release
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+
+      - name: Publish to PyPI
+        if: steps.release.outputs.released == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          print-hash: true
+
+      - name: Upload artifacts to the GitHub Release
+        if: steps.release.outputs.released == 'true'
+        uses: python-semantic-release/upload-to-gh-release@v9
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          tag: ${{ steps.release.outputs.tag }}

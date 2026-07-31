@@ -19,7 +19,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from castiron.cli import cli
-from castiron.cli.gen import format_size
+from castiron.cli.gen import format_size, source_origin
 from castiron.ir import Schema
 from castiron.sources import SourceFetchError, SourceParseError, build_schema_from_document
 
@@ -459,6 +459,143 @@ class TestSecrets:
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
         result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--debug')
         assert 'Fetching the OpenAPI document from https://x.supabase.co/rest/v1/?apikey=***' in result.stderr
+
+    def test_a_typo_that_drops_the_scheme_is_redacted_out_of_the_usage_error(
+        self, runner: CliRunner, project: Path
+    ) -> None:
+        # `x.supabase.co/...` has no scheme, so it is neither a URL nor a file and click echoes
+        # the value back verbatim. Omitting `https://` while pasting a project URL is a very
+        # plausible typo, and that pasted URL carries the key -- so this path really does
+        # print a secret. It was the one printed surface with no test on it.
+        result = run(runner, '--from', f'x.supabase.co/rest/v1/?apikey={SECRET}')
+        assert result.exit_code == 2
+        assert 'neither a URL nor an existing file' in result.output
+        assert SECRET not in result.output
+        assert 'apikey=***' in result.output
+
+    def test_the_internal_error_message_is_redacted(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An unexpected exception is a castiron bug, and its str() is echoed to the user with
+        # an invitation to paste it into an issue -- so it is a printed surface like any other.
+        def boom(url: str, **kwargs: Any) -> Schema:
+            raise RuntimeError(f'{url}?apikey={SECRET} broke while presenting {kwargs["key"]}')
+
+        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
+        assert result.exit_code == 70
+        assert 'internal error (RuntimeError' in result.output
+        assert SECRET not in result.output
+
+    def test_an_exception_logged_by_a_source_is_redacted_at_default_verbosity(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The forward risk CI-061 exists for: no source writes `logger.exception` today, but
+        # the moment one does, its traceback prints at ERROR -- above the default WARNING
+        # threshold, with no --debug asked for.
+        def fail(url: str, **kwargs: Any) -> Schema:
+            try:
+                raise RuntimeError(f'GET {url}?apikey={SECRET} failed')
+            except RuntimeError:
+                logging.getLogger('castiron.sources.openapi.fetch').exception('the source call failed')
+            raise SourceFetchError('Could not reach the source')
+
+        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
+        assert result.exit_code == 1
+        assert 'Traceback (most recent call last)' in result.stderr
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
+
+    def test_a_key_with_a_trailing_carriage_return_is_trimmed_before_it_is_sent(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+    ) -> None:
+        # A key file with Windows line endings -- `--key "$(cat key.txt)"` strips the \n and
+        # leaves the \r. Sent as-is it makes `http.client.putheader` raise *before* the socket
+        # opens, and that ValueError names the header value with %r, escaping the \r out of
+        # existence so `redact` matched nothing and the whole JWT printed at exit 1.
+        captured: list[Request] = []
+
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            captured.append(request)
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\r\n', '--output', 'out')
+        assert result.exit_code == 0, result.output
+        assert captured[0].get_header('Apikey') == SECRET
+        assert captured[0].get_header('Authorization') == f'Bearer {SECRET}'
+        assert SECRET not in result.output
+
+    def test_a_key_from_the_environment_is_trimmed_too(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+    ) -> None:
+        # The sanitation hangs off the option, not the command body, so it covers the
+        # CASTIRON_KEY / SUPABASE_KEY fallbacks as well.
+        captured: list[Request] = []
+
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            captured.append(request)
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        monkeypatch.setenv('CASTIRON_KEY', f'{SECRET}\r')
+        assert run(runner, '--from', 'https://x.supabase.co', '--output', 'out').exit_code == 0
+        assert captured[0].get_header('Apikey') == SECRET
+
+    def test_a_key_with_an_interior_control_character_is_refused_without_echoing_it(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Trimming cannot repair this one, so castiron refuses rather than sending a value it
+        # knows an HTTP client will reject with the key in the error text.
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('a refused key must never reach the fetcher')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', explode)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\rmore')
+        assert result.exit_code == 2
+        assert 'control character' in result.output
+        assert 'CRLF' in result.output
+        assert SECRET not in result.output
+
+    def test_the_origin_description_is_redacted_even_on_its_defensive_fallback(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `source_origin` must never raise from the error path, so a normalization failure
+        # falls back to echoing the raw --from value -- the one the user pasted, key and all.
+        # No CLI run reaches it (normalize only rejects a blank URL, caught earlier), so a
+        # direct call is the only way to hold the "every printed string is redacted" line here.
+        def explode(url: str) -> str:
+            raise SourceFetchError('nope')
+
+        monkeypatch.setattr('castiron.cli.gen.normalize_postgrest_url', explode)
+        origin = source_origin(f'https://x.supabase.co/rest/v1/?apikey={SECRET}', SECRET)
+        assert SECRET not in origin
+        assert 'apikey=***' in origin
+
+    def test_a_local_path_that_carries_a_key_is_redacted_in_the_summary(self, runner: CliRunner, project: Path) -> None:
+        # A filesystem path is an unlikely place for a key -- but "every printed string is
+        # redacted" (CI6-D7) is a claim with no exceptions, and `?apikey=` survives a URL
+        # pasted into a `curl -o` filename. The local branch printed it verbatim.
+        weird = project / f'openapi.json?apikey={SECRET}'
+        weird.write_bytes((project / 'openapi.json').read_bytes())
+        result = run(runner, '--from', weird.name, '--output', 'out')
+        assert result.exit_code == 0, result.output
+        assert SECRET not in result.output
+        assert 'apikey=***' in result.stdout
+
+    def test_the_origin_of_a_local_path_is_redacted_for_the_hint_too(self) -> None:
+        # The same value reaches `schema_hint`'s "castiron read <origin>" line through
+        # `source_origin`'s non-URL branch, which is a separate return statement.
+        assert SECRET not in source_origin(f'dump.json?apikey={SECRET}', SECRET)
 
     def test_the_key_never_reaches_the_generated_file(
         self,

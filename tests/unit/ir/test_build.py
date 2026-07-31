@@ -8,6 +8,7 @@ from castiron.ir import (
     ColumnInfo,
     ConstraintInfo,
     ConstraintType,
+    EnumInfo,
     ForeignKeyInfo,
     RelationType,
     Schema,
@@ -22,6 +23,7 @@ from castiron.ir.build import (
     add_relationships_to_table_details,
     analyze_bridge_tables,
     analyze_table_relationships,
+    construct_parameters,
     determine_relationship_type,
     get_enum_types,
     get_unique_columns_from_constraints,
@@ -373,6 +375,50 @@ def test_build_schema_enum_fallback_records_the_matched_schema_not_the_mapping()
     assert a.enum_info is not None
     assert a.enum_info.schema == 'audit'
     assert [(e.schema, e.name) for e in schema.enums] == [('audit', 'status')]
+
+
+@pytest.mark.unit
+def test_a_leading_dot_parameter_token_is_not_read_as_a_bare_one() -> None:
+    # `.status` splits to an EMPTY namespace, not an absent one. Reading empty as "bare" made
+    # one document answer the same token three ways: a parameter bound to `public.status`
+    # while the identical token on a column resolved to nothing. An empty qualifier is a
+    # qualifier -- it names no schema castiron knows, so nothing matches.
+    enums = [EnumInfo(name='status', values=['open', 'closed'], schema='public')]
+    parameters = construct_parameters([('p', '.status', None, False, None)], enums, 'public')
+    assert parameters[0].enum_info is None
+
+
+@pytest.mark.unit
+def test_a_leading_dot_array_element_token_is_not_read_as_a_bare_one() -> None:
+    # The array-column site's half of the same agreement (it already answered None).
+    columns = [
+        ('public', 't', 'tags', None, 'YES', '.status[]', None, 'BASE TABLE', None, None, '.status', None),
+    ]
+    enum_types = [('status', 'public', 'owner', 'E', True, 'e', ['open', 'closed'])]
+
+    schema = build_schema(columns, [], [], enum_types, [])
+    assert _col(_table(schema, 't'), 'tags').enum_info is None
+
+
+@pytest.mark.unit
+def test_an_empty_mapping_namespace_is_not_read_as_the_default_schema() -> None:
+    # The column-mapping site's half. It alone accepts any schema by design (its namespace
+    # comes from a source row, not a user-written token), so an empty namespace still
+    # resolves -- but through the documented any-schema fallback, in registry order, NOT by
+    # being silently re-read as `public`. Registry order puts 'audit' first here.
+    columns = [
+        ('public', 't', 'a', None, 'YES', 'status', None, 'BASE TABLE', None, None, None, None),
+    ]
+    enum_types = [
+        ('status', 'audit', 'owner', 'E', True, 'e', ['created', 'deleted']),
+        ('status', 'public', 'owner', 'E', True, 'e', ['open', 'closed']),
+    ]
+    enum_mapping = [('a', 't', '', 'status', 'E', '')]
+
+    schema = build_schema(columns, [], [], enum_types, enum_mapping)
+    a = _col(_table(schema, 't'), 'a')
+    assert a.enum_info is not None
+    assert a.enum_info.schema == 'audit'
 
 
 @pytest.mark.unit
@@ -736,6 +782,67 @@ def test_determine_relationship_type_many_to_many() -> None:
     assert determine_relationship_type(TableInfo(name='a'), TableInfo(name='b'), _fk()) == (
         RelationType.MANY_TO_MANY,
         RelationType.MANY_TO_MANY,
+    )
+
+
+def _composite_unique_target() -> TableInfo:
+    """A table whose only uniqueness is a two-column UNIQUE, as a view's ``<pk/>`` becomes."""
+    return TableInfo(
+        name='b',
+        columns=[
+            ColumnInfo(name='id', raw_type='int', is_unique=True),
+            ColumnInfo(name='other', raw_type='int', is_unique=True),
+        ],
+        constraints=[
+            ConstraintInfo(
+                constraint_name='u',
+                type=ConstraintType.UNIQUE,
+                columns=['id', 'other'],
+                constraint_definition='UNIQUE (id, other)',
+            )
+        ],
+    )
+
+
+@pytest.mark.unit
+def test_determine_relationship_type_composite_unique_is_not_unique_alone() -> None:
+    # A composite `<pk/>` on a VIEW is recorded as UNIQUE (id, other) and
+    # update_columns_with_constraints sets is_unique on EVERY member -- but neither column
+    # identifies a row. The PRIMARY KEY branch has always length-checked; UNIQUE did not, so
+    # an FK naming only `b.id` claimed MANY_TO_ONE and emitted a singular attribute where a
+    # list belongs.
+    assert determine_relationship_type(TableInfo(name='a'), _composite_unique_target(), _fk()) == (
+        RelationType.MANY_TO_MANY,
+        RelationType.MANY_TO_MANY,
+    )
+
+
+@pytest.mark.unit
+def test_determine_relationship_type_composite_unique_on_the_source_side_too() -> None:
+    source = _composite_unique_target()
+    source.name = 'a'
+    fk = ForeignKeyInfo(constraint_name='fk', column_name='id', foreign_table_name='b', foreign_column_name='id')
+    assert determine_relationship_type(source, TableInfo(name='b'), fk) == (
+        RelationType.MANY_TO_MANY,
+        RelationType.MANY_TO_MANY,
+    )
+
+
+@pytest.mark.unit
+def test_determine_relationship_type_single_column_unique_still_counts() -> None:
+    # The other side of the length check: a real one-column UNIQUE must keep its MANY_TO_ONE.
+    target = TableInfo(
+        name='b',
+        columns=[ColumnInfo(name='id', raw_type='int', is_unique=True)],
+        constraints=[
+            ConstraintInfo(
+                constraint_name='u', type=ConstraintType.UNIQUE, columns=['id'], constraint_definition='UNIQUE (id)'
+            )
+        ],
+    )
+    assert determine_relationship_type(TableInfo(name='a'), target, _fk()) == (
+        RelationType.MANY_TO_ONE,
+        RelationType.ONE_TO_MANY,
     )
 
 

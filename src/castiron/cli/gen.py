@@ -20,7 +20,7 @@ from typing import Any
 import click
 
 from castiron.cli.config import config_option_callback, looks_like_url
-from castiron.cli.errors import cli_error_handling, redact, source_error_hint
+from castiron.cli.errors import cli_error_handling, key_option_callback, redact, source_error_hint
 from castiron.cli.notices import report as report_notices
 from castiron.cli.output import WriteResult, write_emitted_files
 from castiron.emitters import EMITTERS, EmittedFile, EmitterConfig, get_emitter_spec
@@ -78,6 +78,7 @@ Examples:
     '--key',
     envvar=['CASTIRON_KEY', 'SUPABASE_KEY'],
     show_envvar=True,
+    callback=key_option_callback,
     help=(
         'API key for the source. Prefer the environment variable -- a key on the command line lands '
         'in your shell history.'
@@ -328,7 +329,7 @@ def load_schema(
         disable_model_prefix_protection=disable_model_prefix_protection,
         infer_generated_primary_keys=infer_generated_primary_keys,
     )
-    return schema_ir, str(path)
+    return schema_ir, redact(str(path), key)
 
 
 def source_origin(source: str, key: str | None) -> str:
@@ -342,10 +343,14 @@ def source_origin(source: str, key: str | None) -> str:
         key: The API key in play, masked out of the result.
 
     Returns:
-        The normalized PostgREST root for a URL, or the path as given.
+        The normalized PostgREST root for a URL, or the path as given — redacted either way.
     """
     if not looks_like_url(source):
-        return str(Path(source))
+        # Redacted like the URL branch, not because a path is a likely place for a key but
+        # because "every printed string is redacted" (CI6-D7) is only true if it has no
+        # exceptions: `--from './dump.json?apikey=...'` is a path as far as this branch is
+        # concerned, and the summary line prints whatever comes back.
+        return redact(str(Path(source)), key)
     try:
         return redact(normalize_postgrest_url(source), key)
     except SourceError:  # pragma: no cover - normalize only rejects a blank URL, caught earlier

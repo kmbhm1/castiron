@@ -529,7 +529,10 @@ class TestFidelityFloor:
         # A restricted_table row references exactly ONE view row -- singular, not a list.
         # Scoped to RestrictedTable's own class: ``products`` legitimately holds a plural
         # ``active_users_views`` list (the view is the FK *source* there).
-        restricted_class = emit(schema).split('class RestrictedTable(RestrictedTableBaseSchema):')[1]
+        # The second split is load-bearing: without it the slice runs to EOF and every later
+        # class (`class Users`, ...) would count as "RestrictedTable's own".
+        after_header = emit(schema).split('class RestrictedTable(RestrictedTableBaseSchema):')[1]
+        restricted_class = after_header.split('\nclass ')[0]
         assert 'active_users_view: ActiveUsersView | None = Field(default=None)' in restricted_class
         assert 'active_users_views: list[ActiveUsersView]' not in restricted_class
 

@@ -34,13 +34,26 @@ DEFAULT_FORMAT = 'castiron: %(message)s'
 #: Debug format: enough provenance to locate the emitting module.
 DEBUG_FORMAT = '%(levelname)s %(name)s: %(message)s'
 
+#: Renders ``record.exc_info`` exactly as the handler's own formatter would, so redacting it
+#: early changes only the secret and not the layout (``Formatter.formatException`` strips the
+#: trailing newline; ``traceback.format_exception`` does not).
+_EXCEPTION_RENDERER = logging.Formatter()
+
 
 class RedactingFilter(logging.Filter):
-    """Rewrite a record's message through a redactor before the handler formats it.
+    """Rewrite a record through a redactor before the handler formats it.
 
     Attached to castiron's stderr handler (see the module docstring for why a logger-level
     filter would not fire). ``record.args`` is cleared because the message is interpolated
     during redaction; re-interpolating it downstream would raise.
+
+    ⚠ **The message is not the only thing a handler prints.**
+    ``logging.Formatter.format`` concatenates the interpolated message with
+    ``record.exc_text`` (the ``exc_info`` traceback) and ``record.stack_info``, so masking
+    ``msg`` alone leaves a ``logger.exception('…')`` printing ``?apikey=…`` verbatim -- and at
+    **ERROR**, which the default WARNING threshold shows without ``--debug``. castiron writes
+    no ``logger.exception`` today; the first source adapter that does must not reopen the leak
+    CI-006 closed, so all three are redacted here rather than in a later fix round.
     """
 
     def __init__(self, redactor: Callable[[str], str]) -> None:
@@ -48,7 +61,10 @@ class RedactingFilter(logging.Filter):
         self._redactor = redactor
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Redact ``record``'s message in place and keep it.
+        """Redact every string ``record`` can print, in place, and keep it.
+
+        ``exc_info`` is rendered here and then cleared: leaving it set would let a formatter
+        that ignores ``exc_text`` re-derive the unredacted traceback from the live exception.
 
         Args:
             record: The record about to be handled (mutated in place).
@@ -58,6 +74,13 @@ class RedactingFilter(logging.Filter):
         """
         record.msg = self._redactor(record.getMessage())
         record.args = ()
+        if record.exc_info is not None and not record.exc_text:
+            record.exc_text = _EXCEPTION_RENDERER.formatException(record.exc_info)
+        record.exc_info = None
+        if record.exc_text:
+            record.exc_text = self._redactor(record.exc_text)
+        if record.stack_info:
+            record.stack_info = self._redactor(record.stack_info)
         return True
 
 
@@ -76,7 +99,9 @@ def configure_logging(
     Args:
         verbose: The ``-v`` count: 0 = warnings only, 1 = info, 2+ = debug.
         debug: Force debug level (and, at the call site, full tracebacks).
-        redactor: Applied to every log message before it is formatted. The CLI always passes
+        redactor: Applied to every string this handler can print -- the interpolated message,
+            the ``exc_info``/``exc_text`` traceback, and ``stack_info`` (see
+            :class:`RedactingFilter`) -- before the record is formatted. The CLI always passes
             :func:`castiron.cli.errors.redact` bound to the API key in play; the parameter
             keeps this module free of any dependency on the CLI's secret policy.
     """

@@ -7,7 +7,15 @@ from collections.abc import Iterator
 
 import pytest
 
-from castiron.utils.logging import DEBUG_FORMAT, DEFAULT_FORMAT, LOGGER_NAME, configure_logging
+from castiron.utils.logging import DEBUG_FORMAT, DEFAULT_FORMAT, LOGGER_NAME, RedactingFilter, configure_logging
+
+#: A URL shaped like the one `normalize_postgrest_url` keeps the query string of.
+LEAKY_URL = 'https://x.supabase.co/rest/v1/?apikey=SUPERSECRET'
+
+
+def _redact(text: str) -> str:
+    """Stand in for :func:`castiron.cli.errors.redact` without importing the CLI."""
+    return text.replace('SUPERSECRET', '***')
 
 
 @pytest.fixture(autouse=True)
@@ -118,3 +126,87 @@ class TestRedactor:
             configure_logging(debug=True, redactor=lambda text: text.replace('a', 'b'))
         logging.getLogger('castiron.cli.gen').debug('aaa')
         assert stream.getvalue().strip().endswith('bbb')
+
+
+# ⚠ The message is not the only thing a handler prints. `logging.Formatter.format` appends
+# `record.exc_text` (the exc_info traceback) and `record.stack_info` to it, and a
+# `logger.exception(...)` logs at **ERROR** -- above the default WARNING threshold, so no
+# `--debug` is needed to see it. castiron writes no `logger.exception` today; the first
+# source adapter that does must not reopen the leak CI-006 closed.
+@pytest.mark.unit
+class TestRedactingExceptionText:
+    @staticmethod
+    def _capture(monkeypatch: pytest.MonkeyPatch) -> io.StringIO:
+        stream = io.StringIO()
+        monkeypatch.setattr(sys, 'stderr', stream)
+        return stream
+
+    @staticmethod
+    def _log_an_exception(logger_name: str = 'castiron.sources.openapi.fetch') -> None:
+        try:
+            raise RuntimeError(f'GET {LEAKY_URL} failed')
+        except RuntimeError:
+            logging.getLogger(logger_name).exception('the source call failed')
+
+    def test_the_traceback_is_redacted_at_default_verbosity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Default verbosity: no -v, no --debug. logger.exception is ERROR, so it prints anyway.
+        stream = self._capture(monkeypatch)
+        configure_logging(redactor=_redact)
+        self._log_an_exception()
+        printed = stream.getvalue()
+        # Not vacuous: the traceback really was printed, and it really did carry the URL.
+        assert 'Traceback (most recent call last)' in printed
+        assert 'RuntimeError: GET https://x.supabase.co/rest/v1/?apikey=***' in printed
+        assert 'SUPERSECRET' not in printed
+
+    def test_it_is_redacted_at_every_verbosity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for kwargs in ({}, {'verbose': 1}, {'verbose': 2}, {'debug': True}):
+            stream = self._capture(monkeypatch)
+            configure_logging(redactor=_redact, **kwargs)  # type: ignore[arg-type] - the table is heterogeneous
+            self._log_an_exception()
+            assert 'SUPERSECRET' not in stream.getvalue()
+
+    def test_an_already_formatted_exc_text_is_redacted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A record can arrive with exc_text already cached (another handler formatted it
+        # first), in which case exc_info is never re-rendered -- that path must mask too.
+        record = logging.LogRecord('castiron.x', logging.ERROR, __file__, 1, 'boom', None, None)
+        record.exc_text = f'Traceback (most recent call last):\nRuntimeError: {LEAKY_URL}'
+        assert RedactingFilter(_redact).filter(record) is True
+        assert record.exc_text is not None
+        assert 'SUPERSECRET' not in record.exc_text
+
+    def test_exc_info_is_cleared_so_nothing_downstream_can_re_render_it(self) -> None:
+        try:
+            raise RuntimeError(f'GET {LEAKY_URL} failed')
+        except RuntimeError:
+            record = logging.LogRecord('castiron.x', logging.ERROR, __file__, 1, 'boom', None, sys.exc_info())
+        RedactingFilter(_redact).filter(record)
+        # The live exception is the unredacted original; keeping it lets a formatter that
+        # ignores exc_text print the secret anyway.
+        assert record.exc_info is None
+        assert record.exc_text is not None
+        assert 'SUPERSECRET' not in record.exc_text
+
+    def test_stack_info_is_redacted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # stack_info renders the *calling source lines* through linecache, so a literal in
+        # the caller leaks even with no exception in play.
+        stream = self._capture(monkeypatch)
+        configure_logging(redactor=_redact)
+        logging.getLogger('castiron.cli.gen').error('boom SUPERSECRET', stack_info=True)
+        printed = stream.getvalue()
+        assert 'Stack (most recent call last)' in printed
+        assert 'SUPERSECRET' not in printed
+
+    def test_a_record_without_an_exception_is_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream = self._capture(monkeypatch)
+        configure_logging(redactor=_redact)
+        logging.getLogger('castiron.cli.gen').warning('plain')
+        assert stream.getvalue() == 'castiron: plain\n'
+
+    def test_without_a_redactor_the_traceback_is_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The library default: no filter, no masking -- proof the assertions above are the
+        # filter's doing and not something logging does for free.
+        stream = self._capture(monkeypatch)
+        configure_logging()
+        self._log_an_exception()
+        assert 'SUPERSECRET' in stream.getvalue()

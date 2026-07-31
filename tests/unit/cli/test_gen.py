@@ -581,6 +581,22 @@ class TestSecrets:
         assert SECRET not in origin
         assert 'apikey=***' in origin
 
+    def test_a_local_path_that_carries_a_key_is_redacted_in_the_summary(self, runner: CliRunner, project: Path) -> None:
+        # A filesystem path is an unlikely place for a key -- but "every printed string is
+        # redacted" (CI6-D7) is a claim with no exceptions, and `?apikey=` survives a URL
+        # pasted into a `curl -o` filename. The local branch printed it verbatim.
+        weird = project / f'openapi.json?apikey={SECRET}'
+        weird.write_bytes((project / 'openapi.json').read_bytes())
+        result = run(runner, '--from', weird.name, '--output', 'out')
+        assert result.exit_code == 0, result.output
+        assert SECRET not in result.output
+        assert 'apikey=***' in result.stdout
+
+    def test_the_origin_of_a_local_path_is_redacted_for_the_hint_too(self) -> None:
+        # The same value reaches `schema_hint`'s "castiron read <origin>" line through
+        # `source_origin`'s non-URL branch, which is a separate return statement.
+        assert SECRET not in source_origin(f'dump.json?apikey={SECRET}', SECRET)
+
     def test_the_key_never_reaches_the_generated_file(
         self,
         runner: CliRunner,

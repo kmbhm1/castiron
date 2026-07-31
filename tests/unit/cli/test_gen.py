@@ -7,11 +7,12 @@ network patch ``urlopen``.
 """
 
 import json
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -410,6 +411,55 @@ class TestSecrets:
         assert SECRET not in result.output
         assert 'HTTP 401' in result.output
 
+    # ⚠ Every case above ran at the default verbosity, which is how the original leak shipped:
+    # `fetch` logs the normalized target at DEBUG and the log handler had no redaction, so
+    # -vv/--debug printed `?apikey=...` in full -- the very output castiron's internal-error
+    # message tells users to paste into an issue. The verbosity flags are now part of the
+    # matrix rather than an afterthought.
+    @pytest.mark.parametrize('verbosity', [[], ['-v'], ['-vv'], ['--debug'], ['-vv', '--debug']])
+    def test_a_query_string_key_is_redacted_at_every_verbosity(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch, verbosity: list[str]
+    ) -> None:
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            raise URLError('down')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', *verbosity)
+        assert result.exit_code == 1
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    @pytest.mark.parametrize('verbosity', [[], ['-v'], ['-vv'], ['--debug']])
+    def test_the_literal_key_is_redacted_at_every_verbosity(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+        verbosity: list[str],
+    ) -> None:
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            logging.getLogger('castiron.sources.openapi.fetch').debug(f'presenting {SECRET}')
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET, '--output', 'out', *verbosity)
+        assert result.exit_code == 0, result.output
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    def test_the_debug_fetch_line_is_redacted(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exact reproduction: castiron.sources.openapi.fetch logs the normalized target,
+        # and normalize_postgrest_url keeps the query string.
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            raise URLError('down')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--debug')
+        assert 'Fetching the OpenAPI document from https://x.supabase.co/rest/v1/?apikey=***' in result.stderr
+
     def test_the_key_never_reaches_the_generated_file(
         self,
         runner: CliRunner,
@@ -545,3 +595,130 @@ class TestReporting:
         second = run(runner, '--from', 'openapi.json', '--output', 'out')
         assert first.stderr.count('integer primary key') == 1
         assert second.stderr.count('integer primary key') == 1
+
+
+# ---------------------------------------------------------------------------
+# The Hint: lines, end to end (spec §3.1's transcripts (b), (c) and (d)).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestHints:
+    @staticmethod
+    def _http(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+        def raiser(request: Request, timeout: float | None = None) -> FakeResponse:
+            raise HTTPError(request.full_url, code, 'nope', {}, None)  # type: ignore[arg-type] - stdlib accepts None
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', raiser)
+
+    def test_an_unreachable_url_earns_the_from_hint(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raiser(request: Request, timeout: float | None = None) -> FakeResponse:
+            raise URLError('nodename nor servname provided')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', raiser)
+        result = run(runner, '--from', 'https://typo.supabase.co')
+        assert result.exit_code == 1
+        assert 'Hint: --from takes a Supabase project URL' in result.output
+
+    @pytest.mark.parametrize(
+        ('args', 'env', 'expected'),
+        [
+            (['--key', SECRET], {}, 'the key came from --key'),
+            ([], {'CASTIRON_KEY': SECRET}, 'the key came from CASTIRON_KEY'),
+            ([], {'SUPABASE_KEY': SECRET}, 'the key came from SUPABASE_KEY'),
+            ([], {'CASTIRON_KEY': SECRET, 'SUPABASE_KEY': 'other'}, 'the key came from CASTIRON_KEY'),
+            ([], {}, 'no key was given'),
+        ],
+    )
+    def test_a_401_names_where_the_key_came_from(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+        env: dict[str, str],
+        expected: str,
+    ) -> None:
+        # CI6-Q2 accepted the ambient SUPABASE_KEY fallback *because* this hint exists: a user
+        # who silently picks up another project's key has no other way to find out.
+        self._http(monkeypatch, 401)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', *args)
+        assert result.exit_code == 1
+        assert f'Hint: {expected}' in result.output
+        assert SECRET not in result.output
+
+    def test_a_403_earns_the_key_hint_too(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._http(monkeypatch, 403)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--key', SECRET)
+        assert 'Hint: the key came from --key' in result.output
+
+    def test_the_supabase_fallback_hint_says_it_may_be_another_project_s(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._http(monkeypatch, 401)
+        monkeypatch.setenv('SUPABASE_KEY', SECRET)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co')
+        assert 'belongs to this project' in result.output
+
+    def test_an_empty_schema_earns_the_schema_hint_naming_what_was_read(self, runner: CliRunner, project: Path) -> None:
+        (project / 'empty.json').write_text('{"swagger":"2.0","definitions":{},"paths":{}}', encoding='utf-8')
+        result = run(runner, '--from', 'empty.json', '--schema', 'billing')
+        assert result.exit_code == 1
+        assert 'Hint: try --schema <name>' in result.output
+        assert "'billing'" in result.output
+        # §3.1(d) names the document; the engine's message does not, so the hint supplies it.
+        assert 'castiron read empty.json' in result.output
+
+    def test_the_hint_never_carries_the_key(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._http(monkeypatch, 401)
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--key', SECRET)
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+
+@pytest.mark.unit
+class TestConfigReporting:
+    def test_the_config_file_actually_used_is_reported_at_info(self, runner: CliRunner, project: Path) -> None:
+        # Discovery walks up from the cwd implicitly, so "which file did you read" is exactly
+        # what -v is for (spec §3.2 note 3) -- it needed -vv before.
+        (project / 'pyproject.toml').write_text('[tool.castiron]\nfrom = "openapi.json"\n', encoding='utf-8')
+        result = run(runner, '--output', 'out', '-v')
+        assert f'Reading [tool.castiron] from {project / "pyproject.toml"}' in result.stderr
+
+    def test_it_is_silent_at_the_default_verbosity(self, runner: CliRunner, project: Path) -> None:
+        (project / 'pyproject.toml').write_text('[tool.castiron]\nfrom = "openapi.json"\n', encoding='utf-8')
+        result = run(runner, '--output', 'out')
+        assert 'Reading [tool.castiron]' not in result.stderr
+
+
+@pytest.mark.unit
+class TestFilenameGuards:
+    @pytest.mark.parametrize('value', ['.', '/schema.py', '../escape.py'])
+    def test_a_filename_that_escapes_or_names_nothing_exits_one(
+        self, runner: CliRunner, project: Path, value: str
+    ) -> None:
+        result = run(runner, '--from', 'openapi.json', '--output', 'out', '--filename', value)
+        assert result.exit_code == 1
+        assert 'Refusing to write' in result.output
+
+    def test_a_dot_filename_leaves_the_output_directory_a_directory(self, runner: CliRunner, project: Path) -> None:
+        (project / 'out').mkdir()
+        assert run(runner, '--from', 'openapi.json', '--output', 'out', '--filename', '.').exit_code == 1
+        assert (project / 'out').is_dir()
+
+    def test_a_null_byte_filename_is_a_user_error_not_a_castiron_bug(self, runner: CliRunner, project: Path) -> None:
+        # argv cannot carry a NUL, so this arrives through the config file.
+        (project / 'pyproject.toml').write_text(
+            '[tool.castiron]\nfrom = "openapi.json"\nfilename = "a\\u0000b.py"\n', encoding='utf-8'
+        )
+        result = run(runner, '--output', 'out')
+        assert result.exit_code == 1
+        assert 'This is a bug' not in result.output

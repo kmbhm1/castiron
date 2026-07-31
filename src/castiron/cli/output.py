@@ -18,7 +18,7 @@ output tree is worse than none.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import click
 
@@ -47,6 +47,32 @@ class OutputError(click.ClickException):
     """A generated file could not be written (exit code 1)."""
 
 
+def is_unsafe_output_path(relative: PurePath) -> bool:
+    """Whether ``relative`` would escape the output directory when joined onto it.
+
+    Takes a :class:`~pathlib.PurePath` rather than a :class:`~pathlib.Path` so the rule can
+    be exercised with ``PureWindowsPath`` on a POSIX test runner — which is not academic.
+    On Windows ``PureWindowsPath('/evil.py').is_absolute()`` is **False** (root, no drive)
+    and so is ``PureWindowsPath('C:evil.py')`` (drive, no root), yet ``/`` **discards the
+    left operand** when the right carries either::
+
+        PureWindowsPath('out') / '/evil.py'   ->  WindowsPath('/evil.py')
+        PureWindowsPath('out') / 'C:evil.py'  ->  WindowsPath('C:evil.py')
+
+    So an ``is_absolute()``-only guard lets ``--filename /schema.py`` — or a committed
+    ``[tool.castiron] filename = "/schema.py"``, which does it to everyone who runs castiron
+    in that repo — write to the drive root. Testing ``drive`` and ``root`` too is what makes
+    the guard hold on the platform it protects.
+
+    Args:
+        relative: The path an emitter produced, in either path flavour.
+
+    Returns:
+        ``True`` when the path is absolute, anchored, drive-qualified, or contains ``..``.
+    """
+    return bool(relative.is_absolute() or relative.drive or relative.root or '..' in relative.parts)
+
+
 def resolve_output_path(output_dir: Path, emitted: EmittedFile) -> Path:
     """Resolve an emitted file's relative path under ``output_dir``.
 
@@ -58,15 +84,23 @@ def resolve_output_path(output_dir: Path, emitted: EmittedFile) -> Path:
         The target path under ``output_dir``.
 
     Raises:
-        OutputError: ``emitted.path`` is absolute or escapes ``output_dir``. This is
-            reachable from user input today — ``--filename`` and the config file both feed
+        OutputError: ``emitted.path`` escapes ``output_dir`` (see
+            :func:`is_unsafe_output_path`) or names no file at all. Both are reachable from
+            user input today — ``--filename`` and the config file both feed
             :attr:`~castiron.emitters.EmitterConfig.output_filename`.
     """
     relative = Path(emitted.path)
-    if relative.is_absolute() or '..' in relative.parts:
+    if is_unsafe_output_path(relative):
         raise OutputError(
             f"Refusing to write '{emitted.path}': a generated path must be relative to the output "
-            "directory and must not contain '..'."
+            "directory, must not be drive- or root-anchored, and must not contain '..'."
+        )
+    if not relative.name:
+        # `.` and `` both normalize away, so `output_dir / relative` is `output_dir` itself and
+        # the write would replace the output directory with a regular file (exit 0, silently).
+        raise OutputError(
+            f"Refusing to write '{emitted.path}': it names no file, so castiron would write over the "
+            'output directory itself. Pass --filename <name.py>.'
         )
     return output_dir / relative
 
@@ -126,6 +160,9 @@ def _write(target: Path, content: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         # newline='\n' is load-bearing: see the module docstring.
         target.write_text(content, encoding='utf-8', newline='\n')
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError too: the path layer raises it, not OSError, for an embedded NUL --
+        # reachable from a config-file `filename` -- and that is bad user input (exit 1),
+        # not a castiron bug (exit 70, "please report it"). CI6-D9.
         raise OutputError(f'Could not write {target}: {exc}') from exc
     logger.debug(f'Wrote {target}')

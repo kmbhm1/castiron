@@ -61,8 +61,11 @@ dev = [
     "python-semantic-release>=9.8.5",
     "pre-commit>=3.7.1",
     "commitizen>=3.28.0",
-    # Unconditional in dev so mypy sees real tomli types on every interpreter: at
-    # python_version = "3.10" it analyses the `import tomli as tomllib` branch.
+    # Unconditional in dev so mypy sees real tomli types on the 3.11+ interpreters too:
+    # [tool.mypy] pins python_version = "3.10", so mypy always analyses the
+    # `import tomli as tomllib` branch of the version gate in castiron/cli/config.py --
+    # without tomli installed it would degrade to Any and stop typechecking that module's
+    # TOML calls.
     "tomli>=2.0.1",
 ]
 docs = [

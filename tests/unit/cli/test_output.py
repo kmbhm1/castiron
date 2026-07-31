@@ -1,10 +1,16 @@
 """The write path -- where Hard Rule #9 (byte stability) lives or dies."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
-from castiron.cli.output import OutputError, WriteResult, resolve_output_path, write_emitted_files
+from castiron.cli.output import (
+    OutputError,
+    WriteResult,
+    is_unsafe_output_path,
+    resolve_output_path,
+    write_emitted_files,
+)
 from castiron.emitters import EmittedFile
 
 
@@ -32,6 +38,64 @@ class TestResolveOutputPath:
     def test_a_traversing_segment_in_the_middle_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(OutputError):
             resolve_output_path(tmp_path, emitted('models/../../escape.py'))
+
+    @pytest.mark.parametrize('value', ['.', '', './'])
+    def test_a_path_naming_no_file_is_refused(self, tmp_path: Path, value: str) -> None:
+        # `.` normalizes away, so `output_dir / relative` IS output_dir: without this guard the
+        # write replaces the output directory with a regular file and exits 0, and every later
+        # run dies on click's "Directory 'out' is a file."
+        with pytest.raises(OutputError, match='names no file'):
+            resolve_output_path(tmp_path, emitted(value))
+
+    def test_the_output_directory_survives_a_dot_filename(self, tmp_path: Path) -> None:
+        target = tmp_path / 'out'
+        target.mkdir()
+        with pytest.raises(OutputError):
+            write_emitted_files([emitted('.')], target)
+        assert target.is_dir()
+
+
+@pytest.mark.unit
+class TestTraversalGuardIsPlatformIndependent:
+    """The guard must hold on Windows, where ``is_absolute()`` alone is not enough.
+
+    ``PureWindowsPath`` is used explicitly so the rule is proven on a POSIX runner — the same
+    reasoning that made ``newline='\\n'`` worth its own test. On Windows
+    ``PureWindowsPath('/evil.py').is_absolute()`` is False (root, no drive) and
+    ``PureWindowsPath('C:evil.py').is_absolute()`` is False (drive, no root), yet ``/``
+    discards the left operand for both — so ``--filename /schema.py`` would write to the
+    drive root.
+    """
+
+    @pytest.mark.parametrize(
+        'value',
+        [
+            '/evil.py',
+            '/schema.py',
+            'C:evil.py',
+            'C:/evil.py',
+            'C:\\evil.py',
+            '\\\\server\\share\\evil.py',
+            '..\\evil.py',
+            'models\\..\\..\\evil.py',
+        ],
+    )
+    def test_windows_escapes_are_refused(self, value: str) -> None:
+        assert is_unsafe_output_path(PureWindowsPath(value)) is True
+
+    @pytest.mark.parametrize('value', ['/evil.py', '../evil.py', 'models/../../evil.py'])
+    def test_posix_escapes_are_refused(self, value: str) -> None:
+        assert is_unsafe_output_path(PurePosixPath(value)) is True
+
+    @pytest.mark.parametrize('value', ['schema.py', 'models/schema.py', 'a.b/c.py'])
+    def test_ordinary_relative_paths_are_allowed_on_both_flavours(self, value: str) -> None:
+        assert is_unsafe_output_path(PureWindowsPath(value)) is False
+        assert is_unsafe_output_path(PurePosixPath(value)) is False
+
+    @pytest.mark.parametrize('value', ['/evil.py', 'C:evil.py'])
+    def test_the_join_really_would_escape_without_the_guard(self, value: str) -> None:
+        # Proves the guard is guarding something rather than restating pathlib.
+        assert PureWindowsPath('out') / value == PureWindowsPath(value)
 
 
 @pytest.mark.unit
@@ -97,6 +161,13 @@ class TestWriteEmittedFiles:
         (tmp_path / 'schema.py').mkdir()
         with pytest.raises(OutputError, match='Could not write'):
             write_emitted_files([emitted()], tmp_path)
+
+    def test_an_embedded_null_byte_raises_output_error_not_a_traceback(self, tmp_path: Path) -> None:
+        # The path layer raises ValueError, not OSError, for a NUL. Reachable from a config
+        # file's `filename`, so per CI6-D9 it is user input (exit 1), not a castiron bug
+        # (exit 70 + "this is a bug, please report it").
+        with pytest.raises(OutputError, match='Could not write'):
+            write_emitted_files([emitted('a\x00b.py')], tmp_path)
 
 
 @pytest.mark.unit

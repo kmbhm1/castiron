@@ -25,21 +25,36 @@ Consequences of that choice, all deliberate:
 
 import difflib
 import logging
+import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import click
 
+from castiron.emitters import EMITTERS
+
 # ``tomllib`` is stdlib from 3.11; the 3.10 leg installs the marker-gated ``tomli`` (CI6-D1).
-# The try/except form rather than ``if sys.version_info``: on 3.10 the ``import tomllib`` line
-# still *executes* (it raises), so both matrix legs report 100% coverage from one pragma,
-# whereas a version check leaves the 3.11+ branch permanently unreached on 3.10.
-try:
+# The version gate -- not ``try/except ModuleNotFoundError`` -- is deliberate and typing-driven:
+# with the try/except form mypy binds ``tomllib`` from the *first* import, typeshed marks it
+# 3.11+-only, ``ignore_missing_imports`` silences that, and the whole module collapses to
+# ``Any`` -- so ``tomllib.load`` and ``tomllib.TOMLDecodeError`` stop being typechecked at all
+# (a typo in the ``except`` clause would only surface on a user's malformed TOML). The gate
+# below keeps real typeshed/``tomli`` types on every interpreter. Both clause headers carry
+# the pragma because coverage excludes a *clause*, not a whole statement: exactly one branch
+# runs per interpreter, so without both, every matrix leg reports the other one as a miss.
+if sys.version_info >= (3, 11):  # pragma: no cover - version-gated import, 3.11+ leg
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - only on the 3.10 matrix leg, where tomllib is absent
+else:  # pragma: no cover - version-gated import, 3.10 leg (tomllib is not stdlib there)
     import tomli as tomllib
 
 logger = logging.getLogger(__name__)
+
+#: URL schemes that mark a ``from`` value as a network source rather than a filesystem path.
+#: Declared here because the config layer is the first place a ``from`` value has to be
+#: classified (a URL must not be anchored to the config file's directory), and
+#: :mod:`castiron.cli.gen` imports it so exactly one rule decides for both.
+URL_SCHEMES: tuple[str, ...] = ('http', 'https')
 
 #: The nested table castiron reads, in **every** file — including a standalone one passed
 #: to ``--config``. One rule, zero ambiguity, and the block copy-pastes between files.
@@ -78,9 +93,22 @@ CONFIG_KEYS: dict[str, tuple[str, str]] = {
     'model_prefix_protection': ('model_prefix_protection', _BOOLEAN),
 }
 
+#: Keys whose value is a filesystem path. Resolved against the **config file's own
+#: directory**, not the process cwd (decision CI6-D5a) -- the way ruff, mypy and coverage all
+#: read their config. The config file exists so CI and local runs share one source of truth,
+#: which it cannot do if ``output = "src/myapp/models"`` means a different directory
+#: depending on where you happened to stand; and CI-021's ``check`` must not give a
+#: cwd-dependent answer. A ``from`` that is a URL is never anchored.
+PATH_KEYS: frozenset[str] = frozenset({'from', 'output'})
+
 
 class ConfigError(click.ClickException):
     """A ``[tool.castiron]`` table castiron cannot use (exit code 1)."""
+
+
+def looks_like_url(value: str) -> bool:
+    """Whether ``value`` is a network source rather than a filesystem path."""
+    return urlsplit(value).scheme in URL_SCHEMES
 
 
 def canonical_key(key: str) -> str:
@@ -129,12 +157,13 @@ def load_config_table(path: Path, *, explicit: bool) -> dict[str, Any]:
             nothing from a file you asked for by name is worse than failing.
 
     Returns:
-        The click ``default_map`` fragment: click parameter names → validated values.
+        The click ``default_map`` fragment: click parameter names → validated values, with
+        every :data:`PATH_KEYS` value anchored to ``path``'s own directory (CI6-D5a).
 
     Raises:
         ConfigError: The file is not valid TOML or cannot be read, the table is missing
-            (when ``explicit``), a key is unknown or mistyped, or the forbidden ``key``
-            entry is present.
+            (when ``explicit``), a key is unknown or mistyped, an ``emit`` entry names no
+            registered emitter, or the forbidden ``key`` entry is present.
     """
     document = _read_toml(path)
     table = _castiron_table(path, document)
@@ -162,9 +191,35 @@ def load_config_table(path: Path, *, explicit: bool) -> dict[str, Any]:
         if key not in CONFIG_KEYS:
             raise ConfigError(_unknown_key_message(path, raw_key, key))
         param, expected = CONFIG_KEYS[key]
-        defaults[param] = _coerce(path, raw_key, expected, value)
+        coerced = _coerce(path, raw_key, expected, value)
+        if key == 'emit':
+            _require_registered_emitters(path, raw_key, coerced)
+        if key in PATH_KEYS:
+            coerced = anchor_path(path.parent, coerced)
+        defaults[param] = coerced
 
     return defaults
+
+
+def anchor_path(base: Path, value: str) -> str:
+    """Resolve a config-file path value against ``base`` (the config file's directory).
+
+    Args:
+        base: The directory holding the config file the value came from.
+        value: The raw ``from``/``output`` string.
+
+    Returns:
+        ``value`` unchanged when it is a URL or already absolute; otherwise joined onto
+        ``base``. Symlinks are deliberately **not** resolved: an auto-discovered config file
+        is already an absolute path, and an explicit ``--config ../other/pyproject.toml``
+        should stay relative so the summary keeps printing short paths.
+    """
+    if looks_like_url(value):
+        return value
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return value
+    return str(base / candidate)
 
 
 def resolve_config(explicit: Path | None, *, start: Path) -> tuple[Path | None, dict[str, Any]]:
@@ -217,9 +272,10 @@ def _read_toml(path: Path) -> dict[str, Any]:
     """Parse ``path`` as TOML, or raise :class:`ConfigError`."""
     try:
         with path.open('rb') as handle:
-            # Bound to an annotated local deliberately: at ``python_version = "3.10"`` mypy
-            # analyses the ``tomli`` branch above, and returning the call directly would trip
-            # ``warn_return_any`` whenever that package resolves to ``Any``.
+            # Bound to an annotated local deliberately: whichever branch of the version gate
+            # mypy analyses, ``tomllib`` degrades to ``Any`` in any environment where that
+            # package is absent, and returning the call directly would then trip
+            # ``warn_return_any`` (part of ``--strict``).
             document: dict[str, Any] = tomllib.load(handle)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f'{path} is not valid TOML: {exc}') from exc
@@ -236,7 +292,8 @@ def _castiron_table(path: Path, document: dict[str, Any]) -> dict[str, Any] | No
             return None
         node = node[part]
     if not isinstance(node, dict):
-        raise ConfigError(f'{path}: [tool.castiron] must be a table, but it is a {_toml_type_name(node)}.')
+        actual = _toml_type_name(node)
+        raise ConfigError(f'{path}: [tool.castiron] must be a table, but it is {_article(actual)} {actual}.')
     table: dict[str, Any] = node
     return table
 
@@ -253,9 +310,26 @@ def _unknown_key_message(path: Path, raw_key: str, key: str) -> str:
 def _require_table(path: Path, raw_key: str, value: Any) -> None:
     """Validate that a reserved key holds a table."""
     if not isinstance(value, dict):
+        actual = _toml_type_name(value)
         raise ConfigError(
-            f"{path}: [tool.castiron] '{raw_key}' must be a table, but it is a {_toml_type_name(value)}. "
+            f"{path}: [tool.castiron] '{raw_key}' must be a table, but it is {_article(actual)} {actual}. "
             'It is reserved for `castiron check`.'
+        )
+
+
+def _require_registered_emitters(path: Path, raw_key: str, names: list[str]) -> None:
+    """Validate every ``emit`` entry against the registry, naming the file (CI6-D6).
+
+    click's ``Choice`` would also reject an unknown name, but as a **usage** error (exit 2)
+    that never mentions the config file -- and a typo in a committed ``pyproject.toml`` is
+    exactly the case the config layer exists to diagnose well.
+    """
+    unknown = [name for name in names if name not in EMITTERS]
+    if unknown:
+        raise ConfigError(
+            f"{path}: [tool.castiron] '{raw_key}' names no registered emitter: "
+            f'{", ".join(repr(name) for name in unknown)}. '
+            f'Registered emitters: {", ".join(sorted(EMITTERS))}.'
         )
 
 

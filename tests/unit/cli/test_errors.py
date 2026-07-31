@@ -1,4 +1,7 @@
-"""Exit codes, the error boundary, and secret redaction."""
+"""Exit codes, the error boundary, secret redaction, and the ``Hint:`` lines."""
+
+from typing import Any
+from urllib.error import HTTPError, URLError
 
 import click
 import pytest
@@ -9,11 +12,17 @@ from castiron.cli.errors import (
     EXIT_INTERNAL,
     EXIT_OK,
     EXIT_USAGE,
+    FROM_HINT,
     REDACTED,
     cli_error_handling,
+    key_hint,
+    key_provenance,
     redact,
+    schema_hint,
+    source_error_hint,
 )
-from castiron.sources import SourceFetchError, SourceParseError
+from castiron.sources import SourceError, SourceFetchError, SourceParseError, build_schema_from_document
+from castiron.sources.openapi import fetch_openapi_document
 
 
 @pytest.mark.unit
@@ -123,3 +132,151 @@ class TestCliErrorHandling:
         with cli_error_handling(debug=False, key=None):
             seen.append('ran')
         assert seen == ['ran']
+
+
+# ---------------------------------------------------------------------------
+# Hints. Spec §3.1's four transcripts; CI6-Q2 accepted the ambient SUPABASE_KEY
+# fallback *on the strength of* the 401 hint naming the key's provenance.
+# ---------------------------------------------------------------------------
+
+
+def real_fetch_error(monkeypatch: pytest.MonkeyPatch, raiser: Any, url: str = 'https://x.supabase.co') -> SourceError:
+    """Drive the real fetcher until it raises, so the hint is matched against real wording.
+
+    The hint selection reads message fragments owned by :mod:`castiron.sources.openapi`.
+    Producing those messages from the actual code path -- rather than retyping them here --
+    is what turns that coupling into something the suite enforces: reword the engine message
+    and these fail, instead of the hint silently disappearing.
+    """
+    monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', raiser)
+    with pytest.raises(SourceError) as excinfo:
+        fetch_openapi_document(url)
+    return excinfo.value
+
+
+def http_error(code: int) -> Any:
+    def raiser(request: Any, timeout: float | None = None) -> Any:
+        raise HTTPError(request.full_url, code, 'nope', {}, None)  # type: ignore[arg-type] - stdlib accepts None
+
+    return raiser
+
+
+@pytest.mark.unit
+class TestKeyProvenance:
+    def test_no_key_has_no_provenance(self) -> None:
+        assert key_provenance(None) is None
+        assert key_provenance('') is None
+
+    def test_outside_a_click_context_it_reports_the_explicit_flag(self) -> None:
+        assert key_provenance('a-key-value') == '--key'
+
+    def test_it_never_returns_the_key_itself(self) -> None:
+        assert 'a-key-value' not in str(key_provenance('a-key-value'))
+
+
+@pytest.mark.unit
+class TestKeyHint:
+    @pytest.mark.parametrize(
+        ('provenance', 'expected'),
+        [
+            (None, 'no key was given'),
+            ('--key', 'came from --key'),
+            ('CASTIRON_KEY', 'came from CASTIRON_KEY'),
+            ('SUPABASE_KEY', 'came from SUPABASE_KEY'),
+        ],
+    )
+    def test_it_names_where_the_key_came_from(self, provenance: str | None, expected: str) -> None:
+        assert expected in key_hint(provenance)
+
+    def test_the_supabase_fallback_warns_that_it_may_be_another_project_s(self) -> None:
+        # The whole reason CI6-Q2 accepted the ambient fallback.
+        hint = key_hint('SUPABASE_KEY')
+        assert 'falls back' in hint
+        assert 'belongs to this project' in hint
+
+    def test_the_command_line_case_recommends_the_environment_variable(self) -> None:
+        assert 'shell history' in key_hint('--key')
+
+
+@pytest.mark.unit
+class TestSchemaHint:
+    def test_it_names_the_requested_schema_and_the_document_read(self) -> None:
+        hint = schema_hint('public', 'https://x.supabase.co/rest/v1/')
+        assert "'public'" in hint
+        assert 'https://x.supabase.co/rest/v1/' in hint
+        assert '--schema' in hint
+        assert 'refuses to write an empty models file' in hint
+
+    def test_it_copes_with_an_unknown_origin(self) -> None:
+        assert 'castiron read' not in schema_hint('public', None)
+
+
+@pytest.mark.unit
+class TestSourceErrorHint:
+    @pytest.mark.parametrize('code', [401, 403])
+    def test_an_auth_failure_earns_the_key_hint(self, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+        exc = real_fetch_error(monkeypatch, http_error(code))
+        hint = source_error_hint(exc, key='a-key-value', schema='public', origin=None)
+        assert hint == key_hint('--key')
+
+    def test_an_unreachable_host_earns_the_from_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raiser(request: Any, timeout: float | None = None) -> Any:
+            raise URLError('nodename nor servname provided')
+
+        exc = real_fetch_error(monkeypatch, raiser)
+        assert source_error_hint(exc, key=None, schema='public', origin=None) == FROM_HINT
+
+    def test_a_404_earns_the_from_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        exc = real_fetch_error(monkeypatch, http_error(404))
+        assert source_error_hint(exc, key=None, schema='public', origin=None) == FROM_HINT
+
+    def test_a_non_json_body_earns_the_from_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Response:
+            def read(self) -> bytes:
+                return b'<html>not json</html>'
+
+            def __enter__(self) -> 'Response':
+                return self
+
+            def __exit__(self, *exc: Any) -> bool:
+                return False
+
+        exc = real_fetch_error(monkeypatch, lambda request, timeout=None: Response())
+        assert source_error_hint(exc, key=None, schema='public', origin=None) == FROM_HINT
+
+    def test_an_empty_schema_earns_the_schema_hint(self) -> None:
+        with pytest.raises(SourceParseError) as excinfo:
+            build_schema_from_document({'swagger': '2.0', 'definitions': {}, 'paths': {}})
+        hint = source_error_hint(excinfo.value, key=None, schema='public', origin='./openapi.json')
+        assert hint == schema_hint('public', './openapi.json')
+
+    def test_a_schema_with_no_readable_columns_earns_the_schema_hint(self) -> None:
+        document = {'swagger': '2.0', 'definitions': {'t': {'properties': {}}}, 'paths': {}}
+        with pytest.raises(SourceParseError) as excinfo:
+            build_schema_from_document(document)
+        assert source_error_hint(excinfo.value, key=None, schema='public', origin=None) is not None
+
+    def test_an_unrecognized_failure_earns_no_hint(self) -> None:
+        assert source_error_hint(SourceFetchError('something else'), key=None, schema='public', origin=None) is None
+
+    def test_the_hint_is_redacted_before_it_is_printed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        exc = real_fetch_error(monkeypatch, http_error(401), 'https://x.supabase.co/rest/v1/?apikey=SUPERSECRET')
+        with pytest.raises(click.ClickException) as excinfo:  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=False, key=None, hint=lambda e: f'the URL was {exc}'):
+                raise exc
+        assert 'SUPERSECRET' not in excinfo.value.message
+
+
+@pytest.mark.unit
+class TestHintPlumbing:
+    def test_the_hint_is_appended_on_its_own_line(self) -> None:
+        with pytest.raises(click.ClickException) as excinfo:  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=False, key=None, hint=lambda exc: 'do the thing'):
+                raise SourceFetchError('it broke')
+        assert excinfo.value.message == 'it broke\nHint: do the thing'
+
+    def test_no_hint_leaves_the_message_alone(self) -> None:
+        with pytest.raises(click.ClickException) as excinfo:  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=False, key=None, hint=lambda exc: None):
+                raise SourceFetchError('it broke')
+        assert excinfo.value.message == 'it broke'

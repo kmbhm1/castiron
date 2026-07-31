@@ -13,19 +13,20 @@ exiting **0**; every failure here carries a documented exit code (see
 import json
 import logging
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import click
 
-from castiron.cli.config import config_option_callback
-from castiron.cli.errors import cli_error_handling, redact
+from castiron.cli.config import config_option_callback, looks_like_url
+from castiron.cli.errors import cli_error_handling, redact, source_error_hint
 from castiron.cli.notices import report as report_notices
 from castiron.cli.output import WriteResult, write_emitted_files
 from castiron.emitters import EMITTERS, EmittedFile, EmitterConfig, get_emitter_spec
 from castiron.ir import Schema
 from castiron.sources import (
+    SourceError,
     SourceFetchError,
     build_schema_from_document,
     load_openapi_schema,
@@ -35,9 +36,6 @@ from castiron.sources.openapi import DEFAULT_TIMEOUT
 from castiron.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
-
-#: URL schemes that select the network source; anything else is a filesystem path.
-URL_SCHEMES = ('http', 'https')
 
 #: ``gen``'s ``--help`` body. Passed to ``@click.command(help=...)`` rather than left as the
 #: function docstring so the example block can carry click's ``\b`` no-rewrap marker: a
@@ -216,11 +214,18 @@ def gen(
     declared above, each also readable from ``[tool.castiron]`` (except ``key``, ``config``
     and the three per-invocation verbosity flags).
     """
-    configure_logging(verbose=verbose, debug=debug)
+    # The redactor is not optional: `fetch` logs the normalized target at DEBUG, and
+    # `normalize_postgrest_url` preserves the query string, so -vv/--debug would otherwise
+    # print `?apikey=...` -- the very output the internal-error message asks users to paste
+    # into an issue.
+    configure_logging(verbose=verbose, debug=debug, redactor=partial(redact, key=key))
     if config_path is not None:
-        logger.debug(f'Reading [tool.castiron] from {config_path}')
+        # INFO, not DEBUG: discovery walks up from the cwd implicitly, so "which file did you
+        # read" is exactly what -v is for (spec §3.2 note 3).
+        logger.info(f'Reading [tool.castiron] from {config_path}')
 
-    with cli_error_handling(debug=debug, key=key):
+    hint = partial(_hint_for, key=key, schema=schema, source=source)
+    with cli_error_handling(debug=debug, key=key, hint=hint):
         if not source:
             raise click.UsageError(
                 'No schema source. Pass --from <url|path>, set CASTIRON_FROM, '
@@ -296,8 +301,8 @@ def load_schema(
         SourceParseError: The document is not a schema castiron can read.
         click.UsageError: ``source`` is neither a URL nor an existing file.
     """
-    if urlsplit(source).scheme in URL_SCHEMES:
-        origin = redact(normalize_postgrest_url(source), key)
+    if looks_like_url(source):
+        origin = source_origin(source, key)
         logger.debug(f'Reading the schema from {origin}')
         schema_ir = load_openapi_schema(
             source,
@@ -324,6 +329,33 @@ def load_schema(
         infer_generated_primary_keys=infer_generated_primary_keys,
     )
     return schema_ir, str(path)
+
+
+def source_origin(source: str, key: str | None) -> str:
+    """Describe where the schema comes (or came) from, redacted and safe to print.
+
+    Never raises: it is called from the error path, where a failure to describe the source
+    must not replace the failure the user actually needs to see.
+
+    Args:
+        source: The ``--from`` value.
+        key: The API key in play, masked out of the result.
+
+    Returns:
+        The normalized PostgREST root for a URL, or the path as given.
+    """
+    if not looks_like_url(source):
+        return str(Path(source))
+    try:
+        return redact(normalize_postgrest_url(source), key)
+    except SourceError:  # pragma: no cover - normalize only rejects a blank URL, caught earlier
+        return redact(source, key)
+
+
+def _hint_for(exc: SourceError, *, key: str | None, schema: str, source: str | None) -> str | None:
+    """Build the ``Hint:`` line for a source failure, resolving the origin lazily."""
+    origin = source_origin(source, key) if source else None
+    return source_error_hint(exc, key=key, schema=schema, origin=origin)
 
 
 def read_json_document(path: Path) -> dict[str, Any]:
@@ -377,7 +409,27 @@ def echo_summary(schema: Schema, origin: str, results: list[WriteResult], *, dry
     verb = 'would write' if dry_run else 'wrote'
     suffix = ' [dry run, nothing written]' if dry_run else ''
     for result in results:
-        click.echo(f'castiron: {verb} {result.path} ({format_size(result.size)}){suffix}')
+        click.echo(f'castiron: {verb} {display_path(result.path)} ({format_size(result.size)}){suffix}')
+
+
+def display_path(path: Path) -> str:
+    """Render a resolved output path the shortest honest way.
+
+    A config-file ``output`` is anchored to the config file's directory (CI6-D5a), so it
+    arrives absolute. Printing it relative to the cwd keeps the common case reading
+    ``wrote out/schema.py``, while a run from a subdirectory — where the file genuinely
+    lands somewhere else — still shows the full path rather than a misleading short one.
+
+    Args:
+        path: The resolved target path.
+
+    Returns:
+        The path relative to the cwd when it is under it, else the path unchanged.
+    """
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
 
 
 def format_size(size: int) -> str:

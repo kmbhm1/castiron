@@ -5,6 +5,7 @@ The precedence assertions run through the real command rather than inspecting
 (command line → environment → default map → default) and only an end-to-end run exercises it.
 """
 
+import shutil
 from pathlib import Path
 
 import click
@@ -15,6 +16,7 @@ from castiron.cli import cli
 from castiron.cli.config import (
     CONFIG_KEYS,
     ConfigError,
+    anchor_path,
     canonical_key,
     config_option_callback,
     discover_config_file,
@@ -208,8 +210,9 @@ class TestKeySurface:
         assert load_config_table(path, explicit=False) == {'crud_models': False}
 
     def test_from_is_the_documented_alias_for_the_source_parameter(self, tmp_path: Path) -> None:
+        # The value is also anchored to the config file's directory (CI6-D5a).
         path = write_config(tmp_path, '[tool.castiron]\nfrom = "x.json"\n')
-        assert load_config_table(path, explicit=False) == {'source': 'x.json'}
+        assert load_config_table(path, explicit=False) == {'source': str(tmp_path / 'x.json')}
 
     def test_every_emitter_config_toggle_has_a_config_key(self) -> None:
         # CI4-D4 says every behavioral toggle lives on EmitterConfig and "CLI wiring lands in
@@ -383,4 +386,136 @@ class TestConfigCallback:
         ctx = click.Context(cli, default_map={'schema': 'kept'})
         used = config_option_callback(ctx, click.Option(['--config']), None)
         assert used == tmp_path / 'pyproject.toml'
-        assert ctx.default_map == {'schema': 'kept', 'output': 'cfg'}
+        assert ctx.default_map == {'schema': 'kept', 'output': str(tmp_path / 'cfg')}
+
+
+# ---------------------------------------------------------------------------
+# CI6-D5a: config-file paths are relative to the CONFIG FILE, not the cwd.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestConfigRelativePaths:
+    def test_a_relative_from_is_anchored_to_the_config_file(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\nfrom = "./openapi.json"\n')
+        assert load_config_table(path, explicit=False) == {'source': str(tmp_path / 'openapi.json')}
+
+    def test_a_relative_output_is_anchored_to_the_config_file(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\noutput = "src/myapp/models"\n')
+        assert load_config_table(path, explicit=False) == {'output': str(tmp_path / 'src' / 'myapp' / 'models')}
+
+    @pytest.mark.parametrize('value', ['/opt/models', '/opt/models/', '/opt/./models'])
+    def test_an_absolute_value_is_returned_exactly_as_written(self, tmp_path: Path, value: str) -> None:
+        # Exact-string, not just "same directory": joining an absolute path onto a base is a
+        # no-op on POSIX (pathlib discards the left operand), so an equality check against a
+        # plain '/opt/models' would pass with the early return deleted. The trailing-slash and
+        # './' forms are what actually pin the contract -- an absolute config value is passed
+        # through verbatim rather than silently normalized in the summary.
+        assert anchor_path(tmp_path, value) == value
+
+    def test_an_absolute_output_reaches_the_default_map_unchanged(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\noutput = "/opt/models/"\n')
+        assert load_config_table(path, explicit=False) == {'output': '/opt/models/'}
+
+    def test_a_url_from_is_never_anchored(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\nfrom = "https://abcdefgh.supabase.co"\n')
+        assert load_config_table(path, explicit=False) == {'source': 'https://abcdefgh.supabase.co'}
+
+    def test_filename_is_not_a_path_key(self, tmp_path: Path) -> None:
+        # It names a file *under* --output, so anchoring it would make it absolute and the
+        # traversal guard would (correctly) refuse it.
+        path = write_config(tmp_path, '[tool.castiron]\nfilename = "models.py"\n')
+        assert load_config_table(path, explicit=False) == {'filename': 'models.py'}
+
+    def test_a_run_from_a_subdirectory_reads_and_writes_the_same_tree(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The reproduction: before CI6-D5a this exited 2 ("./openapi.json is neither a URL nor
+        # an existing file"), and with an absolute `from` it silently wrote into the WRONG tree
+        # at exit 0 -- which would make CI-021's `check` give a cwd-dependent answer.
+        write_config(project, '[tool.castiron]\nfrom = "./openapi.json"\noutput = "src/myapp/models"\n')
+        deeper = project / 'sub' / 'deeper'
+        deeper.mkdir(parents=True)
+        monkeypatch.chdir(deeper)
+        result = run(runner)
+        assert result.exit_code == 0, result.output
+        assert (project / 'src' / 'myapp' / 'models' / 'schema.py').is_file()
+        assert not (deeper / 'src').exists()
+
+    def test_the_command_line_still_wins_and_stays_cwd_relative(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A path typed on the command line is relative to where you are standing, as always.
+        write_config(project, '[tool.castiron]\nfrom = "./openapi.json"\noutput = "from-config"\n')
+        deeper = project / 'sub'
+        deeper.mkdir()
+        monkeypatch.chdir(deeper)
+        assert run(runner, '--output', 'from-cli').exit_code == 0
+        assert (deeper / 'from-cli' / 'schema.py').is_file()
+
+    def test_an_explicit_relative_config_anchors_to_its_own_directory(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        nested = project / 'conf'
+        nested.mkdir()
+        shutil.copy(project / 'openapi.json', nested / 'openapi.json')
+        write_config(nested, '[tool.castiron]\nfrom = "openapi.json"\noutput = "out"\n', 'castiron.toml')
+        assert run(runner, '--config', 'conf/castiron.toml').exit_code == 0
+        assert (nested / 'out' / 'schema.py').is_file()
+
+    def test_the_summary_stays_short_when_the_target_is_under_the_cwd(self, runner: CliRunner, project: Path) -> None:
+        write_config(project, '[tool.castiron]\nfrom = "./openapi.json"\noutput = "out"\n')
+        result = run(runner)
+        assert f'wrote {Path("out") / "schema.py"} (' in result.stdout
+
+    def test_the_summary_shows_the_full_path_when_the_target_is_elsewhere(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_config(project, '[tool.castiron]\nfrom = "./openapi.json"\noutput = "out"\n')
+        deeper = project / 'sub'
+        deeper.mkdir()
+        monkeypatch.chdir(deeper)
+        result = run(runner)
+        assert str(project / 'out' / 'schema.py') in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# `emit` values are validated where the file can be named (CI6-D6).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestEmitValidation:
+    def test_an_unregistered_emitter_names_the_config_file(self, runner: CliRunner, project: Path) -> None:
+        write_config(project, '[tool.castiron]\nfrom = "openapi.json"\nemit = ["pydantik"]\n')
+        result = run(runner)
+        assert result.exit_code == 1
+        assert 'pyproject.toml' in result.output
+        assert "'pydantik'" in result.output
+        assert 'Registered emitters: pydantic' in result.output
+
+    def test_a_registered_emitter_is_accepted(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\nemit = ["pydantic"]\n')
+        assert load_config_table(path, explicit=False) == {'emit': ['pydantic']}
+
+    def test_every_unknown_name_is_reported(self, tmp_path: Path) -> None:
+        path = write_config(tmp_path, '[tool.castiron]\nemit = ["a", "pydantic", "b"]\n')
+        with pytest.raises(ConfigError, match="'a', 'b'"):
+            load_config_table(path, explicit=False)
+
+
+@pytest.mark.unit
+class TestArticles:
+    @pytest.mark.parametrize(
+        ('body', 'expected'),
+        [
+            ('[tool]\ncastiron = 1\n', 'but it is an integer'),
+            ('[tool]\ncastiron = "x"\n', 'but it is a string'),
+            ('[tool.castiron]\ncheck = 1\n', 'but it is an integer'),
+            ('[tool.castiron]\ncheck = "x"\n', 'but it is a string'),
+        ],
+    )
+    def test_the_article_agrees_with_the_type_name(self, tmp_path: Path, body: str, expected: str) -> None:
+        path = write_config(tmp_path, body)
+        with pytest.raises(ConfigError, match=expected):
+            load_config_table(path, explicit=False)

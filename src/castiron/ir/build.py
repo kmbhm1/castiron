@@ -586,6 +586,17 @@ def add_relationships_to_table_details(tables: dict[tuple[str, str], TableInfo],
 
         fk_columns = [fk for fk in table.foreign_keys if fk.foreign_table_name == foreign_table_name]
         if len(fk_columns) == 1:
+            # ⚠ These two flags are ALWAYS False here, and that is load-bearing rather than a
+            # bug: `construct_tables` runs this step *before*
+            # `update_columns_with_constraints`, and no source populates `primary`/`is_unique`
+            # on a column row (the 12-tuple column contract carries neither), so the
+            # ONE_TO_ONE branch below is dead in the real pipeline -- every edge lands on
+            # ONE_TO_MANY or MANY_TO_MANY. That is why this site is NOT length-checked the way
+            # `determine_relationship_type` is: there is no uniqueness signal here to
+            # length-check. Do not "fix" it by moving the step later without re-deriving the
+            # composite-key guard, because `RelationshipInfo.relation_type` DOES reach emitted
+            # output -- the pydantic emitter prefers it over the FK's own type for a
+            # self-referential foreign key.
             is_source_unique = any(col.name == column_name and (col.is_unique or col.primary) for col in table.columns)
             is_target_unique = any(
                 col.name == foreign_column_name and (col.is_unique or col.primary) for col in foreign_table.columns
@@ -789,16 +800,23 @@ def _rank_enum_candidates(
        ``search_path``, so ``status`` is ``public.status``, not "whichever namespace sorts
        first". Enum rows arrive sorted by ``(namespace, type_name)``, so without this rule
        a bare token deterministically binds to the alphabetically-first schema;
-    3. any remaining namespace, in registry order, but only when ``allow_any_schema``.
+    3. any remaining namespace, in registry order — **always** for a bare token, and for a
+       qualified one only when ``allow_any_schema``.
 
-    Step 3 is disabled for a *qualified* token: naming a schema castiron has no enum for
-    is a statement, not a gap, and silently binding to a same-named enum elsewhere is the
+    Read step 3's guard literally (``if token_namespace is not None and not
+    allow_any_schema``): ``allow_any_schema=False`` restricts a *qualified* token only, so a
+    bare token falls through to every namespace regardless of it. No caller exercises that
+    corner — all three pass ``allow_any_schema=True`` whenever the token is bare — but the
+    flag does not mean "never leave the preferred namespace", and a reader who assumes it
+    does will mis-predict this function.
+
+    Step 3 is disabled for a *qualified* token because naming a schema castiron has no enum
+    for is a statement, not a gap, and silently binding to a same-named enum elsewhere is the
     entire bug class this function exists to prevent. **One caller opts out of that
     protection on purpose:** :func:`_find_enum_type` passes ``allow_any_schema=True`` even
     though its namespace is always supplied, because that namespace comes from a source's
     own column→type mapping row rather than from a user-written token -- see its docstring.
-    Every other site passes ``allow_any_schema=<the token was bare>``, so for them step 3
-    really is bare-token-only.
+    Every other site passes ``allow_any_schema=<the token was bare>``.
 
     Qualification is decided by ``token_namespace is not None``, never by truthiness: a
     degenerate leading-dot token (``.status``) splits to an **empty** namespace, and reading
@@ -808,7 +826,8 @@ def _rank_enum_candidates(
         namespaces: The owning schema of each name-matching candidate, in registry order.
         token_namespace: The token's schema qualifier, or ``None`` when it is bare.
         default_schema: The schema currently being built.
-        allow_any_schema: Whether an unrelated namespace may be used as a last resort.
+        allow_any_schema: Whether an unrelated namespace may be used as a last resort for a
+            **qualified** token (a bare token always may — see step 3).
 
     Returns:
         Candidate indexes in preference order; empty when nothing is acceptable.

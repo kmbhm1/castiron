@@ -1,0 +1,16 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "standard public schema", "version": "12.2.3" },
+  "host": "example.supabase.co:443",
+  "basePath": "/rest/v1/",
+  "definitions": {},
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Introspection"],
+        "produces": ["application/openapi+json", "application/json"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

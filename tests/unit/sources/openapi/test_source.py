@@ -1,0 +1,400 @@
+"""End-to-end tests for the OpenAPI source: document -> Schema IR -> emitted Pydantic models.
+
+This is the Phase-0 exit criterion minus the network. It also pins the *fidelity floor* as
+a tested contract (what this source structurally cannot see) and the backward-compatibility
+guarantee that a zero-function schema still emits byte-identically.
+"""
+
+import ast
+import json
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+from castiron.emitters.config import EmitterConfig
+from castiron.emitters.pydantic import PydanticEmitter
+from castiron.ir import ConstraintType, FunctionVolatility, ParameterMode, RelationType, Schema
+from castiron.sources import (
+    SourceError,
+    SourceFetchError,
+    SourceParseError,
+    build_schema_from_document,
+    load_openapi_schema,
+)
+from castiron.sources.openapi import fetch as fetch_module
+from tests.unit.sources.openapi.conftest import GOLDEN_DIR
+
+SOURCE_DIR = Path(str(fetch_module.__file__)).parent
+
+
+def table(schema: Schema, name: str) -> Any:
+    """Return the table named ``name``."""
+    return next(t for t in schema.tables if t.name == name)
+
+
+def col(schema: Schema, table_name: str, column_name: str) -> Any:
+    """Return the column named ``column_name`` on ``table_name``."""
+    return next(c for c in table(schema, table_name).columns if c.name == column_name)
+
+
+def emit(schema: Schema) -> str:
+    """Render ``schema`` through the Pydantic emitter and return the single file's text."""
+    files = PydanticEmitter(EmitterConfig()).emit(schema)
+    assert len(files) == 1
+    return files[0].content
+
+
+# ---------------------------------------------------------------------------
+# The IR the source produces.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSchemaShape:
+    def test_tables_are_alphabetical(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        names = [t.name for t in schema.tables]
+        assert names == sorted(names)
+        assert names == [
+            'active_users_view',
+            'order_items',
+            'orders',
+            'products',
+            'restricted_table',
+            'users',
+        ]
+
+    def test_table_types_follow_the_two_signal_heuristic(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert table(schema, 'active_users_view').table_type == 'VIEW'
+        assert table(schema, 'restricted_table').table_type == 'BASE TABLE'
+        assert table(schema, 'users').table_type == 'BASE TABLE'
+
+    def test_primary_key_and_foreign_key_flags_propagate(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert col(schema, 'users', 'id').primary is True
+        assert col(schema, 'orders', 'user_id').is_foreign_key is True
+        assert table(schema, 'orders').primary_key() == ['id']
+        assert table(schema, 'order_items').primary_key() == ['order_id', 'product_id']
+        assert table(schema, 'order_items').primary_is_composite() is True
+
+    def test_the_bridge_table_is_detected(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert table(schema, 'order_items').is_bridge is True
+        assert table(schema, 'orders').is_bridge is False
+
+    def test_relationships_are_derived_from_the_markers(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        related = {(r.related_table_name, r.relation_type) for r in table(schema, 'users').relationships}
+        assert related == {('orders', RelationType.ONE_TO_MANY)}
+        assert {fk.foreign_table_name for fk in table(schema, 'order_items').foreign_keys} == {'orders', 'products'}
+
+    def test_synthesized_foreign_key_constraint_names(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        names = {fk.constraint_name for fk in table(schema, 'orders').foreign_keys}
+        assert 'orders_user_id_fkey' in names
+
+    def test_enums_are_deduplicated_and_sorted(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert [(e.schema, e.name) for e in schema.enums] == [('public', 'order_status')]
+        assert schema.enums[0].values == ['pending', 'shipped', 'cancelled']
+
+    def test_an_enum_array_column_links_through_its_element_type(self, document: dict[str, Any]) -> None:
+        # The document carries no labels for ``order_status[]``; it links only because the
+        # same enum appears on a scalar column elsewhere.
+        labels = col(schema_of(document), 'orders', 'labels')
+        assert labels.array_element_type == 'order_status'
+        assert labels.enum_info is not None
+        assert labels.enum_info.name == 'order_status'
+
+    def test_an_unlinked_enum_array_degrades_to_an_untyped_list(self) -> None:
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                't': {
+                    'properties': {'labels': {'format': 'lonely_enum[]', 'type': 'array', 'items': {'type': 'string'}}}
+                }
+            },
+            'paths': {'/t': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        labels = col(schema, 't', 'labels')
+        assert labels.array_element_type == 'lonely_enum'
+        assert labels.enum_info is None
+        assert 'labels: list[Any] | None' in emit(schema)
+
+    def test_a_reserved_column_name_is_aliased(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        field_class = col(schema, 'users', 'field_class')
+        assert field_class.alias == 'class'
+
+    def test_the_schema_argument_flows_through(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document, schema='api')
+        assert {t.schema for t in schema.tables} == {'api'}
+        assert {f.schema for f in schema.functions} == {'api'}
+
+
+def schema_of(document: dict[str, Any]) -> Schema:
+    """Build the schema for ``document`` (helper for one-liner assertions)."""
+    return build_schema_from_document(document)
+
+
+# ---------------------------------------------------------------------------
+# Functions (the CI5-D1 build-ahead).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFunctions:
+    def test_functions_are_in_name_order(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert [f.name for f in schema.functions] == ['create_order', 'get_user_stats', 'ping', 'search_products']
+
+    def test_the_fill_matrix_for_a_volatile_function(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        create_order = schema.functions[0]
+        assert create_order.name == 'create_order'
+        assert create_order.schema == 'public'
+        assert create_order.volatility is FunctionVolatility.VOLATILE
+        assert create_order.is_read_only is False
+        assert create_order.return_type is None
+        assert create_order.returns_set is None
+        assert create_order.description == 'Create an order\n\nInserts a row and returns its id.'
+        assert [(p.name, p.raw_type, p.mode, p.has_default) for p in create_order.parameters] == [
+            ('user_id', 'bigint', ParameterMode.IN, False),
+            ('status', 'order_status', ParameterMode.IN, False),
+            ('items', 'text[]', ParameterMode.IN, True),
+        ]
+        assert create_order.parameters[2].array_element_type == 'text'
+
+    def test_a_non_volatile_function_leaves_volatility_unknown(self, document: dict[str, Any]) -> None:
+        # The document distinguishes VOLATILE from *not*, never STABLE from IMMUTABLE.
+        schema = build_schema_from_document(document)
+        stats = next(f for f in schema.functions if f.name == 'get_user_stats')
+        assert stats.volatility is None
+        assert stats.is_read_only is True
+
+    def test_a_parameter_enum_links_when_the_type_is_known(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        status = schema.functions[0].parameters[1]
+        assert status.enum_info is not None
+        assert status.enum_info.values == ['pending', 'shipped', 'cancelled']
+
+    def test_a_variadic_parameter_is_recovered_from_the_get_operation(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        search = next(f for f in schema.functions if f.name == 'search_products')
+        assert search.parameters[0].mode is ParameterMode.VARIADIC
+        assert search.parameters[1].mode is ParameterMode.IN
+
+    def test_a_no_argument_function_has_no_parameters(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert next(f for f in schema.functions if f.name == 'ping').parameters == []
+
+    def test_functions_never_reach_the_emitted_output(self, document: dict[str, Any]) -> None:
+        # Nothing consumes Schema.functions until CI-012; the Pydantic emitter ignores it.
+        schema = build_schema_from_document(document)
+        assert schema.functions
+        emitted = emit(schema)
+        for name in ('create_order', 'get_user_stats', 'search_products'):
+            assert name not in emitted
+
+
+# ---------------------------------------------------------------------------
+# The fidelity floor, as a tested contract.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFidelityFloor:
+    def test_an_integer_surrogate_primary_key_looks_like_a_plain_required_column(
+        self, document: dict[str, Any]
+    ) -> None:
+        # PostgREST drops nextval(...) defaults, so castiron cannot know this is generated.
+        schema = build_schema_from_document(document)
+        users_id = col(schema, 'users', 'id')
+        assert users_id.is_identity is False
+        assert users_id.is_generated is False
+        assert users_id.has_default is False
+        # ...and the visible consequence: it is a *required* field on the Insert model.
+        insert_block = (
+            'class UsersInsert(CustomModelInsert):\n    """Users Insert Schema."""\n\n    # Primary Keys\n    id: int\n'
+        )
+        assert insert_block in emit(schema)
+
+    def test_the_opt_in_inference_makes_it_optional_on_insert(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document, infer_generated_primary_keys=True)
+        users_id = col(schema, 'users', 'id')
+        assert users_id.is_identity is True
+        assert users_id.is_generated is True
+        # Identity columns are omitted from Insert/Update entirely.
+        emitted = emit(schema)
+        assert '    """Users Insert Schema."""\n\n    # Required fields\n    email: str' in emitted
+
+    def test_no_unique_or_check_constraints_exist_anywhere(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        kinds = {c.type for t in schema.tables for c in t.constraints}
+        assert kinds <= {ConstraintType.PRIMARY_KEY, ConstraintType.FOREIGN_KEY}
+        assert not any(t.has_unique_constraint() for t in schema.tables)
+        assert all(c.constraint_definition is None for t in schema.tables for c in t.columns)
+
+    def test_every_view_column_is_nullable(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        view = table(schema, 'active_users_view')
+        assert all(c.is_nullable for c in view.columns)
+
+    def test_smallint_and_integer_are_indistinguishable(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert col(schema, 'users', 'id').raw_type == 'integer'
+        assert col(schema, 'orders', 'id').raw_type == 'bigint'
+
+    def test_no_function_reports_a_return_type_or_set_returning_flag(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert schema.functions
+        assert all(f.return_type is None for f in schema.functions)
+        assert all(f.returns_set is None for f in schema.functions)
+
+    def test_a_composite_foreign_key_is_invisible(self, document: dict[str, Any]) -> None:
+        # Every FK castiron recovers spans exactly one column -- the marker cannot say more.
+        schema = build_schema_from_document(document)
+        fk_constraints = [c for t in schema.tables for c in t.constraints if c.type == ConstraintType.FOREIGN_KEY]
+        assert fk_constraints
+        assert all(len(c.columns) == 1 for c in fk_constraints)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: valid, golden-stable, deterministic output.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestEmittedOutput:
+    def test_it_matches_the_committed_golden(self, document: dict[str, Any]) -> None:
+        golden = (GOLDEN_DIR / 'schema.py.txt').read_text(encoding='utf-8')
+        assert emit(build_schema_from_document(document)) == golden
+
+    def test_the_emitted_module_is_valid_python_and_instantiable(self, document: dict[str, Any]) -> None:
+        emitted = emit(build_schema_from_document(document))
+        module = ModuleType('castiron_openapi_generated')
+        sys.modules[module.__name__] = module
+        try:
+            exec(compile(emitted, '<castiron-generated>', 'exec'), module.__dict__)
+            product = module.__dict__['ProductsBaseSchema'](id=1, name='Anvil')
+            assert product.id == 1
+            assert product.name == 'Anvil'
+            enum_class = module.__dict__['PublicOrderStatusEnum']
+            assert enum_class('pending').value == 'pending'
+            user = module.__dict__['UsersInsert'](id=1, email='a@example.com')
+            assert user.status is None
+        finally:
+            del sys.modules[module.__name__]
+
+    def test_emitting_the_same_schema_twice_is_byte_identical(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert emit(schema) == emit(schema)
+
+    def test_building_twice_from_the_same_document_emits_identically(self, document: dict[str, Any]) -> None:
+        assert emit(build_schema_from_document(document)) == emit(build_schema_from_document(document))
+
+    def test_a_key_reordered_document_emits_identically(self, document: dict[str, Any]) -> None:
+        reordered = json.loads(json.dumps(document))
+        reordered['definitions'] = dict(reversed(list(reordered['definitions'].items())))
+        reordered['paths'] = dict(reversed(list(reordered['paths'].items())))
+        assert emit(build_schema_from_document(reordered)) == emit(build_schema_from_document(document))
+
+    def test_as_dict_is_json_serializable_and_stable(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        assert json.dumps(schema.as_dict()) == json.dumps(build_schema_from_document(document).as_dict())
+        assert schema.as_dict()['functions'][0]['volatility'] == 'VOLATILE'
+
+
+# ---------------------------------------------------------------------------
+# Errors surface through the source entrypoints.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestErrors:
+    def test_an_openapi3_document_is_refused(self, openapi3_document: dict[str, Any]) -> None:
+        with pytest.raises(SourceParseError):
+            build_schema_from_document(openapi3_document)
+
+    def test_an_empty_document_is_refused(self, empty_definitions_document: dict[str, Any]) -> None:
+        with pytest.raises(SourceParseError):
+            build_schema_from_document(empty_definitions_document)
+
+    def test_the_error_classes_share_one_base(self) -> None:
+        assert issubclass(SourceFetchError, SourceError)
+        assert issubclass(SourceParseError, SourceError)
+
+
+# ---------------------------------------------------------------------------
+# load_openapi_schema (the only entrypoint that fetches).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLoadOpenApiSchema:
+    def test_it_fetches_then_builds(self, monkeypatch: pytest.MonkeyPatch, document: dict[str, Any]) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_fetch(url: str, *, key: str | None, schema: str, timeout: float) -> dict[str, Any]:
+            captured.update(url=url, key=key, schema=schema, timeout=timeout)
+            return document
+
+        monkeypatch.setattr(fetch_module, 'fetch_openapi_document', fake_fetch)
+        monkeypatch.setattr('castiron.sources.openapi.source.fetch_openapi_document', fake_fetch)
+
+        schema = load_openapi_schema(
+            'https://abc.supabase.co',
+            key='anon-key',
+            schema='public',
+            timeout=1.5,
+            infer_generated_primary_keys=True,
+        )
+
+        assert captured == {'url': 'https://abc.supabase.co', 'key': 'anon-key', 'schema': 'public', 'timeout': 1.5}
+        assert [t.name for t in schema.tables] == sorted(t.name for t in schema.tables)
+        assert col(schema, 'users', 'id').is_identity is True
+
+
+# ---------------------------------------------------------------------------
+# Structural guarantees (acceptance criteria that are about the code, not behavior).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestModuleHygiene:
+    @pytest.mark.parametrize('module_name', ['parse.py', 'source.py'])
+    def test_the_pure_modules_import_no_io_machinery(self, module_name: str) -> None:
+        tree = ast.parse((SOURCE_DIR / module_name).read_text(encoding='utf-8'))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split('.')[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split('.')[0])
+        assert imported.isdisjoint({'urllib', 'socket', 'http', 'pathlib'})
+
+    def test_the_sources_package_is_free_of_third_party_runtime_deps(self) -> None:
+        stdlib_or_castiron = {
+            'castiron',
+            'collections',
+            'dataclasses',
+            'json',
+            'logging',
+            're',
+            'ssl',
+            'typing',
+            'urllib',
+        }
+        for path in sorted(SOURCE_DIR.parent.rglob('*.py')):
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        assert alias.name.split('.')[0] in stdlib_or_castiron, path
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    assert node.module.split('.')[0] in stdlib_or_castiron, path

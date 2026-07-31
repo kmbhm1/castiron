@@ -1,0 +1,13 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Not PostgREST", "version": "1.0.0" },
+  "components": {
+    "schemas": {
+      "users": {
+        "type": "object",
+        "properties": { "id": { "type": "integer" } }
+      }
+    }
+  },
+  "paths": {}
+}

@@ -74,7 +74,12 @@ class RedactingFilter(logging.Filter):
         """
         record.msg = self._redactor(record.getMessage())
         record.args = ()
-        if record.exc_info is not None and not record.exc_text:
+        # Truthiness, not `is not None`, exactly as `Formatter.format` guards: `Logger._log`
+        # normalizes only a TRUTHY `exc_info`, so `logger.error(..., exc_info=False)` (or
+        # `0`, or `()`) reaches the record verbatim and `formatException` would raise a
+        # TypeError/IndexError -- from inside `Handler.handle`, outside `emit`'s try, so it
+        # would escape into the caller and turn a log line into control flow.
+        if record.exc_info and not record.exc_text:
             record.exc_text = _EXCEPTION_RENDERER.formatException(record.exc_info)
         record.exc_info = None
         if record.exc_text:

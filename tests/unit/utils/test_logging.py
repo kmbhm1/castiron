@@ -159,12 +159,14 @@ class TestRedactingExceptionText:
         assert 'RuntimeError: GET https://x.supabase.co/rest/v1/?apikey=***' in printed
         assert 'SUPERSECRET' not in printed
 
-    def test_it_is_redacted_at_every_verbosity(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        for kwargs in ({}, {'verbose': 1}, {'verbose': 2}, {'debug': True}):
-            stream = self._capture(monkeypatch)
-            configure_logging(redactor=_redact, **kwargs)  # type: ignore[arg-type] - the table is heterogeneous
-            self._log_an_exception()
-            assert 'SUPERSECRET' not in stream.getvalue()
+    @pytest.mark.parametrize(('verbose', 'debug'), [(0, False), (1, False), (2, False), (0, True)])
+    def test_it_is_redacted_at_every_verbosity(
+        self, monkeypatch: pytest.MonkeyPatch, verbose: int, debug: bool
+    ) -> None:
+        stream = self._capture(monkeypatch)
+        configure_logging(verbose=verbose, debug=debug, redactor=_redact)
+        self._log_an_exception()
+        assert 'SUPERSECRET' not in stream.getvalue()
 
     def test_an_already_formatted_exc_text_is_redacted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A record can arrive with exc_text already cached (another handler formatted it
@@ -195,6 +197,20 @@ class TestRedactingExceptionText:
         logging.getLogger('castiron.cli.gen').error('boom SUPERSECRET', stack_info=True)
         printed = stream.getvalue()
         assert 'Stack (most recent call last)' in printed
+        assert 'SUPERSECRET' not in printed
+
+    @pytest.mark.parametrize('falsy', [False, 0, (), [], ''])
+    def test_a_falsy_exc_info_does_not_break_the_call(self, monkeypatch: pytest.MonkeyPatch, falsy: object) -> None:
+        # `Logger._log` normalizes only a TRUTHY `exc_info`, so `exc_info=False` reaches the
+        # record verbatim. Guarding with `is not None` made `formatException` raise a
+        # TypeError/IndexError from inside `Handler.handle` -- outside `emit`'s try, so it
+        # escaped into the caller: a log line changing control flow, and only ever in the real
+        # CLI (a source adapter's own tests install no redactor).
+        stream = self._capture(monkeypatch)
+        configure_logging(redactor=_redact)
+        logging.getLogger('castiron.sources.openapi.fetch').error('fetch failed SUPERSECRET', exc_info=falsy)
+        printed = stream.getvalue()
+        assert 'castiron: fetch failed ***' in printed
         assert 'SUPERSECRET' not in printed
 
     def test_a_record_without_an_exception_is_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:

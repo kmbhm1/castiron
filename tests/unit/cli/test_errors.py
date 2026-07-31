@@ -122,6 +122,19 @@ class TestCliErrorHandling:
                 raise RuntimeError('kaboom')
         assert excinfo.value.code == EXIT_INTERNAL
 
+    def test_the_internal_error_echo_is_redacted(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # CI6-D7: *every* printed string is redacted, and the internal-error echo is printed
+        # -- with an invitation to paste it into a public issue, which makes it the worst
+        # possible place for a key to survive. A castiron bug can carry the URL (and so the
+        # key) in its str() from anywhere in the pipeline.
+        with pytest.raises(SystemExit):  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=False, key='eyJhbGciOi'):
+                raise RuntimeError('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET broke on eyJhbGciOi')
+        printed = capsys.readouterr().err
+        assert 'internal error (RuntimeError' in printed
+        assert 'SUPERSECRET' not in printed
+        assert 'eyJhbGciOi' not in printed
+
     def test_debug_re_raises_the_original_exception(self) -> None:
         with pytest.raises(RuntimeError):  # noqa: PT012 - the boundary is the subject
             with cli_error_handling(debug=True, key=None):

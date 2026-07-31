@@ -613,14 +613,43 @@ def add_relationships_to_table_details(tables: dict[tuple[str, str], TableInfo],
         )
 
 
+def _is_singly_unique(table: TableInfo, column_name: str) -> bool:
+    """Whether ``column_name`` is unique **on its own** in ``table``.
+
+    The UNIQUE mirror of the sole-primary-key length check. A composite ``UNIQUE (a, b)``
+    -- which is exactly how a VIEW's composite ``<pk/>`` marker is recorded (CI5-D14a, see
+    :mod:`castiron.sources.openapi.parse`) -- sets ``is_unique`` on **both** members via
+    :func:`update_columns_with_constraints`, yet neither column is unique alone. Reading the
+    flag by itself would call a foreign key pointing at one of them many-to-*one* and emit a
+    singular attribute where a list belongs.
+
+    When no UNIQUE constraint names the column at all, the column flag is still trusted: a
+    source may set it without emitting a constraint row.
+
+    Args:
+        table: The table the column belongs to.
+        column_name: The column to test.
+
+    Returns:
+        ``True`` when a single-column UNIQUE (or an unconstrained ``is_unique`` flag) covers
+        the column.
+    """
+    unique_constraints = [c for c in table.constraints if c.type == ConstraintType.UNIQUE and column_name in c.columns]
+    if unique_constraints:
+        return any(len(c.columns) == 1 for c in unique_constraints)
+    return any(col.name == column_name and col.is_unique for col in table.columns)
+
+
 def determine_relationship_type(
     source_table: TableInfo, target_table: TableInfo, fk: ForeignKeyInfo
 ) -> tuple[RelationType, RelationType]:
     """Return the ``(forward, reverse)`` relation types for a foreign key.
 
-    Uniqueness is read from sole primary keys and unique columns on each side: both
-    unique → ONE_TO_ONE; only the target unique → MANY_TO_ONE (forward); only the source
-    unique → ONE_TO_MANY; neither → MANY_TO_MANY.
+    Uniqueness is read from sole primary keys and singly-unique columns on each side --
+    **both length-checked**, since one member of a composite PRIMARY KEY or UNIQUE does not
+    identify a row (see :func:`_is_singly_unique`). Both unique → ONE_TO_ONE; only the
+    target unique → MANY_TO_ONE (forward); only the source unique → ONE_TO_MANY; neither →
+    MANY_TO_MANY.
     """
     source_primary_constraints = [
         c for c in source_table.constraints if c.type == ConstraintType.PRIMARY_KEY and fk.column_name in c.columns
@@ -634,12 +663,8 @@ def determine_relationship_type(
     is_source_sole_primary = any(len(c.columns) == 1 for c in source_primary_constraints)
     is_target_sole_primary = any(len(c.columns) == 1 for c in target_primary_constraints)
 
-    is_source_unique = is_source_sole_primary or any(
-        col.name == fk.column_name and col.is_unique for col in source_table.columns
-    )
-    is_target_unique = is_target_sole_primary or any(
-        col.is_unique and col.name == fk.foreign_column_name for col in target_table.columns
-    )
+    is_source_unique = is_source_sole_primary or _is_singly_unique(source_table, fk.column_name)
+    is_target_unique = is_target_sole_primary or _is_singly_unique(target_table, fk.foreign_column_name)
 
     if is_source_unique and is_target_unique:
         return RelationType.ONE_TO_ONE, RelationType.ONE_TO_ONE
@@ -764,11 +789,20 @@ def _rank_enum_candidates(
        ``search_path``, so ``status`` is ``public.status``, not "whichever namespace sorts
        first". Enum rows arrive sorted by ``(namespace, type_name)``, so without this rule
        a bare token deterministically binds to the alphabetically-first schema;
-    3. any remaining namespace, but only when ``allow_any_schema``.
+    3. any remaining namespace, in registry order, but only when ``allow_any_schema``.
 
     Step 3 is disabled for a *qualified* token: naming a schema castiron has no enum for
     is a statement, not a gap, and silently binding to a same-named enum elsewhere is the
-    entire bug class this function exists to prevent.
+    entire bug class this function exists to prevent. **One caller opts out of that
+    protection on purpose:** :func:`_find_enum_type` passes ``allow_any_schema=True`` even
+    though its namespace is always supplied, because that namespace comes from a source's
+    own column→type mapping row rather than from a user-written token -- see its docstring.
+    Every other site passes ``allow_any_schema=<the token was bare>``, so for them step 3
+    really is bare-token-only.
+
+    Qualification is decided by ``token_namespace is not None``, never by truthiness: a
+    degenerate leading-dot token (``.status``) splits to an **empty** namespace, and reading
+    that as "bare" made one document resolve the same token differently at each call site.
 
     Args:
         namespaces: The owning schema of each name-matching candidate, in registry order.
@@ -779,7 +813,7 @@ def _rank_enum_candidates(
     Returns:
         Candidate indexes in preference order; empty when nothing is acceptable.
     """
-    wanted = (token_namespace or default_schema).lower()
+    wanted = default_schema.lower() if token_namespace is None else token_namespace.lower()
     preferred = [i for i, ns in enumerate(namespaces) if ns.lower() == wanted]
     if token_namespace is not None and not allow_any_schema:
         return preferred
@@ -794,9 +828,17 @@ def _find_enum_type(
 ) -> UserEnumType | None:
     """Return the enum named ``namespace.type_name``, or ``None``.
 
-    An exact ``(namespace, type_name)`` match wins, then one in ``default_schema``, then
-    the bare name. The fallbacks preserve the behavior of sources that do not report a
-    type's owning schema consistently; they never fire when the namespaces line up.
+    An exact ``(namespace, type_name)`` match wins; failing that **any** namespace's
+    same-named enum is accepted, in registry order. That second tier is the one deliberate
+    exception to :func:`_rank_enum_candidates`'s qualified-token rule (``allow_any_schema``
+    is passed ``True`` here): ``namespace`` arrives from a source's own column→type mapping
+    row, not from a token a user wrote, so a source that reports the owning schema
+    inconsistently would otherwise lose the enum entirely. It never fires when the
+    namespaces line up.
+
+    ``default_schema`` is inert at this site -- ``namespace`` is always supplied, so the
+    bare-token tier cannot be reached from here. It is accepted and forwarded anyway so the
+    resolution order stays stated in exactly one place.
     """
     matching = [e for e in enums if e.type_name == type_name]
     ranked = _rank_enum_candidates([e.namespace for e in matching], namespace, default_schema, allow_any_schema=True)

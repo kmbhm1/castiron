@@ -68,8 +68,14 @@ def raiser(exc: BaseException) -> Any:
 
 
 def http_error(status: int, body: bytes = b'{"message":"boom"}') -> HTTPError:
-    """Build an :class:`HTTPError` with a readable body."""
-    return HTTPError('https://example.supabase.co/rest/v1/', status, 'Nope', {}, io.BytesIO(body))  # type: ignore[arg-type]
+    """Build an :class:`HTTPError` with a readable body.
+
+    The ``hdrs``/``fp`` arguments are typed as ``email.message.Message`` and
+    ``IO[bytes]`` in typeshed, but at runtime ``HTTPError`` accepts any mapping and any
+    readable object -- which is exactly what a fake response needs to be.
+    """
+    headers: Any = {}
+    return HTTPError('https://example.supabase.co/rest/v1/', status, 'Nope', headers, io.BytesIO(body))
 
 
 def headers_of(request: Request) -> dict[str, str]:

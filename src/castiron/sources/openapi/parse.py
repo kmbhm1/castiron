@@ -46,10 +46,15 @@ move:
 - Views carry no marker at all, so ``table_type`` is a two-signal heuristic biased toward
   ``BASE TABLE`` (see :func:`classify_table_type`), and PostgREST reports every view column
   as nullable.
-- **A view's primary key is dropped.** The document *does* mark it (PostgREST propagates
-  keys through views), but :meth:`castiron.ir.TableInfo.primary_key` is defined to be empty
-  for a VIEW, so carrying the marker would leave ``ColumnInfo.primary`` and
-  ``primary_key()`` disagreeing. Foreign keys on a view are kept.
+- **A view's primary key is recorded as a UNIQUE constraint, not a primary key.** The
+  document *does* mark it (PostgREST propagates keys through views), but
+  :meth:`castiron.ir.TableInfo.primary_key` is defined to be empty for a VIEW, so carrying
+  it as a PK would leave ``ColumnInfo.primary`` and ``primary_key()`` disagreeing. This is
+  a **downgrade, not a guess** -- the ``<pk/>`` marker is the document's own statement, and
+  it is retained at the strength the IR can represent. Dropping it outright would lose the
+  only evidence the key column is unique, which is what tells a foreign key pointing *at*
+  the view that it is many-to-one rather than many-to-many. Foreign keys on a view are kept
+  unchanged.
 - Enum **values** are absent for array columns (``pg_enum`` is keyed on the base type), so
   such a column links only when the same enum also appears on a scalar column.
 - A function's **return type** and **set-returning** flag are never encoded; volatility is a
@@ -445,15 +450,27 @@ def _parse_definition(
 
         _record_enum(table_name, column_name, prop, data_type, schema, rows)
 
-    # A VIEW gets no primary-key row. PostgREST *does* propagate `<pk/>` markers through
-    # views, but ``TableInfo.primary_key()`` is defined to be empty for a VIEW, so
-    # synthesizing the constraint would set ``ColumnInfo.primary = True`` on a table whose
+    # A VIEW gets a UNIQUE row rather than a PRIMARY KEY row. PostgREST *does* propagate
+    # `<pk/>` markers through views, but ``TableInfo.primary_key()`` is defined to be empty
+    # for a VIEW, so a PK row would set ``ColumnInfo.primary = True`` on a table whose
     # ``primary_key()`` says ``[]`` -- an IR that contradicts itself, and that different
-    # emitters would read differently. Foreign keys on a view are still carried.
+    # emitters read differently. Dropping the marker outright is equally wrong: it is the
+    # only evidence the key column is unique, and without it every foreign key pointing AT
+    # the view degrades to MANY_TO_MANY and is emitted as a plural list. Downgrading to
+    # UNIQUE keeps both facts. Foreign keys on a view are carried unchanged.
     if pk_columns and table_type != 'VIEW':
         rows.constraints.append((f'{table_name}_pkey', table_name, pk_columns, 'p', None))
     elif pk_columns:
-        logger.debug(f'Dropping the primary-key markers on {table_name}: castiron models a VIEW as having no key')
+        logger.debug(f'Recording the primary-key markers on view {table_name} as UNIQUE: a VIEW has no primary key')
+        rows.constraints.append(
+            (
+                f'{table_name}_{"_".join(pk_columns)}_key',
+                table_name,
+                pk_columns,
+                'u',
+                f'UNIQUE ({", ".join(pk_columns)})',
+            )
+        )
     rows.constraints.extend(fk_constraints)
 
 

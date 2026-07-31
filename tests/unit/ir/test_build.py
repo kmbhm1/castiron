@@ -329,6 +329,53 @@ def test_build_schema_array_element_enum_lookup_is_namespace_aware() -> None:
 
 
 @pytest.mark.unit
+def test_build_schema_bare_array_element_prefers_the_schema_under_construction() -> None:
+    # A bare token MEANS the schema being built. Enum rows arrive sorted by
+    # (namespace, type_name), so name-only matching binds it to whichever schema sorts
+    # first -- here 'audit', which is the wrong enum.
+    columns = [
+        ('public', 't', 'tags', None, 'YES', 'status[]', None, 'BASE TABLE', None, None, 'status', None),
+    ]
+    enum_types = [
+        ('status', 'audit', 'owner', 'E', True, 'e', ['created', 'deleted']),
+        ('status', 'public', 'owner', 'E', True, 'e', ['open', 'closed']),
+    ]
+
+    schema = build_schema(columns, [], [], enum_types, [])
+    tags = _col(_table(schema, 't'), 'tags')
+    assert tags.enum_info is not None
+    assert (tags.enum_info.schema, tags.enum_info.values) == ('public', ['open', 'closed'])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('element_token', ['[]', '_', ''])
+def test_build_schema_array_element_token_that_names_nothing(element_token: str) -> None:
+    columns = [
+        ('public', 't', 'tags', None, 'YES', 'ARRAY', None, 'BASE TABLE', None, None, element_token, None),
+    ]
+    enum_types = [('status', 'public', 'owner', 'E', True, 'e', ['open'])]
+    schema = build_schema(columns, [], [], enum_types, [])
+    assert _col(_table(schema, 't'), 'tags').enum_info is None
+
+
+@pytest.mark.unit
+def test_build_schema_enum_fallback_records_the_matched_schema_not_the_mapping() -> None:
+    # When the bare-name fallback fires, the mapping's namespace does NOT own the type;
+    # recording it would name a schema that has no such enum.
+    columns = [
+        ('public', 't', 'a', None, 'YES', 'status', None, 'BASE TABLE', None, None, None, None),
+    ]
+    enum_types = [('status', 'audit', 'owner', 'E', True, 'e', ['created', 'deleted'])]
+    enum_mapping = [('a', 't', 'sales', 'status', 'E', '')]
+
+    schema = build_schema(columns, [], [], enum_types, enum_mapping)
+    a = _col(_table(schema, 't'), 'a')
+    assert a.enum_info is not None
+    assert a.enum_info.schema == 'audit'
+    assert [(e.schema, e.name) for e in schema.enums] == [('audit', 'status')]
+
+
+@pytest.mark.unit
 def test_disable_model_prefix_protection_reaches_constraints_and_foreign_keys() -> None:
     # The flag was honored when building columns but not when standardizing the column
     # names inside constraint and FK rows, so the PK/FK flags were silently lost and

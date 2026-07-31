@@ -89,6 +89,7 @@ class RestrictedTableBaseSchema(CustomModel):
     id: int
 
     # Columns
+    owner_id: int | None = Field(default=None)
     secret: str | None = Field(default=None)
 
 
@@ -169,6 +170,7 @@ class RestrictedTableInsert(CustomModelInsert):
     id: int
 
     # Optional fields
+    owner_id: int | None = Field(default=None)
     secret: str | None = Field(default=None)
 
 
@@ -247,6 +249,7 @@ class RestrictedTableUpdate(CustomModelUpdate):
     id: int | None = Field(default=None)
 
     # Columns
+    owner_id: int | None = Field(default=None)
     secret: str | None = Field(default=None)
 
 
@@ -280,6 +283,7 @@ class ActiveUsersView(ActiveUsersViewBaseSchema):
 
     # Foreign Keys
     product: Products | None = Field(default=None)
+    restricted_tables: list[RestrictedTable] | None = Field(default=None)
 
 
 class OrderItems(OrderItemsBaseSchema):
@@ -321,7 +325,8 @@ class RestrictedTable(RestrictedTableBaseSchema):
     Inherits from RestrictedTableBaseSchema. Add any customization here.
     """
 
-    pass
+    # Foreign Keys
+    active_users_view: ActiveUsersView | None = Field(default=None)
 
 
 class Users(UsersBaseSchema):

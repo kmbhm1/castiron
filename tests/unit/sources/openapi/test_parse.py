@@ -351,10 +351,14 @@ class TestConstraints:
         ) in foreign_keys
         assert len(foreign_keys) == len(rows.fk_details)
 
-    def test_unique_check_and_exclude_constraints_are_never_produced(self, document: dict[str, Any]) -> None:
-        # The fidelity floor: the document contains none of these, anywhere.
+    def test_check_and_exclude_constraints_are_never_produced(self, document: dict[str, Any]) -> None:
+        # The fidelity floor: the document contains no constraint information at all. The
+        # only 'u' rows are a view's `<pk/>` markers downgraded to UNIQUE (CI5-D14a).
         rows = parse_openapi_document(document)
-        assert {row[3] for row in rows.constraints} == {'p', 'f'}
+        assert {row[3] for row in rows.constraints} == {'p', 'f', 'u'}
+        assert 'c' not in {row[3] for row in rows.constraints}
+        assert 'x' not in {row[3] for row in rows.constraints}
+        assert [row[1] for row in rows.constraints if row[3] == 'u'] == ['active_users_view']
 
     def test_a_table_with_no_primary_key_gets_no_primary_key_row(self) -> None:
         rows = parse_openapi_document(minimal_document({'a': {'format': 'text'}}))
@@ -377,12 +381,20 @@ class TestConstraints:
         assert rows.fk_details == ()
         assert rows.constraints == ()
 
-    def test_a_view_gets_no_primary_key_row(self, document: dict[str, Any]) -> None:
-        # ``TableInfo.primary_key()`` is empty for a VIEW by definition, so synthesizing a
-        # PK constraint would leave ``col.primary`` and ``primary_key()`` disagreeing.
+    def test_a_views_key_becomes_a_unique_row_not_a_primary_key_row(self, document: dict[str, Any]) -> None:
+        # ``TableInfo.primary_key()`` is empty for a VIEW by definition, so a 'p' row would
+        # leave ``col.primary`` and ``primary_key()`` disagreeing -- but dropping the marker
+        # outright loses the uniqueness a foreign key pointing at the view needs.
         rows = parse_openapi_document(document)
         view_constraints = [row for row in rows.constraints if row[1] == 'active_users_view']
-        assert [row[3] for row in view_constraints] == ['f']
+        assert [row[3] for row in view_constraints] == ['u', 'f']
+        assert view_constraints[0] == (
+            'active_users_view_id_key',
+            'active_users_view',
+            ['id'],
+            'u',
+            'UNIQUE (id)',
+        )
 
 
 # ---------------------------------------------------------------------------

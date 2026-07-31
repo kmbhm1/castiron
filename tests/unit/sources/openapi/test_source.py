@@ -239,6 +239,81 @@ class TestEnumNamespaces:
         assert 'a: PublicStatusEnum | None' in emitted
         assert 'b: AuditStatusEnum | None' in emitted
 
+    def test_a_bare_token_binds_to_the_schema_under_construction(self) -> None:
+        """A bare ``format`` token *means* the default schema, not "whichever sorts first".
+
+        PostgREST omits the schema prefix exactly when the type is in ``search_path``, so
+        ``status`` and ``audit.status`` are different types. Enum rows arrive sorted by
+        ``(namespace, type_name)``, so a name-only match binds a bare token to ``audit``.
+        """
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                't': {
+                    'properties': {
+                        'a': {'format': 'status', 'type': 'string', 'enum': ['active', 'archived']},
+                        'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
+                        'tags': {'format': 'status[]', 'type': 'array', 'items': {'type': 'string'}},
+                    }
+                }
+            },
+            'paths': {'/t': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        tags = col(schema, 't', 'tags')
+        assert tags.enum_info is not None
+        assert (tags.enum_info.schema, tags.enum_info.values) == ('public', ['active', 'archived'])
+        assert 'tags: list[PublicStatusEnum] | None' in emit(schema)
+
+    def test_a_bare_parameter_token_binds_to_the_schema_under_construction(self) -> None:
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                't': {
+                    'properties': {
+                        'a': {'format': 'status', 'type': 'string', 'enum': ['active', 'archived']},
+                        'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
+                    }
+                }
+            },
+            'paths': {
+                '/t': {'get': {}, 'post': {}},
+                '/rpc/f': {
+                    'post': {
+                        'parameters': [
+                            {
+                                'name': 'args',
+                                'in': 'body',
+                                'schema': {'properties': {'p': {'format': 'status', 'type': 'string'}}},
+                            }
+                        ]
+                    }
+                },
+            },
+        }
+        parameter = build_schema_from_document(document).functions[0].parameters[0]
+        assert parameter.enum_info is not None
+        assert (parameter.enum_info.schema, parameter.enum_info.values) == ('public', ['active', 'archived'])
+
+    def test_a_bare_token_falls_back_when_the_default_schema_has_no_such_enum(self) -> None:
+        # Nothing in ``public`` is named ``status``, so the only candidate wins -- a bare
+        # token carries no other information.
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                't': {
+                    'properties': {
+                        'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
+                        'tags': {'format': 'status[]', 'type': 'array', 'items': {'type': 'string'}},
+                    }
+                }
+            },
+            'paths': {'/t': {'get': {}, 'post': {}}},
+        }
+        tags = col(build_schema_from_document(document), 't', 'tags')
+        assert tags.enum_info is not None
+        assert (tags.enum_info.schema, tags.enum_info.values) == ('audit', ['created', 'deleted'])
+
     def test_a_qualified_array_element_links_to_its_own_schema(self) -> None:
         document = {
             'swagger': '2.0',
@@ -248,7 +323,7 @@ class TestEnumNamespaces:
                         'a': {'format': 'public.status', 'type': 'string', 'enum': ['active', 'archived']},
                         'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
                         'tags': {
-                            'format': 'audit.status[]',
+                            'format': 'public.status[]',
                             'type': 'array',
                             'items': {'type': 'string'},
                         },
@@ -257,9 +332,12 @@ class TestEnumNamespaces:
             },
             'paths': {'/t': {'get': {}, 'post': {}}},
         }
+        # ``public`` deliberately, not ``audit``: enum rows sort by (namespace, type_name),
+        # so an ``audit`` expectation is satisfied by name-only matching too and the test
+        # could never fail.
         tags = col(build_schema_from_document(document), 't', 'tags')
         assert tags.enum_info is not None
-        assert (tags.enum_info.schema, tags.enum_info.values) == ('audit', ['created', 'deleted'])
+        assert (tags.enum_info.schema, tags.enum_info.values) == ('public', ['active', 'archived'])
 
     def test_a_function_parameter_links_to_its_own_schema(self) -> None:
         document = dict(TWO_NAMESPACE_DOCUMENT)
@@ -391,12 +469,20 @@ class TestFidelityFloor:
         emitted = emit(schema)
         assert '    """Users Insert Schema."""\n\n    # Required fields\n    email: str' in emitted
 
-    def test_no_unique_or_check_constraints_exist_anywhere(self, document: dict[str, Any]) -> None:
+    def test_no_check_or_exclude_constraints_exist_anywhere(self, document: dict[str, Any]) -> None:
+        # The document carries no constraint information at all. The only UNIQUE rows that
+        # can exist are a view's downgraded `<pk/>` markers (CI5-D14a) -- never a real
+        # unique constraint, and never a CHECK, which is why this source produces no
+        # ``Annotated[str, StringConstraints(...)]``.
         schema = build_schema_from_document(document)
         kinds = {c.type for t in schema.tables for c in t.constraints}
-        assert kinds <= {ConstraintType.PRIMARY_KEY, ConstraintType.FOREIGN_KEY}
-        assert not any(t.has_unique_constraint() for t in schema.tables)
+        assert kinds <= {ConstraintType.PRIMARY_KEY, ConstraintType.FOREIGN_KEY, ConstraintType.UNIQUE}
+        assert ConstraintType.CHECK not in kinds
+        assert ConstraintType.EXCLUDE not in kinds
+        unique_tables = [t.name for t in schema.tables if t.has_unique_constraint()]
+        assert unique_tables == ['active_users_view']
         assert all(c.constraint_definition is None for t in schema.tables for c in t.columns)
+        assert 'StringConstraints' not in emit(schema)
 
     def test_every_view_column_is_nullable(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)
@@ -422,6 +508,30 @@ class TestFidelityFloor:
         assert all(c.type is not ConstraintType.PRIMARY_KEY for c in view.constraints)
         # Foreign keys on a view ARE still carried -- only the PK marker is dropped.
         assert col(schema, 'active_users_view', 'favorite_product_id').is_foreign_key is True
+
+    def test_a_views_key_survives_as_a_unique_constraint(self, document: dict[str, Any]) -> None:
+        # Dropping the marker entirely also destroyed the only evidence that the view's key
+        # column is unique, so any FK pointing AT a view degraded to MANY_TO_MANY and was
+        # emitted as a plural list. The marker is the document's own statement -- it is
+        # downgraded to UNIQUE, not discarded (decision CI5-D14a).
+        schema = build_schema_from_document(document)
+        view = table(schema, 'active_users_view')
+        unique = [c for c in view.constraints if c.type is ConstraintType.UNIQUE]
+        assert [c.columns for c in unique] == [['id']]
+        assert col(schema, 'active_users_view', 'id').is_unique is True
+
+    def test_a_foreign_key_pointing_at_a_view_stays_many_to_one(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+        fk = next(
+            f for f in table(schema, 'restricted_table').foreign_keys if f.foreign_table_name == 'active_users_view'
+        )
+        assert fk.relation_type is RelationType.MANY_TO_ONE
+        # A restricted_table row references exactly ONE view row -- singular, not a list.
+        # Scoped to RestrictedTable's own class: ``products`` legitimately holds a plural
+        # ``active_users_views`` list (the view is the FK *source* there).
+        restricted_class = emit(schema).split('class RestrictedTable(RestrictedTableBaseSchema):')[1]
+        assert 'active_users_view: ActiveUsersView | None = Field(default=None)' in restricted_class
+        assert 'active_users_views: list[ActiveUsersView]' not in restricted_class
 
     def test_a_base_table_still_gets_its_primary_key(self, document: dict[str, Any]) -> None:
         # Guard rail for the view fix: it must not touch BASE TABLE classification.

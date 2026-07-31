@@ -744,21 +744,82 @@ def get_user_type_mappings(enum_type_mapping: Sequence[Row], schema: str | None 
     return mappings
 
 
-def _find_enum_type(enums: Sequence[UserEnumType], namespace: str, type_name: str) -> UserEnumType | None:
+def _rank_enum_candidates(
+    namespaces: Sequence[str],
+    token_namespace: str | None,
+    default_schema: str,
+    allow_any_schema: bool,
+) -> list[int]:
+    """Return the indexes of ``namespaces`` to try, best first, for one type token.
+
+    This is the single statement of castiron's enum-resolution order; every matching site
+    calls it so the rule cannot be re-derived (and re-broken) per call site. ``namespaces``
+    holds the owning schema of each *name-matching* candidate, in registry order.
+
+    The order is:
+
+    1. the token's own namespace, when it is schema-qualified;
+    2. otherwise ``default_schema`` -- **a bare token means the schema under
+       construction.** PostgREST omits the prefix exactly when the type is in
+       ``search_path``, so ``status`` is ``public.status``, not "whichever namespace sorts
+       first". Enum rows arrive sorted by ``(namespace, type_name)``, so without this rule
+       a bare token deterministically binds to the alphabetically-first schema;
+    3. any remaining namespace, but only when ``allow_any_schema``.
+
+    Step 3 is disabled for a *qualified* token: naming a schema castiron has no enum for
+    is a statement, not a gap, and silently binding to a same-named enum elsewhere is the
+    entire bug class this function exists to prevent.
+
+    Args:
+        namespaces: The owning schema of each name-matching candidate, in registry order.
+        token_namespace: The token's schema qualifier, or ``None`` when it is bare.
+        default_schema: The schema currently being built.
+        allow_any_schema: Whether an unrelated namespace may be used as a last resort.
+
+    Returns:
+        Candidate indexes in preference order; empty when nothing is acceptable.
+    """
+    wanted = (token_namespace or default_schema).lower()
+    preferred = [i for i, ns in enumerate(namespaces) if ns.lower() == wanted]
+    if token_namespace is not None and not allow_any_schema:
+        return preferred
+    return preferred + [i for i, ns in enumerate(namespaces) if ns.lower() != wanted]
+
+
+def _find_enum_type(
+    enums: Sequence[UserEnumType],
+    namespace: str,
+    type_name: str,
+    default_schema: str = 'public',
+) -> UserEnumType | None:
     """Return the enum named ``namespace.type_name``, or ``None``.
 
-    An exact ``(namespace, type_name)`` match wins. When no enum carries that namespace
-    the lookup falls back to the bare name, preserving the behavior of sources that do
-    not report a type's owning schema consistently -- that fallback is never *worse* than
-    a name-only match, and it never fires when the namespaces do line up.
+    An exact ``(namespace, type_name)`` match wins, then one in ``default_schema``, then
+    the bare name. The fallbacks preserve the behavior of sources that do not report a
+    type's owning schema consistently; they never fire when the namespaces line up.
     """
-    exact = next(
-        (e for e in enums if e.type_name == type_name and e.namespace.lower() == namespace.lower()),
-        None,
+    matching = [e for e in enums if e.type_name == type_name]
+    ranked = _rank_enum_candidates([e.namespace for e in matching], namespace, default_schema, allow_any_schema=True)
+    return matching[ranked[0]] if ranked else None
+
+
+def _find_enum_type_for_token(
+    enums: Sequence[UserEnumType],
+    type_token: str,
+    default_schema: str,
+) -> UserEnumType | None:
+    """Return the enum a raw type token names, honoring its namespace (or the default)."""
+    token_namespace, bare_name = split_type_name(type_token)
+    if not bare_name:
+        return None
+    matching = [e for e in enums if e.matches_type_name(type_token)]
+    ranked = _rank_enum_candidates(
+        [e.namespace for e in matching],
+        token_namespace,
+        default_schema,
+        allow_any_schema=token_namespace is None,
     )
-    if exact is not None:
-        return exact
-    return next((e for e in enums if e.type_name == type_name), None)
+    return matching[ranked[0]] if ranked else None
 
 
 def add_user_defined_types_to_tables(
@@ -775,9 +836,10 @@ def add_user_defined_types_to_tables(
     resolve a Python type; enum-name normalization is delegated to
     :meth:`UserEnumType.matches_type_name`.
 
-    Both branches are **namespace-aware**: two schemas may define a same-named enum, and
-    matching on the bare name alone gives one of the columns the other's member list --
-    silently wrong generated code, with no warning.
+    Both branches are **namespace-aware** via :func:`_rank_enum_candidates`: two schemas
+    may define a same-named enum, and matching on the bare name alone gives one of the
+    columns the other's member list -- silently wrong generated code, with no warning.
+    An unqualified token resolves against ``schema``, the schema under construction.
     """
     enums = get_enum_types(enum_types)
     mappings = get_user_type_mappings(enum_type_mapping)
@@ -785,7 +847,7 @@ def add_user_defined_types_to_tables(
     # Direct column→enum mappings.
     for mapping in mappings:
         table_key = (schema, mapping.table_name)
-        enum_info = _find_enum_type(enums, mapping.namespace, mapping.type_name)
+        enum_info = _find_enum_type(enums, mapping.namespace, mapping.type_name, schema)
         enum_values = enum_info.enum_values if enum_info else None
         if table_key in tables:
             for col in tables[table_key].columns:
@@ -793,8 +855,11 @@ def add_user_defined_types_to_tables(
                     col.user_defined_values = enum_values
                     col.enum_info = None
                     if enum_info:
+                        # The MATCHED enum's namespace, not the mapping's: when the
+                        # fallback fires they differ, and recording the mapping's would
+                        # name a schema that does not own the type.
                         col.enum_info = EnumInfo(
-                            name=enum_info.type_name, values=enum_info.enum_values, schema=mapping.namespace
+                            name=enum_info.type_name, values=enum_info.enum_values, schema=enum_info.namespace
                         )
                     break
 
@@ -807,7 +872,7 @@ def add_user_defined_types_to_tables(
             if not is_array or col.array_element_type is None:
                 continue
 
-            matched_enum = next((e for e in enums if e.matches_type_name(col.array_element_type)), None)
+            matched_enum = _find_enum_type_for_token(enums, col.array_element_type, schema)
             if matched_enum:
                 col.enum_info = EnumInfo(
                     name=matched_enum.type_name, values=matched_enum.enum_values, schema=matched_enum.namespace
@@ -837,14 +902,16 @@ def _collect_enum_registry(tables: dict[tuple[str, str], TableInfo]) -> list[Enu
 # ---------------------------------------------------------------------------
 
 
-def _match_enum(type_token: str | None, enums: Sequence[EnumInfo]) -> EnumInfo | None:
+def _match_enum(
+    type_token: str | None,
+    enums: Sequence[EnumInfo],
+    default_schema: str = 'public',
+) -> EnumInfo | None:
     """Return the registered enum named by ``type_token``, or ``None``.
 
-    Decoration is stripped by :func:`split_type_name`, so an array-decorated or quoted
-    token still resolves. A **schema-qualified** token (``audit.status``) must match both
-    the schema and the name: two schemas may define a same-named enum, and falling back
-    to the bare name would hand the parameter the wrong member list. An **unqualified**
-    token matches on name alone -- that is all the information it carries.
+    Decoration is stripped by :func:`split_type_name`, then :func:`_rank_enum_candidates`
+    applies castiron's single enum-resolution order: a qualified token must match its own
+    schema, and a bare token resolves against ``default_schema`` before anything else.
     """
     if not type_token:
         return None
@@ -853,20 +920,28 @@ def _match_enum(type_token: str | None, enums: Sequence[EnumInfo]) -> EnumInfo |
         return None
 
     lowered = bare_name.lower()
-    if namespace is not None:
-        return next(
-            (e for e in enums if e.name.lower() == lowered and e.schema.lower() == namespace.lower()),
-            None,
-        )
-    return next((e for e in enums if e.name.lower() == lowered), None)
+    matching = [e for e in enums if e.name.lower() == lowered]
+    ranked = _rank_enum_candidates(
+        [e.schema for e in matching],
+        namespace,
+        default_schema,
+        allow_any_schema=namespace is None,
+    )
+    return matching[ranked[0]] if ranked else None
 
 
-def construct_parameters(parameter_rows: Sequence[Row], enums: Sequence[EnumInfo] = ()) -> list[ParameterInfo]:
+def construct_parameters(
+    parameter_rows: Sequence[Row],
+    enums: Sequence[EnumInfo] = (),
+    schema: str = 'public',
+) -> list[ParameterInfo]:
     """Parse parameter rows (5-tuple contract) into :class:`ParameterInfo` nodes.
 
     Args:
         parameter_rows: The parameter rows, in the source's (pg argument) order.
         enums: The schema's enum registry, used to link a parameter whose type names one.
+        schema: The schema under construction -- an unqualified parameter type token
+            resolves against it before any other namespace.
 
     Returns:
         The parameters, in row order.
@@ -881,7 +956,7 @@ def construct_parameters(parameter_rows: Sequence[Row], enums: Sequence[EnumInfo
                 mode=normalize_parameter_mode(raw_mode),
                 has_default=bool(has_default),
                 array_element_type=array_element_type,
-                enum_info=_match_enum(array_element_type or raw_type, enums),
+                enum_info=_match_enum(array_element_type or raw_type, enums, schema),
             )
         )
     return parameters
@@ -925,7 +1000,9 @@ def construct_functions(
             FunctionInfo(
                 name=function_name,
                 schema=row_schema if row_schema else schema,
-                parameters=construct_parameters(parameters or (), enums),
+                # The function's OWN schema resolves its bare parameter tokens: an
+                # unqualified type in an `audit` function means `audit.<type>`.
+                parameters=construct_parameters(parameters or (), enums, row_schema if row_schema else schema),
                 return_type=return_type,
                 returns_set=returns_set,
                 volatility=normalize_volatility(raw_volatility),

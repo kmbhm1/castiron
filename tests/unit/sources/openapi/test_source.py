@@ -126,10 +126,168 @@ class TestSchemaShape:
         assert labels.enum_info is None
         assert 'labels: list[Any] | None' in emit(schema)
 
+    def test_an_enum_array_links_even_when_its_table_sorts_first(self) -> None:
+        # The cross-link must not depend on the scalar column's table being parsed first.
+        # ``aaa`` (the array) sorts before ``zzz`` (the scalar that supplies the labels).
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'aaa': {'properties': {'labels': {'format': 'mood[]', 'type': 'array', 'items': {'type': 'string'}}}},
+                'zzz': {'properties': {'mood': {'format': 'mood', 'type': 'string', 'enum': ['happy', 'sad']}}},
+            },
+            'paths': {'/aaa': {'get': {}, 'post': {}}, '/zzz': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        labels = col(schema, 'aaa', 'labels')
+        assert labels.enum_info is not None
+        assert labels.enum_info.values == ['happy', 'sad']
+        assert 'labels: list[PublicMoodEnum] | None' in emit(schema)
+
     def test_a_reserved_column_name_is_aliased(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)
         field_class = col(schema, 'users', 'field_class')
         assert field_class.alias == 'class'
+
+    def test_the_model_prefix_flag_reaches_keys_and_constraints(self) -> None:
+        # Regression: the flag is exposed on this public entrypoint, so it must reach
+        # *every* place a column name is standardized -- not just the column rows.
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'parent': {
+                    'required': ['model_id'],
+                    'properties': {
+                        'model_id': {
+                            'format': 'int32',
+                            'type': 'integer',
+                            'description': 'Note:\nThis is a Primary Key.<pk/>',
+                        }
+                    },
+                },
+                'child': {
+                    'required': ['model_ref'],
+                    'properties': {
+                        'model_ref': {
+                            'format': 'int32',
+                            'type': 'integer',
+                            'description': (
+                                'Note:\nThis is a Foreign Key to '
+                                "`parent.model_id`.<fk table='parent' column='model_id'/>"
+                            ),
+                        }
+                    },
+                },
+            },
+            'paths': {'/parent': {'get': {}, 'post': {}}, '/child': {'get': {}, 'post': {}}},
+        }
+
+        protected = build_schema_from_document(document)
+        assert table(protected, 'parent').primary_key() == ['field_model_id']
+        assert col(protected, 'parent', 'field_model_id').primary is True
+        assert col(protected, 'child', 'field_model_ref').is_foreign_key is True
+
+        unprotected = build_schema_from_document(document, disable_model_prefix_protection=True)
+        assert table(unprotected, 'parent').primary_key() == ['model_id']
+        assert col(unprotected, 'parent', 'model_id').primary is True
+        assert col(unprotected, 'child', 'model_ref').is_foreign_key is True
+        assert table(unprotected, 'child').foreign_keys[0].column_name == 'model_ref'
+
+
+# ---------------------------------------------------------------------------
+# Enum namespaces -- two enums may share a bare name across schemas.
+# ---------------------------------------------------------------------------
+
+
+TWO_NAMESPACE_DOCUMENT: dict[str, Any] = {
+    'swagger': '2.0',
+    'definitions': {
+        't': {
+            'type': 'object',
+            'properties': {
+                'a': {'format': 'public.status', 'type': 'string', 'enum': ['active', 'archived']},
+                'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
+            },
+        }
+    },
+    'paths': {'/t': {'get': {}, 'post': {}}},
+}
+
+
+@pytest.mark.unit
+class TestEnumNamespaces:
+    """Regression cover for the namespace collision.
+
+    A schema-qualified ``format`` token (PostgREST emits one whenever the type is
+    outside ``search_path``) means a single document can carry two enums with the same
+    bare name in different schemas. Matching on the bare name alone silently gave both
+    columns the *same* member list.
+    """
+
+    def test_columns_resolve_to_their_own_schemas_enum(self) -> None:
+        schema = build_schema_from_document(TWO_NAMESPACE_DOCUMENT)
+        a = col(schema, 't', 'a')
+        b = col(schema, 't', 'b')
+        assert a.enum_info is not None
+        assert b.enum_info is not None
+        assert (a.enum_info.schema, a.enum_info.values) == ('public', ['active', 'archived'])
+        assert (b.enum_info.schema, b.enum_info.values) == ('audit', ['created', 'deleted'])
+
+    def test_the_emitted_enum_classes_carry_their_own_members(self) -> None:
+        emitted = emit(build_schema_from_document(TWO_NAMESPACE_DOCUMENT))
+        assert 'class AuditStatusEnum(str, Enum):\n    CREATED = "created"\n    DELETED = "deleted"' in emitted
+        assert 'class PublicStatusEnum(str, Enum):\n    ACTIVE = "active"\n    ARCHIVED = "archived"' in emitted
+        assert 'a: PublicStatusEnum | None' in emitted
+        assert 'b: AuditStatusEnum | None' in emitted
+
+    def test_a_qualified_array_element_links_to_its_own_schema(self) -> None:
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                't': {
+                    'properties': {
+                        'a': {'format': 'public.status', 'type': 'string', 'enum': ['active', 'archived']},
+                        'b': {'format': 'audit.status', 'type': 'string', 'enum': ['created', 'deleted']},
+                        'tags': {
+                            'format': 'audit.status[]',
+                            'type': 'array',
+                            'items': {'type': 'string'},
+                        },
+                    }
+                }
+            },
+            'paths': {'/t': {'get': {}, 'post': {}}},
+        }
+        tags = col(build_schema_from_document(document), 't', 'tags')
+        assert tags.enum_info is not None
+        assert (tags.enum_info.schema, tags.enum_info.values) == ('audit', ['created', 'deleted'])
+
+    def test_a_function_parameter_links_to_its_own_schema(self) -> None:
+        document = dict(TWO_NAMESPACE_DOCUMENT)
+        document['paths'] = {
+            '/t': {'get': {}, 'post': {}},
+            '/rpc/f': {
+                'post': {
+                    'parameters': [
+                        {
+                            'name': 'args',
+                            'in': 'body',
+                            'schema': {
+                                'properties': {
+                                    'p': {'format': 'audit.status', 'type': 'string'},
+                                    'q': {'format': 'public.status', 'type': 'string'},
+                                }
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+        function = build_schema_from_document(document).functions[0]
+        p, q = function.parameters
+        assert p.enum_info is not None
+        assert q.enum_info is not None
+        assert (p.enum_info.schema, p.enum_info.values) == ('audit', ['created', 'deleted'])
+        assert (q.enum_info.schema, q.enum_info.values) == ('public', ['active', 'archived'])
 
     def test_the_schema_argument_flows_through(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document, schema='api')
@@ -244,6 +402,32 @@ class TestFidelityFloor:
         schema = build_schema_from_document(document)
         view = table(schema, 'active_users_view')
         assert all(c.is_nullable for c in view.columns)
+
+    def test_a_view_carries_no_primary_key_even_though_the_document_marks_one(self, document: dict[str, Any]) -> None:
+        # The document DOES mark view primary keys (PostgREST propagates keys through
+        # views, spec §3.2), but ``TableInfo.primary_key()`` is defined to be empty for a
+        # VIEW. The source therefore drops the marker rather than leaving the IR
+        # self-contradicting: ``col.primary`` and ``primary_key()`` must agree, because
+        # emitters read one or the other.
+        assert (
+            'This is a Primary Key.<pk/>'
+            in document['definitions']['active_users_view']['properties']['id']['description']
+        )
+
+        schema = build_schema_from_document(document)
+        view = table(schema, 'active_users_view')
+        assert view.table_type == 'VIEW'
+        assert view.primary_key() == []
+        assert all(c.primary is False for c in view.columns)
+        assert all(c.type is not ConstraintType.PRIMARY_KEY for c in view.constraints)
+        # Foreign keys on a view ARE still carried -- only the PK marker is dropped.
+        assert col(schema, 'active_users_view', 'favorite_product_id').is_foreign_key is True
+
+    def test_a_base_table_still_gets_its_primary_key(self, document: dict[str, Any]) -> None:
+        # Guard rail for the view fix: it must not touch BASE TABLE classification.
+        schema = build_schema_from_document(document)
+        assert table(schema, 'restricted_table').primary_key() == ['id']
+        assert col(schema, 'restricted_table', 'id').primary is True
 
     def test_smallint_and_integer_are_indistinguishable(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)
@@ -383,6 +567,7 @@ class TestModuleHygiene:
             'castiron',
             'collections',
             'dataclasses',
+            'http',
             'json',
             'logging',
             're',

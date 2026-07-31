@@ -46,6 +46,10 @@ move:
 - Views carry no marker at all, so ``table_type`` is a two-signal heuristic biased toward
   ``BASE TABLE`` (see :func:`classify_table_type`), and PostgREST reports every view column
   as nullable.
+- **A view's primary key is dropped.** The document *does* mark it (PostgREST propagates
+  keys through views), but :meth:`castiron.ir.TableInfo.primary_key` is defined to be empty
+  for a VIEW, so carrying the marker would leave ``ColumnInfo.primary`` and
+  ``primary_key()`` disagreeing. Foreign keys on a view are kept.
 - Enum **values** are absent for array columns (``pg_enum`` is keyed on the base type), so
   such a column links only when the same enum also appears on a scalar column.
 - A function's **return type** and **set-returning** flag are never encoded; volatility is a
@@ -98,12 +102,26 @@ _RPC_PREFIX = '/rpc/'
 _WRITE_METHODS = ('post', 'patch', 'delete')
 
 # Description markers, exactly as ``makeProperty`` builds them.
-_PK_MARKER = re.compile(r'<pk\s*/>')
-_FK_MARKER = re.compile(r"<fk\s+table='([^']*)'\s+column='([^']*)'\s*/>")
+#
+# The marker *shapes* are declared once and reused by both the extraction patterns and the
+# ``Note:`` block pattern. Spelling them out twice let them drift: the block pattern once
+# hard-coded single spaces while the extraction pattern allowed ``\s+``, so a marker with
+# two spaces was detected but its block was NOT stripped -- and the raw marker text landed
+# verbatim in the emitted ``Field(description=...)``.
+_PK_MARKER_SHAPE = r'<pk\s*/>'
+_FK_MARKER_SHAPE = r"<fk\s+table='{table}'\s+column='{column}'\s*/>"
+_ATTRIBUTE = r"[^']*"
+_CAPTURED_ATTRIBUTE = r"([^']*)"
+
+_PK_MARKER = re.compile(_PK_MARKER_SHAPE)
+_FK_MARKER = re.compile(_FK_MARKER_SHAPE.format(table=_CAPTURED_ATTRIBUTE, column=_CAPTURED_ATTRIBUTE))
 _NOTE_BLOCK = re.compile(
     r'(?:\n\n)?Note:\n'
-    r'(?:(?:This is a Primary Key\.<pk/>'
-    r"|This is a Foreign Key to `[^`]*`\.<fk table='[^']*' column='[^']*'/>)\n?)+\s*$"
+    r'(?:(?:This is a Primary Key\.'
+    + _PK_MARKER_SHAPE
+    + r'|This is a Foreign Key to `[^`]*`\.'
+    + _FK_MARKER_SHAPE.format(table=_ATTRIBUTE, column=_ATTRIBUTE)
+    + r')\n?)+\s*$'
 )
 
 
@@ -399,7 +417,10 @@ def _parse_definition(
             )
         )
 
-        if markers.foreign_table is not None and markers.foreign_column is not None:
+        # Truthiness, not `is not None`: `<fk table='' column=''/>` names nothing, and the
+        # builder drops the edge anyway -- but the synthesized constraint row would survive
+        # and set `is_foreign_key` on a column that has no relationship.
+        if markers.foreign_table and markers.foreign_column:
             constraint_name = f'{table_name}_{column_name}_fkey'
             rows.fks.append(
                 (
@@ -424,8 +445,15 @@ def _parse_definition(
 
         _record_enum(table_name, column_name, prop, data_type, schema, rows)
 
-    if pk_columns:
+    # A VIEW gets no primary-key row. PostgREST *does* propagate `<pk/>` markers through
+    # views, but ``TableInfo.primary_key()`` is defined to be empty for a VIEW, so
+    # synthesizing the constraint would set ``ColumnInfo.primary = True`` on a table whose
+    # ``primary_key()`` says ``[]`` -- an IR that contradicts itself, and that different
+    # emitters would read differently. Foreign keys on a view are still carried.
+    if pk_columns and table_type != 'VIEW':
         rows.constraints.append((f'{table_name}_pkey', table_name, pk_columns, 'p', None))
+    elif pk_columns:
+        logger.debug(f'Dropping the primary-key markers on {table_name}: castiron models a VIEW as having no key')
     rows.constraints.extend(fk_constraints)
 
 

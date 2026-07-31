@@ -5,6 +5,7 @@
 and are tested directly.
 """
 
+import http.client
 import io
 import json
 import ssl
@@ -242,15 +243,60 @@ class TestFetchErrors:
         with pytest.raises(SourceFetchError, match='Could not reach'):
             fetch_openapi_document('https://abc.supabase.co')
 
-    def test_a_tls_failure_names_the_os_trust_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # castiron uses stdlib urllib, which verifies against the OS trust store rather
-        # than a bundled certifi -- the message has to say so or the user is stuck.
-        monkeypatch.setattr(fetch_module, 'urlopen', raiser(ssl.SSLError('certificate verify failed')))
+    def test_a_real_cert_verification_failure_names_the_os_trust_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The shape stdlib urllib *actually* produces for a bad certificate.
+
+        ``AbstractHTTPHandler.do_open`` does ``except OSError as err: raise URLError(err)``
+        and ``ssl.SSLCertVerificationError`` is an ``OSError``, so the SSL error arrives
+        **wrapped** -- never bare. An earlier version of this test injected a bare
+        ``ssl.SSLError``, a shape urllib never produces here, and therefore passed while
+        the trust-store message (binding per decision CI5-D3) was unreachable.
+        """
+        cause = URLError(ssl.SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed'))
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(cause))
+
         with pytest.raises(SourceFetchError) as excinfo:
             fetch_openapi_document('https://abc.supabase.co')
+
         message = str(excinfo.value)
         assert 'trust store' in message
         assert 'Install Certificates.command' in message
+        assert 'https://abc.supabase.co/rest/v1/' in message
+        assert excinfo.value.__cause__ is cause
+
+    def test_a_bare_ssl_error_also_names_the_os_trust_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Belt and braces: an SSLError raised while *reading* the body is not wrapped.
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(ssl.SSLError('decryption failed')))
+        with pytest.raises(SourceFetchError, match='trust store'):
+            fetch_openapi_document('https://abc.supabase.co')
+
+    def test_a_non_ssl_url_error_keeps_the_plain_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A wrapped *non*-SSL reason must not be mistaken for a certificate problem.
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(URLError(OSError('no route to host'))))
+        with pytest.raises(SourceFetchError) as excinfo:
+            fetch_openapi_document('https://abc.supabase.co')
+        assert 'trust store' not in str(excinfo.value)
+        assert 'Could not reach' in str(excinfo.value)
+
+    def test_a_truncated_response_stays_inside_the_error_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # http.client exceptions are neither OSError nor ValueError, so they escaped the
+        # SourceFetchError contract entirely.
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(http.client.IncompleteRead(b'partial')))
+        with pytest.raises(SourceFetchError, match='Could not reach'):
+            fetch_openapi_document('https://abc.supabase.co')
+
+    @pytest.mark.parametrize(
+        'exc',
+        [
+            http.client.BadStatusLine('garbage'),
+            http.client.LineTooLong('header line'),
+            http.client.RemoteDisconnected('closed'),
+        ],
+    )
+    def test_every_http_protocol_error_is_a_fetch_error(self, monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(exc))
+        with pytest.raises(SourceFetchError):
+            fetch_openapi_document('https://abc.supabase.co')
 
     def test_a_malformed_url_is_a_fetch_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # ``Request`` itself raises ValueError("unknown url type") before any I/O happens.

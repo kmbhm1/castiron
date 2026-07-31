@@ -290,6 +290,20 @@ class TestMarkers:
         assert markers.foreign_table is None
         assert markers.comment == 'Note:\nThis is something else.<mystery/>'
 
+    def test_extra_whitespace_inside_a_marker_still_strips_the_note_block(self) -> None:
+        # _FK_MARKER tolerates \s+ between attributes; _NOTE_BLOCK must tolerate exactly
+        # the same shapes or the raw marker text leaks into the emitted description.
+        markers = parse_column_description(
+            "Real comment.\n\nNote:\nThis is a Foreign Key to `users.id`.<fk  table='users'  column='id'/>"
+        )
+        assert (markers.foreign_table, markers.foreign_column) == ('users', 'id')
+        assert markers.comment == 'Real comment.'
+
+    def test_extra_whitespace_in_a_pk_marker_still_strips_the_note_block(self) -> None:
+        markers = parse_column_description('Real comment.\n\nNote:\nThis is a Primary Key.<pk />')
+        assert markers.is_primary_key is True
+        assert markers.comment == 'Real comment.'
+
     def test_markers_are_detected_position_independently(self) -> None:
         markers = parse_column_description("leading <pk/> and <fk table='t' column='c'/> markers")
         assert markers.is_primary_key is True
@@ -311,8 +325,10 @@ class TestConstraints:
     def test_one_primary_key_row_per_table_in_document_order(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         primary_keys = {row[1]: row for row in rows.constraints if row[3] == 'p'}
+        # active_users_view is deliberately absent: castiron models a VIEW as having no
+        # primary key, so its <pk/> markers are dropped rather than left contradicting
+        # TableInfo.primary_key().
         assert set(primary_keys) == {
-            'active_users_view',
             'order_items',
             'orders',
             'products',
@@ -343,6 +359,30 @@ class TestConstraints:
     def test_a_table_with_no_primary_key_gets_no_primary_key_row(self) -> None:
         rows = parse_openapi_document(minimal_document({'a': {'format': 'text'}}))
         assert rows.constraints == ()
+
+    def test_an_empty_foreign_key_marker_produces_no_rows(self) -> None:
+        # `<fk table='' column=''/>` names nothing. The builder drops the edge anyway, so
+        # emitting rows for it would leave a bogus constraint that sets is_foreign_key on a
+        # column with no relationship.
+        rows = parse_openapi_document(
+            minimal_document(
+                {
+                    'a': {
+                        'format': 'int32',
+                        'description': "Note:\nThis is a Foreign Key to `.`.<fk table='' column=''/>",
+                    }
+                }
+            )
+        )
+        assert rows.fk_details == ()
+        assert rows.constraints == ()
+
+    def test_a_view_gets_no_primary_key_row(self, document: dict[str, Any]) -> None:
+        # ``TableInfo.primary_key()`` is empty for a VIEW by definition, so synthesizing a
+        # PK constraint would leave ``col.primary`` and ``primary_key()`` disagreeing.
+        rows = parse_openapi_document(document)
+        view_constraints = [row for row in rows.constraints if row[1] == 'active_users_view']
+        assert [row[3] for row in view_constraints] == ['f']
 
 
 # ---------------------------------------------------------------------------

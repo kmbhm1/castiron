@@ -24,6 +24,7 @@ References:
 import json
 import logging
 import ssl
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
@@ -131,18 +132,43 @@ def fetch_openapi_document(
             body: bytes = response.read()
     except HTTPError as exc:
         raise SourceFetchError(_http_error_message(target, exc)) from exc
-    except ssl.SSLError as exc:
-        raise SourceFetchError(
-            f'TLS verification failed for {target}: {exc}. castiron verifies certificates against the operating '
-            "system's trust store; on a python.org macOS build you may need to run the bundled "
-            "'Install Certificates.command' once, or point SSL_CERT_FILE at a CA bundle."
-        ) from exc
-    except (OSError, ValueError) as exc:
-        # URLError and TimeoutError are both OSError subclasses; ValueError covers a
-        # malformed URL ("unknown url type"), which Request itself raises.
+    except (OSError, ValueError, HTTPException) as exc:
+        # URLError and TimeoutError are OSError subclasses; ValueError covers a malformed
+        # URL ("unknown url type"), which ``Request`` itself raises; HTTPException covers
+        # the protocol-level failures (IncompleteRead, BadStatusLine, LineTooLong) that
+        # are neither of the other two and would otherwise escape SourceFetchError.
+        ssl_error = _ssl_cause(exc)
+        if ssl_error is not None:
+            raise SourceFetchError(_tls_error_message(target, ssl_error)) from exc
         raise SourceFetchError(f'Could not reach {target}: {exc}') from exc
 
     return _decode_document(target, body)
+
+
+def _ssl_cause(exc: BaseException) -> ssl.SSLError | None:
+    """Return the :class:`ssl.SSLError` behind ``exc``, if there is one.
+
+    A certificate failure almost never arrives bare: ``AbstractHTTPHandler.do_open`` does
+    ``except OSError as err: raise URLError(err)``, and ``ssl.SSLCertVerificationError``
+    *is* an ``OSError`` -- so the real error is wrapped in ``URLError.reason``. Checking
+    only ``isinstance(exc, ssl.SSLError)`` therefore never fires for the failure the
+    trust-store message exists to explain.
+    """
+    if isinstance(exc, ssl.SSLError):
+        return exc
+    reason = getattr(exc, 'reason', None)
+    if isinstance(reason, ssl.SSLError):
+        return reason
+    return None
+
+
+def _tls_error_message(target: str, exc: ssl.SSLError) -> str:
+    """Build the TLS failure message, naming the OS trust store (decision CI5-D3)."""
+    return (
+        f'TLS verification failed for {target}: {exc}. castiron verifies certificates against the operating '
+        "system's trust store; on a python.org macOS build you may need to run the bundled "
+        "'Install Certificates.command' once, or point SSL_CERT_FILE at a CA bundle."
+    )
 
 
 def _decode_document(target: str, body: bytes) -> dict[str, Any]:

@@ -14,6 +14,7 @@ from castiron.sources.openapi.fetch import (
     normalize_postgrest_url,
 )
 from castiron.sources.openapi.parse import (
+    INTEGER_FAMILY,
     OPENAPI_FORMAT_ALIASES,
     ColumnMarkers,
     OpenApiRows,
@@ -27,6 +28,7 @@ from castiron.sources.openapi.source import build_schema_from_document, load_ope
 
 __all__ = [
     'DEFAULT_TIMEOUT',
+    'INTEGER_FAMILY',
     'OPENAPI_FORMAT_ALIASES',
     'ColumnMarkers',
     'OpenApiRows',

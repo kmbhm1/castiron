@@ -98,7 +98,9 @@ SWAGGER_TYPE_FALLBACKS: dict[str, str] = {
 }
 
 #: Types eligible for the opt-in surrogate-primary-key inference (post-normalization).
-_INTEGER_FAMILY = frozenset({'smallint', 'integer', 'bigint'})
+#: Public because the CLI's identity-PK notice (CI-006) applies the same rule to the IR;
+#: one definition, so the two cannot drift (Hard Rule #6).
+INTEGER_FAMILY = frozenset({'smallint', 'integer', 'bigint'})
 
 #: The path prefix PostgREST exposes database functions under.
 _RPC_PREFIX = '/rpc/'
@@ -402,7 +404,7 @@ def _parse_definition(
         is_nullable = column_name not in required
         default = stringify_default(prop['default']) if 'default' in prop else None
         is_inferred_identity = (
-            column_name == sole_pk_column and not is_nullable and default is None and data_type in _INTEGER_FAMILY
+            column_name == sole_pk_column and not is_nullable and default is None and data_type in INTEGER_FAMILY
         )
 
         rows.columns.append(

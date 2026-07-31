@@ -38,6 +38,8 @@ dependencies = [
     "click>=8.1.7",
     "inflection>=0.5.1",
     "pydantic>=2.13.4",
+    # tomllib is stdlib from 3.11; the 3.10 leg needs a parser to read [tool.castiron].
+    "tomli>=2.0.1; python_version < '3.11'",
 ]
 
 [project.urls]
@@ -59,6 +61,9 @@ dev = [
     "python-semantic-release>=9.8.5",
     "pre-commit>=3.7.1",
     "commitizen>=3.28.0",
+    # Unconditional in dev so mypy sees real tomli types on every interpreter: at
+    # python_version = "3.10" it analyses the `import tomli as tomllib` branch.
+    "tomli>=2.0.1",
 ]
 docs = [
     "mkdocs>=1.6.0",

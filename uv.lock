@@ -74,6 +74,7 @@ dependencies = [
     { name = "click" },
     { name = "inflection" },
     { name = "pydantic" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.dev-dependencies]
@@ -86,6 +87,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "python-semantic-release" },
     { name = "ruff" },
+    { name = "tomli" },
     { name = "vulture" },
 ]
 docs = [
@@ -101,6 +103,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
     { name = "inflection", specifier = ">=0.5.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -113,6 +116,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "python-semantic-release", specifier = ">=9.8.5" },
     { name = "ruff", specifier = ">=0.6.0" },
+    { name = "tomli", specifier = ">=2.0.1" },
     { name = "vulture", specifier = ">=2.14" },
 ]
 docs = [

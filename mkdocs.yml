@@ -27,10 +27,28 @@ theme:
     - navigation.sections
     - content.code.copy
 
+# Broken cross-references are a docs bug, so `mkdocs build --strict` should fail on them.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
 markdown_extensions:
   - admonition
+  - attr_list
+  - def_list
+  - tables
+  # Generates the CLI reference from the click command itself, so `castiron gen --help`
+  # and docs/reference/cli.md can never disagree.
+  - mkdocs-click
+  - pymdownx.details
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - toc:
       permalink: true
 
@@ -43,3 +61,12 @@ plugins:
 
 nav:
   - Home: index.md
+  - Getting started:
+      - Quickstart: getting-started/quickstart.md
+  - Sources:
+      - OpenAPI / PostgREST: sources/openapi.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Environment variables: reference/environment-variables.md
+      - Exit codes: reference/exit-codes.md

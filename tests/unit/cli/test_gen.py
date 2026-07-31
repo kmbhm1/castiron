@@ -507,6 +507,65 @@ class TestSecrets:
         assert SECRET not in result.stderr
         assert SECRET not in result.output
 
+    def test_a_key_with_a_trailing_carriage_return_is_trimmed_before_it_is_sent(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+    ) -> None:
+        # A key file with Windows line endings -- `--key "$(cat key.txt)"` strips the \n and
+        # leaves the \r. Sent as-is it makes `http.client.putheader` raise *before* the socket
+        # opens, and that ValueError names the header value with %r, escaping the \r out of
+        # existence so `redact` matched nothing and the whole JWT printed at exit 1.
+        captured: list[Request] = []
+
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            captured.append(request)
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\r\n', '--output', 'out')
+        assert result.exit_code == 0, result.output
+        assert captured[0].get_header('Apikey') == SECRET
+        assert captured[0].get_header('Authorization') == f'Bearer {SECRET}'
+        assert SECRET not in result.output
+
+    def test_a_key_from_the_environment_is_trimmed_too(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+    ) -> None:
+        # The sanitation hangs off the option, not the command body, so it covers the
+        # CASTIRON_KEY / SUPABASE_KEY fallbacks as well.
+        captured: list[Request] = []
+
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            captured.append(request)
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        monkeypatch.setenv('CASTIRON_KEY', f'{SECRET}\r')
+        assert run(runner, '--from', 'https://x.supabase.co', '--output', 'out').exit_code == 0
+        assert captured[0].get_header('Apikey') == SECRET
+
+    def test_a_key_with_an_interior_control_character_is_refused_without_echoing_it(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Trimming cannot repair this one, so castiron refuses rather than sending a value it
+        # knows an HTTP client will reject with the key in the error text.
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('a refused key must never reach the fetcher')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', explode)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\rmore')
+        assert result.exit_code == 2
+        assert 'control character' in result.output
+        assert 'CRLF' in result.output
+        assert SECRET not in result.output
+
     def test_the_origin_description_is_redacted_even_on_its_defensive_fallback(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

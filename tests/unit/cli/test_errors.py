@@ -1,5 +1,7 @@
 """Exit codes, the error boundary, secret redaction, and the ``Hint:`` lines."""
 
+import json
+import socket
 from typing import Any
 from urllib.error import HTTPError, URLError
 
@@ -16,8 +18,10 @@ from castiron.cli.errors import (
     REDACTED,
     cli_error_handling,
     key_hint,
+    key_option_callback,
     key_provenance,
     redact,
+    sanitize_key,
     schema_hint,
     source_error_hint,
 )
@@ -64,6 +68,97 @@ class TestRedact:
 
     def test_no_key_given_is_a_no_op_on_the_literal_pass(self) -> None:
         assert redact('plain message', None) == 'plain message'
+
+
+# ⚠ `redact` masks a LITERAL match, so any surface that *renders* the key escapes past it.
+# This is the reproduction, and it needs no network: `http.client.putheader` validates header
+# values before the socket is opened, and reports the bad one with `%r`.
+JWT = 'eyJhbGciOiJIUzI1NiJ9.SUPERSECRETVALUE'
+
+
+@pytest.mark.unit
+class TestRedactRenderedKeys:
+    @pytest.mark.parametrize('suffix', ['\r', '\n', '\r\n', ' ', '\t'])
+    def test_it_masks_a_key_whose_trailing_whitespace_was_escaped_away(self, suffix: str) -> None:
+        # `'Invalid header value %r' % b'Bearer <jwt>\r'` renders the \r as two ordinary
+        # characters, so the raw key no longer occurs in the text being redacted.
+        rendered = f'Invalid header value {("Bearer " + JWT + suffix).encode()!r}'
+        assert JWT in rendered
+        assert JWT not in redact(rendered, JWT + suffix)
+
+    def test_it_masks_a_repr_rendered_key(self) -> None:
+        assert JWT not in redact(f'value {JWT + chr(13)!r} rejected', JWT + '\r')
+
+    def test_it_masks_a_json_escaped_key(self) -> None:
+        assert JWT not in redact(f'body {json.dumps({"apikey": JWT + chr(10)})}', JWT + '\n')
+
+    def test_a_clean_key_is_masked_exactly_as_before(self) -> None:
+        # The spelling expansion must not change the ordinary case.
+        assert redact(f'HTTP 401 for {JWT}', JWT) == f'HTTP 401 for {REDACTED}'
+
+    def test_a_short_key_is_still_left_alone_in_every_spelling(self) -> None:
+        assert redact('the code is nope and nope', 'nop\r') == 'the code is nope and nope'
+
+
+@pytest.mark.unit
+class TestSanitizeKey:
+    def test_no_key_stays_none(self) -> None:
+        assert sanitize_key(None) is None
+
+    @pytest.mark.parametrize('raw', [JWT + '\r', JWT + '\n', JWT + '\r\n', ' ' + JWT + ' ', JWT + '\x00'])
+    def test_surrounding_control_characters_are_trimmed(self, raw: str) -> None:
+        # A CRLF key file is unambiguous user error with exactly one sensible reading.
+        assert sanitize_key(raw) == JWT
+
+    def test_a_clean_key_is_returned_unchanged(self) -> None:
+        assert sanitize_key(JWT) == JWT
+
+    @pytest.mark.parametrize('raw', ['eyJhbGci\rOiJIUzI1NiJ9', 'eyJhbGci\nOiJIUzI1NiJ9', 'eyJhbGci\tOiJIUzI1NiJ9'])
+    def test_an_interior_control_character_is_refused(self, raw: str) -> None:
+        # Trimming cannot repair it: the value is not the key the user thinks it is.
+        with pytest.raises(click.UsageError) as excinfo:
+            sanitize_key(raw)
+        assert 'control character' in excinfo.value.message
+        assert 'CRLF' in excinfo.value.message
+
+    def test_the_refusal_never_echoes_the_key(self) -> None:
+        with pytest.raises(click.UsageError) as excinfo:
+            sanitize_key(f'{JWT}\r{JWT}')
+        assert JWT not in excinfo.value.message
+
+    def test_an_all_whitespace_key_trims_to_empty(self) -> None:
+        assert sanitize_key(' \r\n ') == ''
+
+
+@pytest.mark.unit
+class TestKeyOptionCallback:
+    def test_it_sanitizes_the_resolved_value(self) -> None:
+        ctx = click.Context(click.Command('gen'))
+        assert key_option_callback(ctx, click.Option(['--key']), JWT + '\r') == JWT
+
+    def test_resilient_parsing_never_raises(self) -> None:
+        # Shell completion parses with resilient_parsing set; raising there breaks completion.
+        ctx = click.Context(click.Command('gen'))
+        ctx.resilient_parsing = True
+        raw = f'{JWT}\r{JWT}'
+        assert key_option_callback(ctx, click.Option(['--key']), raw) == raw
+
+
+@pytest.mark.unit
+class TestTheHeaderValueLeak:
+    def test_a_crlf_key_never_reaches_the_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The finding, end to end at the source layer: a key with a trailing \r makes
+        # `putheader` raise before any socket is opened, the fetcher wraps the ValueError, and
+        # `redact` used to match nothing because the \r had been escaped into two characters.
+        # Fails against main: the full JWT prints on the ordinary `Error:` line at exit 1.
+        def no_sockets(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('this path must not open a socket')
+
+        monkeypatch.setattr(socket, 'create_connection', no_sockets)
+        with pytest.raises(SourceError) as excinfo:
+            fetch_openapi_document('https://x.supabase.co', key=JWT + '\r')
+        assert JWT in str(excinfo.value)  # not vacuous: the raw message really does carry it
+        assert JWT not in redact(str(excinfo.value), JWT + '\r')
 
 
 @pytest.mark.unit

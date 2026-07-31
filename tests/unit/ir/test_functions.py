@@ -24,8 +24,8 @@ from castiron.ir.build import (
     PARAMETER_MODE_MAP,
     VOLATILITY_MAP,
     normalize_parameter_mode,
-    normalize_type_name,
     normalize_volatility,
+    split_type_name,
 )
 
 
@@ -140,18 +140,22 @@ class TestNormalization:
     @pytest.mark.parametrize(
         ('given', 'expected'),
         [
-            ('order_status', 'order_status'),
-            ('_order_status', 'order_status'),
-            ('__order_status', 'order_status'),
-            ('order_status[]', 'order_status'),
-            ('"FourthType"', 'FourthType'),
-            ('public.order_status', 'order_status'),
-            ('test.schema.order_status', 'order_status'),
-            ('', ''),
+            ('order_status', (None, 'order_status')),
+            ('_order_status', (None, 'order_status')),
+            ('__order_status', (None, 'order_status')),
+            ('order_status[]', (None, 'order_status')),
+            ('_order_status[]', (None, 'order_status')),
+            ('"FourthType"', (None, 'FourthType')),
+            # The namespace is preserved, not discarded -- it is the ONLY thing that tells
+            # ``public.status`` apart from ``audit.status``.
+            ('public.order_status', ('public', 'order_status')),
+            ('audit.order_status[]', ('audit', 'order_status')),
+            ('test.schema.order_status', ('test.schema', 'order_status')),
+            ('', (None, '')),
         ],
     )
-    def test_normalize_type_name(self, given: str, expected: str) -> None:
-        assert normalize_type_name(given) == expected
+    def test_split_type_name(self, given: str, expected: tuple[str | None, str]) -> None:
+        assert split_type_name(given) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +234,40 @@ class TestConstructFunctions:
             enums=enums,
         )
         assert [p.enum_info for p in functions[0].parameters] == [enums[0], enums[0]]
+
+    def test_a_qualified_token_picks_the_enum_from_its_own_schema(self) -> None:
+        # Two enums may share a bare name across schemas; matching on the name alone
+        # silently linked the parameter to the wrong member list.
+        public_status = EnumInfo(name='status', values=['open', 'closed'], schema='public')
+        audit_status = EnumInfo(name='status', values=['created', 'deleted'], schema='audit')
+        functions = construct_functions(
+            [
+                function_row(
+                    'f',
+                    parameters=[
+                        parameter_row('p', 'audit.status'),
+                        parameter_row('q', 'public.status'),
+                        parameter_row('r', 'audit.status[]', array_element_type='audit.status'),
+                    ],
+                )
+            ],
+            enums=[public_status, audit_status],
+        )
+        assert [p.enum_info for p in functions[0].parameters] == [audit_status, public_status, audit_status]
+
+    def test_a_qualified_token_for_an_unknown_schema_stays_unlinked(self) -> None:
+        # "Unknown is None, never a guess": a token that names a schema castiron has no
+        # enum for must not silently fall back to a same-named enum elsewhere.
+        functions = construct_functions(
+            [function_row('f', parameters=[parameter_row('p', 'other.status')])],
+            enums=[EnumInfo(name='status', values=['open'], schema='public')],
+        )
+        assert functions[0].parameters[0].enum_info is None
+
+    def test_a_bare_token_still_links_by_name(self) -> None:
+        enums = [EnumInfo(name='status', values=['open'], schema='public')]
+        functions = construct_functions([function_row('f', parameters=[parameter_row('p', 'status')])], enums=enums)
+        assert functions[0].parameters[0].enum_info is enums[0]
 
     def test_an_unknown_enum_token_stays_unlinked(self) -> None:
         functions = construct_functions(

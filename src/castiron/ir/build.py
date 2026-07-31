@@ -137,18 +137,25 @@ def normalize_parameter_mode(raw_mode: str | None) -> ParameterMode:
     return PARAMETER_MODE_MAP.get(raw_mode.lower(), ParameterMode.IN)
 
 
-def normalize_type_name(type_name: str) -> str:
-    """Strip pg type-name decoration so two type tokens can be compared.
+def split_type_name(type_name: str) -> tuple[str | None, str]:
+    """Split a raw type token into its optional schema qualifier and its bare name.
 
-    Removes leading underscores (pg's array-type naming, ``_int4``), a trailing ``[]``
-    (``test_status[]``), surrounding double quotes (``"FourthType"``), and schema
-    qualification (``public.Foo``). Case is preserved -- callers compare case-insensitively.
+    Removes pg decoration first -- leading underscores (the array-type naming ``_int4``),
+    a trailing ``[]`` (``test_status[]``), and surrounding double quotes
+    (``"FourthType"``) -- then splits on the last ``.``. Case is preserved; callers
+    compare case-insensitively.
+
+    The namespace matters: a schema-qualified token is the *only* thing that
+    distinguishes ``public.status`` from ``audit.status``, and two enums may legitimately
+    share a bare name across schemas. Dropping the qualifier silently resolves one of
+    them to the other's values.
 
     Args:
         type_name: The raw type token.
 
     Returns:
-        The bare type name.
+        A ``(namespace, bare_name)`` pair; ``namespace`` is ``None`` for an unqualified
+        token.
     """
     clean_name = type_name
     while clean_name.startswith('_'):
@@ -160,10 +167,8 @@ def normalize_type_name(type_name: str) -> str:
     if clean_name.startswith('"') and clean_name.endswith('"'):
         clean_name = clean_name[1:-1]
 
-    if '.' in clean_name:
-        clean_name = clean_name.split('.')[-1]
-
-    return clean_name
+    namespace, separator, bare_name = clean_name.rpartition('.')
+    return (namespace if separator else None), bare_name
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +191,18 @@ class UserEnumType:
     def matches_type_name(self, type_name: str) -> bool:
         """Whether ``type_name`` names this enum, tolerating pg array-naming quirks.
 
-        Normalization is delegated to :func:`normalize_type_name` so every caller that
-        needs to compare a raw type token to an enum name shares one implementation.
+        Decoration handling is delegated to :func:`split_type_name` so every caller that
+        compares a raw type token to an enum shares one implementation. A **schema-
+        qualified** token must also match this enum's namespace: ``audit.status`` is not
+        ``public.status``, and treating them as the same silently gives a column the wrong
+        member list. An unqualified token matches on name alone, as before.
         """
         if not type_name:
             return False
-        return self.type_name.lower() == normalize_type_name(type_name).lower()
+        namespace, bare_name = split_type_name(type_name)
+        if namespace is not None and self.namespace.lower() != namespace.lower():
+            return False
+        return self.type_name.lower() == bare_name.lower()
 
 
 @dataclass
@@ -317,12 +328,23 @@ def get_table_details_from_columns(
 # ---------------------------------------------------------------------------
 
 
-def add_foreign_key_info_to_table_details(tables: dict[tuple[str, str], TableInfo], fk_details: Sequence[Row]) -> None:
+def add_foreign_key_info_to_table_details(
+    tables: dict[tuple[str, str], TableInfo],
+    fk_details: Sequence[Row],
+    disable_model_prefix_protection: bool = False,
+) -> None:
     """Parse FK rows into :class:`ForeignKeyInfo`, skipping edges to absent tables.
 
     Column names are standardized (reserved-name protection). A first-pass relationship
     type is inferred from primary-key shape; :func:`analyze_table_relationships` refines
     it afterwards.
+
+    Args:
+        tables: The tables built from the column rows, keyed by ``(schema, name)``.
+        fk_details: Foreign-key rows (7-tuple contract).
+        disable_model_prefix_protection: Must match the value used to build the columns.
+            A mismatch renames a column here but not there (or vice versa), so the FK
+            silently stops matching any column and ``is_foreign_key`` is never set.
     """
     for row in fk_details:
         (
@@ -357,9 +379,11 @@ def add_foreign_key_info_to_table_details(tables: dict[tuple[str, str], TableInf
 
         fk_info = ForeignKeyInfo(
             constraint_name=constraint_name,
-            column_name=standardize_column_name(column_name) or column_name,
+            column_name=standardize_column_name(column_name, disable_model_prefix_protection) or column_name,
             foreign_table_name=foreign_table_name,
-            foreign_column_name=standardize_column_name(foreign_column_name) or foreign_column_name,
+            foreign_column_name=(
+                standardize_column_name(foreign_column_name, disable_model_prefix_protection) or foreign_column_name
+            ),
             relation_type=relation_type,
             foreign_table_schema=foreign_table_schema,
         )
@@ -426,12 +450,24 @@ def parse_constraint_definition_for_fk(constraint_definition: str) -> tuple[str,
 
 
 def add_constraints_to_table_details(
-    tables: dict[tuple[str, str], TableInfo], schema: str, constraints: Sequence[Row]
+    tables: dict[tuple[str, str], TableInfo],
+    schema: str,
+    constraints: Sequence[Row],
+    disable_model_prefix_protection: bool = False,
 ) -> None:
     """Parse constraint rows into :class:`ConstraintInfo` and attach them to their table.
 
     A leading ``{schema}.`` on the table name is stripped, and the raw constraint code is
     normalized to a :class:`ConstraintType` (the raw code is retained for fidelity).
+
+    Args:
+        tables: The tables built from the column rows, keyed by ``(schema, name)``.
+        schema: The schema these constraint rows belong to.
+        constraints: Constraint rows (5-tuple contract).
+        disable_model_prefix_protection: Must match the value used to build the columns.
+            A mismatch makes ``ConstraintInfo.columns`` name a column that does not
+            exist, so ``primary``/``is_unique``/``is_foreign_key`` are never set and
+            ``TableInfo.primary_key()`` returns a phantom name.
     """
     for row in constraints:
         (constraint_name, table_name, columns, raw_constraint_type, constraint_definition) = row
@@ -445,7 +481,7 @@ def add_constraints_to_table_details(
             constraint = ConstraintInfo(
                 constraint_name=constraint_name,
                 type=normalize_constraint_type(raw_constraint_type),
-                columns=[standardize_column_name(c) or str(c) for c in columns],
+                columns=[standardize_column_name(c, disable_model_prefix_protection) or str(c) for c in columns],
                 constraint_definition=constraint_definition,
                 raw_constraint_type=raw_constraint_type,
             )
@@ -708,6 +744,23 @@ def get_user_type_mappings(enum_type_mapping: Sequence[Row], schema: str | None 
     return mappings
 
 
+def _find_enum_type(enums: Sequence[UserEnumType], namespace: str, type_name: str) -> UserEnumType | None:
+    """Return the enum named ``namespace.type_name``, or ``None``.
+
+    An exact ``(namespace, type_name)`` match wins. When no enum carries that namespace
+    the lookup falls back to the bare name, preserving the behavior of sources that do
+    not report a type's owning schema consistently -- that fallback is never *worse* than
+    a name-only match, and it never fires when the namespaces do line up.
+    """
+    exact = next(
+        (e for e in enums if e.type_name == type_name and e.namespace.lower() == namespace.lower()),
+        None,
+    )
+    if exact is not None:
+        return exact
+    return next((e for e in enums if e.type_name == type_name), None)
+
+
 def add_user_defined_types_to_tables(
     tables: dict[tuple[str, str], TableInfo],
     schema: str,
@@ -721,6 +774,10 @@ def add_user_defined_types_to_tables(
     or ends with ``'[]'`` and an element type is present), since castiron does not
     resolve a Python type; enum-name normalization is delegated to
     :meth:`UserEnumType.matches_type_name`.
+
+    Both branches are **namespace-aware**: two schemas may define a same-named enum, and
+    matching on the bare name alone gives one of the columns the other's member list --
+    silently wrong generated code, with no warning.
     """
     enums = get_enum_types(enum_types)
     mappings = get_user_type_mappings(enum_type_mapping)
@@ -728,7 +785,7 @@ def add_user_defined_types_to_tables(
     # Direct column→enum mappings.
     for mapping in mappings:
         table_key = (schema, mapping.table_name)
-        enum_info = next((e for e in enums if e.type_name == mapping.type_name), None)
+        enum_info = _find_enum_type(enums, mapping.namespace, mapping.type_name)
         enum_values = enum_info.enum_values if enum_info else None
         if table_key in tables:
             for col in tables[table_key].columns:
@@ -783,15 +840,25 @@ def _collect_enum_registry(tables: dict[tuple[str, str], TableInfo]) -> list[Enu
 def _match_enum(type_token: str | None, enums: Sequence[EnumInfo]) -> EnumInfo | None:
     """Return the registered enum named by ``type_token``, or ``None``.
 
-    Comparison goes through :func:`normalize_type_name`, so a schema-qualified or
-    array-decorated token still matches the bare enum name.
+    Decoration is stripped by :func:`split_type_name`, so an array-decorated or quoted
+    token still resolves. A **schema-qualified** token (``audit.status``) must match both
+    the schema and the name: two schemas may define a same-named enum, and falling back
+    to the bare name would hand the parameter the wrong member list. An **unqualified**
+    token matches on name alone -- that is all the information it carries.
     """
     if not type_token:
         return None
-    clean = normalize_type_name(type_token).lower()
-    if not clean:
+    namespace, bare_name = split_type_name(type_token)
+    if not bare_name:
         return None
-    return next((e for e in enums if e.name.lower() == clean), None)
+
+    lowered = bare_name.lower()
+    if namespace is not None:
+        return next(
+            (e for e in enums if e.name.lower() == lowered and e.schema.lower() == namespace.lower()),
+            None,
+        )
+    return next((e for e in enums if e.name.lower() == lowered), None)
 
 
 def construct_parameters(parameter_rows: Sequence[Row], enums: Sequence[EnumInfo] = ()) -> list[ParameterInfo]:
@@ -890,8 +957,8 @@ def construct_tables(
     carried for output parity — decision D7).
     """
     tables = get_table_details_from_columns(column_details, disable_model_prefix_protection)
-    add_foreign_key_info_to_table_details(tables, fk_details)
-    add_constraints_to_table_details(tables, schema, constraints)
+    add_foreign_key_info_to_table_details(tables, fk_details, disable_model_prefix_protection)
+    add_constraints_to_table_details(tables, schema, constraints, disable_model_prefix_protection)
     add_relationships_to_table_details(tables, fk_details)
     add_user_defined_types_to_tables(tables, schema, enum_types, enum_type_mapping)
     update_columns_with_constraints(tables)

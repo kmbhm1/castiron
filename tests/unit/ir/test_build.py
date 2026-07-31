@@ -286,6 +286,77 @@ def test_build_schema_direct_enum_attachment() -> None:
 
 
 @pytest.mark.unit
+def test_build_schema_enum_lookup_is_namespace_aware() -> None:
+    # Two enums may share a bare type name across schemas. Matching on the name alone
+    # silently gave both columns the same member list.
+    columns = [
+        ('public', 't', 'a', None, 'YES', 'public.status', None, 'BASE TABLE', None, None, None, None),
+        ('public', 't', 'b', None, 'YES', 'audit.status', None, 'BASE TABLE', None, None, None, None),
+    ]
+    enum_types = [
+        ('status', 'public', 'owner', 'E', True, 'e', ['open', 'closed']),
+        ('status', 'audit', 'owner', 'E', True, 'e', ['created', 'deleted']),
+    ]
+    enum_mapping = [
+        ('a', 't', 'public', 'status', 'E', ''),
+        ('b', 't', 'audit', 'status', 'E', ''),
+    ]
+
+    schema = build_schema(columns, [], [], enum_types, enum_mapping)
+    a = _col(_table(schema, 't'), 'a')
+    b = _col(_table(schema, 't'), 'b')
+    assert a.enum_info is not None
+    assert b.enum_info is not None
+    assert (a.enum_info.schema, a.enum_info.values) == ('public', ['open', 'closed'])
+    assert (b.enum_info.schema, b.enum_info.values) == ('audit', ['created', 'deleted'])
+    assert len(schema.enums) == 2
+
+
+@pytest.mark.unit
+def test_build_schema_array_element_enum_lookup_is_namespace_aware() -> None:
+    columns = [
+        ('public', 't', 'tags', None, 'YES', 'audit.status[]', None, 'BASE TABLE', None, None, 'audit.status', None),
+    ]
+    enum_types = [
+        ('status', 'public', 'owner', 'E', True, 'e', ['open', 'closed']),
+        ('status', 'audit', 'owner', 'E', True, 'e', ['created', 'deleted']),
+    ]
+
+    schema = build_schema(columns, [], [], enum_types, [])
+    tags = _col(_table(schema, 't'), 'tags')
+    assert tags.enum_info is not None
+    assert (tags.enum_info.schema, tags.enum_info.values) == ('audit', ['created', 'deleted'])
+
+
+@pytest.mark.unit
+def test_disable_model_prefix_protection_reaches_constraints_and_foreign_keys() -> None:
+    # The flag was honored when building columns but not when standardizing the column
+    # names inside constraint and FK rows, so the PK/FK flags were silently lost and
+    # ``primary_key()`` named a column that did not exist.
+    columns = [
+        ('public', 'parent', 'model_id', None, 'NO', 'integer', None, 'BASE TABLE', None, None, None, None),
+        ('public', 'child', 'model_ref', None, 'NO', 'integer', None, 'BASE TABLE', None, None, None, None),
+    ]
+    fks = [('public', 'child', 'model_ref', 'public', 'parent', 'model_id', 'child_model_ref_fkey')]
+    constraints = [
+        ('parent_pkey', 'parent', ['model_id'], 'p', None),
+        ('child_model_ref_fkey', 'child', ['model_ref'], 'f', 'FOREIGN KEY (model_ref) REFERENCES parent(model_id)'),
+    ]
+
+    protected = build_schema(columns, fks, constraints, [], [])
+    assert _table(protected, 'parent').primary_key() == ['field_model_id']
+    assert _col(_table(protected, 'parent'), 'field_model_id').primary is True
+    assert _col(_table(protected, 'child'), 'field_model_ref').is_foreign_key is True
+
+    unprotected = build_schema(columns, fks, constraints, [], [], 'public', True)
+    assert _table(unprotected, 'parent').primary_key() == ['model_id']
+    assert _col(_table(unprotected, 'parent'), 'model_id').primary is True
+    assert _col(_table(unprotected, 'child'), 'model_ref').is_foreign_key is True
+    assert _table(unprotected, 'child').foreign_keys[0].column_name == 'model_ref'
+    assert _table(unprotected, 'child').foreign_keys[0].foreign_column_name == 'model_id'
+
+
+@pytest.mark.unit
 def test_build_schema_array_element_enum_attachment() -> None:
     columns = [
         ('public', 'events', 'moods', None, 'YES', 'ARRAY', None, 'BASE TABLE', None, '_mood', '_mood', None),

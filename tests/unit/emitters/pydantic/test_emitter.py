@@ -52,6 +52,16 @@ class TestGolden:
     def test_golden_is_valid_python(self) -> None:
         compile(GOLDEN.read_text(), '<golden>', 'exec')
 
+    def test_a_zero_function_schema_emits_byte_identically_after_ci_005(self, representative_schema: Schema) -> None:
+        """CI-005 backward-compat guard: adding ``Schema.functions`` changed no output.
+
+        ``representative_schema`` is built by the CI-003/CI-004 tuple fixtures with
+        ``function_details`` omitted, so it carries an empty function list. The emitted
+        module must still match the CI-004 golden byte for byte.
+        """
+        assert representative_schema.functions == []
+        assert _emit(representative_schema) == GOLDEN.read_text()
+
 
 # --------------------------------------------------------------------------- determinism
 

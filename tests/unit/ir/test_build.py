@@ -218,7 +218,9 @@ def test_build_schema_empty_inputs() -> None:
     schema = build_schema([], [], [], [], [])
     assert schema.tables == []
     assert schema.enums == []
-    assert schema.as_dict() == {'tables': [], 'enums': []}
+    assert schema.functions == []
+    # CI-005 amendment: ``Schema.functions`` adds exactly one additive serialization key.
+    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': []}
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 """Tuple-contract → Schema IR builder.
 
 A faithful port of supabase-pydantic's ``construct_table_info`` pipeline and its
-marshalers (schema / relationships / constraints / column). It turns the five
+marshalers (schema / relationships / constraints / column). It turns the six
 positional-tuple row contracts a source produces into a fully-populated
 :class:`~castiron.ir.models.Schema` — filling columns, PK/unique/FK/check flags,
 foreign keys, constraints, relationships, bridge-table detection, and per-column
@@ -24,6 +24,23 @@ Positional tuple contracts (the source ↔ builder boundary)
   typtype, enum_values)`` — only ``typtype == 'e'`` rows are enums.
 - **enum-type-mapping row (6-tuple):** ``(column_name, table_name, namespace,
   type_name, type_category, type_description)``.
+- **function row (8-tuple):** ``(schema, function_name, description, return_type,
+  returns_set, raw_volatility, is_read_only, parameters)`` -- ``returns_set`` and
+  ``is_read_only`` are ``bool | None`` (``None`` == unknown); ``raw_volatility`` is the
+  source's raw code (pg ``provolatile``: ``'v'|'s'|'i'``) or ``None``; ``parameters`` is a
+  list of **parameter 5-tuples**.
+- **parameter row (5-tuple):** ``(name, raw_type, raw_mode, has_default,
+  array_element_type)`` -- ``raw_mode`` is the source's raw code (pg ``proargmodes``:
+  ``'i'|'o'|'b'|'v'|'t'``) or ``None`` (which normalizes to ``ParameterMode.IN``).
+
+A nested list inside a positional row is already the house style (the enum-type row's 7th
+field is a ``list[str]``; the constraint row's 3rd is a ``list[str]``), and a live-DB
+source will naturally ``array_agg`` a function's arguments the same way.
+
+⚠ **Ordering caveat:** ``function_details`` is the *last* parameter of
+:func:`build_schema`, not the sixth -- inserting it after ``enum_type_mapping`` would
+silently break any caller that passes ``schema`` positionally. The cosmetic cost is that
+the six row contracts are no longer adjacent in the signature.
 """
 
 import builtins
@@ -40,6 +57,10 @@ from castiron.ir.models import (
     ConstraintType,
     EnumInfo,
     ForeignKeyInfo,
+    FunctionInfo,
+    FunctionVolatility,
+    ParameterInfo,
+    ParameterMode,
     RelationshipInfo,
     RelationType,
     Schema,
@@ -64,9 +85,85 @@ CONSTRAINT_TYPE_MAP: dict[str, ConstraintType] = {
 }
 
 
+# Maps raw Postgres ``pg_proc.provolatile`` codes to normalized IR volatility members.
+VOLATILITY_MAP: dict[str, FunctionVolatility] = {
+    'v': FunctionVolatility.VOLATILE,
+    's': FunctionVolatility.STABLE,
+    'i': FunctionVolatility.IMMUTABLE,
+}
+
+# Maps raw Postgres ``pg_proc.proargmodes`` codes to normalized IR parameter modes.
+PARAMETER_MODE_MAP: dict[str, ParameterMode] = {
+    'i': ParameterMode.IN,
+    'o': ParameterMode.OUT,
+    'b': ParameterMode.INOUT,
+    'v': ParameterMode.VARIADIC,
+    't': ParameterMode.TABLE,
+}
+
+
 def normalize_constraint_type(raw_constraint_type: str) -> ConstraintType:
     """Map a raw source constraint code to a normalized :class:`ConstraintType`."""
     return CONSTRAINT_TYPE_MAP.get(raw_constraint_type.lower(), ConstraintType.OTHER)
+
+
+def normalize_volatility(raw_volatility: str | None) -> FunctionVolatility | None:
+    """Map a raw source volatility code to a :class:`FunctionVolatility`, or ``None``.
+
+    Args:
+        raw_volatility: The source's raw code (pg ``provolatile``), or ``None`` when the
+            source cannot tell (the OpenAPI source only knows *volatile* vs *not*).
+
+    Returns:
+        The normalized member, or ``None`` for an absent or unrecognized code.
+    """
+    if raw_volatility is None:
+        return None
+    return VOLATILITY_MAP.get(raw_volatility.lower())
+
+
+def normalize_parameter_mode(raw_mode: str | None) -> ParameterMode:
+    """Map a raw source parameter-mode code to a :class:`ParameterMode`.
+
+    Args:
+        raw_mode: The source's raw code (pg ``proargmodes``), or ``None``.
+
+    Returns:
+        The normalized member; ``ParameterMode.IN`` for an absent or unrecognized code
+        (pg itself leaves ``proargmodes`` NULL when every argument is ``IN``).
+    """
+    if raw_mode is None:
+        return ParameterMode.IN
+    return PARAMETER_MODE_MAP.get(raw_mode.lower(), ParameterMode.IN)
+
+
+def normalize_type_name(type_name: str) -> str:
+    """Strip pg type-name decoration so two type tokens can be compared.
+
+    Removes leading underscores (pg's array-type naming, ``_int4``), a trailing ``[]``
+    (``test_status[]``), surrounding double quotes (``"FourthType"``), and schema
+    qualification (``public.Foo``). Case is preserved -- callers compare case-insensitively.
+
+    Args:
+        type_name: The raw type token.
+
+    Returns:
+        The bare type name.
+    """
+    clean_name = type_name
+    while clean_name.startswith('_'):
+        clean_name = clean_name[1:]
+
+    if clean_name.endswith('[]'):
+        clean_name = clean_name[:-2]
+
+    if clean_name.startswith('"') and clean_name.endswith('"'):
+        clean_name = clean_name[1:-1]
+
+    if '.' in clean_name:
+        clean_name = clean_name.split('.')[-1]
+
+    return clean_name
 
 
 # ---------------------------------------------------------------------------
@@ -89,26 +186,12 @@ class UserEnumType:
     def matches_type_name(self, type_name: str) -> bool:
         """Whether ``type_name`` names this enum, tolerating pg array-naming quirks.
 
-        Handles leading underscores (pg array types), a trailing ``[]``, surrounding
-        quotes, schema qualification (``public.Foo``), and case-insensitivity.
+        Normalization is delegated to :func:`normalize_type_name` so every caller that
+        needs to compare a raw type token to an enum name shares one implementation.
         """
         if not type_name:
             return False
-
-        clean_name = type_name
-        while clean_name.startswith('_'):
-            clean_name = clean_name[1:]
-
-        if clean_name.endswith('[]'):
-            clean_name = clean_name[:-2]
-
-        if clean_name.startswith('"') and clean_name.endswith('"'):
-            clean_name = clean_name[1:-1]
-
-        if '.' in clean_name:
-            clean_name = clean_name.split('.')[-1]
-
-        return self.type_name.lower() == clean_name.lower()
+        return self.type_name.lower() == normalize_type_name(type_name).lower()
 
 
 @dataclass
@@ -693,6 +776,100 @@ def _collect_enum_registry(tables: dict[tuple[str, str], TableInfo]) -> list[Enu
 
 
 # ---------------------------------------------------------------------------
+# Functions / RPCs.
+# ---------------------------------------------------------------------------
+
+
+def _match_enum(type_token: str | None, enums: Sequence[EnumInfo]) -> EnumInfo | None:
+    """Return the registered enum named by ``type_token``, or ``None``.
+
+    Comparison goes through :func:`normalize_type_name`, so a schema-qualified or
+    array-decorated token still matches the bare enum name.
+    """
+    if not type_token:
+        return None
+    clean = normalize_type_name(type_token).lower()
+    if not clean:
+        return None
+    return next((e for e in enums if e.name.lower() == clean), None)
+
+
+def construct_parameters(parameter_rows: Sequence[Row], enums: Sequence[EnumInfo] = ()) -> list[ParameterInfo]:
+    """Parse parameter rows (5-tuple contract) into :class:`ParameterInfo` nodes.
+
+    Args:
+        parameter_rows: The parameter rows, in the source's (pg argument) order.
+        enums: The schema's enum registry, used to link a parameter whose type names one.
+
+    Returns:
+        The parameters, in row order.
+    """
+    parameters: list[ParameterInfo] = []
+    for row in parameter_rows:
+        (name, raw_type, raw_mode, has_default, array_element_type) = row
+        parameters.append(
+            ParameterInfo(
+                name=name,
+                raw_type=raw_type,
+                mode=normalize_parameter_mode(raw_mode),
+                has_default=bool(has_default),
+                array_element_type=array_element_type,
+                enum_info=_match_enum(array_element_type or raw_type, enums),
+            )
+        )
+    return parameters
+
+
+def construct_functions(
+    function_details: Sequence[Row],
+    schema: str = 'public',
+    enums: Sequence[EnumInfo] = (),
+) -> list[FunctionInfo]:
+    """Parse function rows (8-tuple contract) into :class:`FunctionInfo` nodes.
+
+    Raw source codes are normalized here (``raw_volatility`` →
+    :class:`~castiron.ir.models.FunctionVolatility`, a parameter's ``raw_mode`` →
+    :class:`~castiron.ir.models.ParameterMode`), mirroring how constraint codes are
+    handled. Rows are *not* filtered by ``schema`` -- each row carries its own, matching
+    how :func:`get_enum_types` is called unfiltered. Function order is row order: ordering
+    is the source's responsibility (Hard Rule #9).
+
+    Args:
+        function_details: Function rows (8-tuple contract).
+        schema: The schema name to fall back on when a row does not carry one.
+        enums: The schema's enum registry, used to link parameter enum types.
+
+    Returns:
+        The functions, in row order.
+    """
+    functions: list[FunctionInfo] = []
+    for row in function_details:
+        (
+            row_schema,
+            function_name,
+            description,
+            return_type,
+            returns_set,
+            raw_volatility,
+            is_read_only,
+            parameters,
+        ) = row
+        functions.append(
+            FunctionInfo(
+                name=function_name,
+                schema=row_schema if row_schema else schema,
+                parameters=construct_parameters(parameters or (), enums),
+                return_type=return_type,
+                returns_set=returns_set,
+                volatility=normalize_volatility(raw_volatility),
+                is_read_only=is_read_only,
+                description=description,
+            )
+        )
+    return functions
+
+
+# ---------------------------------------------------------------------------
 # Public entrypoint.
 # ---------------------------------------------------------------------------
 
@@ -733,12 +910,17 @@ def build_schema(
     enum_type_mapping: Sequence[Row],
     schema: str = 'public',
     disable_model_prefix_protection: bool = False,
+    function_details: Sequence[Row] = (),
 ) -> Schema:
-    """Build a :class:`~castiron.ir.models.Schema` from the five tuple contracts.
+    """Build a :class:`~castiron.ir.models.Schema` from the six tuple contracts.
 
     This is castiron's canonical construction entrypoint: pluggable sources emit the
     documented positional rows and every emitter consumes the returned ``Schema``. No
     database or network access is involved, and no Python type is resolved.
+
+    ``function_details`` is deliberately the **last** parameter rather than the sixth, so
+    that a caller passing ``schema``/``disable_model_prefix_protection`` positionally is
+    unaffected (see the module docstring).
 
     Args:
         column_details: Column rows (12-tuple contract).
@@ -748,6 +930,8 @@ def build_schema(
         enum_type_mapping: Enum-type-mapping rows (6-tuple contract).
         schema: The schema name these rows belong to.
         disable_model_prefix_protection: If ``True``, do not rename ``model_`` columns.
+        function_details: Function rows (8-tuple contract). Defaults to empty, so a source
+            that exposes no functions produces the same ``Schema`` it always did.
 
     Returns:
         A fully-populated, deterministic :class:`~castiron.ir.models.Schema`.
@@ -761,4 +945,9 @@ def build_schema(
         schema,
         disable_model_prefix_protection,
     )
-    return Schema(tables=list(tables.values()), enums=_collect_enum_registry(tables))
+    enums = _collect_enum_registry(tables)
+    return Schema(
+        tables=list(tables.values()),
+        enums=enums,
+        functions=construct_functions(function_details, schema, enums),
+    )

@@ -10,6 +10,10 @@ from castiron.ir import (
     ConstraintType,
     EnumInfo,
     ForeignKeyInfo,
+    FunctionInfo,
+    FunctionVolatility,
+    ParameterInfo,
+    ParameterMode,
     RelationshipInfo,
     RelationType,
     Schema,
@@ -262,4 +266,55 @@ def test_schema_defaults_to_empty() -> None:
     schema = Schema()
     assert schema.tables == []
     assert schema.enums == []
-    assert schema.as_dict() == {'tables': [], 'enums': []}
+    assert schema.functions == []
+    # CI-005 amendment: ``_serialize`` walks ``dataclasses.fields``, so adding
+    # ``Schema.functions`` necessarily adds exactly one additive key here. Emitted output
+    # is unaffected (proved in tests/unit/emitters/pydantic/test_emitter.py).
+    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': []}
+
+
+@pytest.mark.unit
+def test_schema_as_dict_renders_functions_as_plain_builtins() -> None:
+    schema = Schema(
+        functions=[
+            FunctionInfo(
+                name='get_user_stats',
+                parameters=[
+                    ParameterInfo(
+                        name='user_id',
+                        raw_type='integer',
+                        mode=ParameterMode.VARIADIC,
+                        has_default=True,
+                        enum_info=EnumInfo(name='status', values=['a']),
+                    )
+                ],
+                volatility=FunctionVolatility.STABLE,
+                is_read_only=True,
+                description='Stats.',
+            )
+        ]
+    )
+    as_dict = schema.as_dict()
+
+    assert as_dict['functions'] == [
+        {
+            'name': 'get_user_stats',
+            'schema': 'public',
+            'parameters': [
+                {
+                    'name': 'user_id',
+                    'raw_type': 'integer',
+                    'mode': 'VARIADIC',
+                    'has_default': True,
+                    'array_element_type': None,
+                    'enum_info': {'name': 'status', 'values': ['a'], 'schema': 'public'},
+                }
+            ],
+            'return_type': None,
+            'returns_set': None,
+            'volatility': 'STABLE',
+            'is_read_only': True,
+            'description': 'Stats.',
+        }
+    ]
+    assert json.dumps(as_dict) == json.dumps(schema.as_dict())

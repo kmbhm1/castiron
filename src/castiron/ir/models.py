@@ -52,6 +52,32 @@ class ConstraintType(str, Enum):
     OTHER = 'OTHER'
 
 
+class FunctionVolatility(str, Enum):
+    """Normalized Postgres function volatility (``pg_proc.provolatile``).
+
+    Raw source codes (``'v'``/``'s'``/``'i'``) are mapped to these members in the build
+    layer, keeping the pg-specific vocabulary out of the canonical IR (decision D3).
+    """
+
+    VOLATILE = 'VOLATILE'
+    STABLE = 'STABLE'
+    IMMUTABLE = 'IMMUTABLE'
+
+
+class ParameterMode(str, Enum):
+    """Normalized function-parameter mode (``pg_proc.proargmodes``).
+
+    Raw source codes (``'i'``/``'o'``/``'b'``/``'v'``/``'t'``) are mapped to these members
+    in the build layer, exactly as :class:`ConstraintType` handles ``contype``.
+    """
+
+    IN = 'IN'
+    OUT = 'OUT'
+    INOUT = 'INOUT'
+    VARIADIC = 'VARIADIC'
+    TABLE = 'TABLE'
+
+
 @dataclass
 class EnumInfo:
     """A database enum type: its name, values, and owning schema.
@@ -263,20 +289,93 @@ class TableInfo:
 
 
 @dataclass
+class ParameterInfo:
+    """One function parameter, carrying raw type signal exactly as :class:`ColumnInfo` does.
+
+    The raw type vocabulary is deliberately shared with ``ColumnInfo`` (``raw_type`` /
+    ``array_element_type`` / ``enum_info``) so a future emitter resolves a parameter with
+    the very same :mod:`castiron.types` machinery it uses for a column.
+    """
+
+    name: str
+    raw_type: str
+    mode: ParameterMode = ParameterMode.IN
+    has_default: bool = False
+    array_element_type: str | None = None
+    enum_info: EnumInfo | None = None
+
+    def __str__(self) -> str:
+        """Return a short, human-readable representation of the parameter."""
+        return f'ParameterInfo({self.name}, {self.raw_type})'
+
+
+@dataclass
+class FunctionInfo:
+    """A database function -- a PostgREST ``/rpc/<name>`` endpoint, or a ``pg_proc`` row.
+
+    Fields a coarse source cannot know are tri-state: ``None`` means *unknown*, never a
+    guess. That distinction is the whole point of the node, because the two sources that
+    populate it see very different amounts:
+
+    ==========================  =========================================  ==================
+    Field                       OpenAPI/PostgREST source (CI-005)          Live DB (CI-011)
+    ==========================  =========================================  ==================
+    ``name`` / ``schema``       full (path key + the caller's schema)       full
+    ``parameters[].name``       full (body-schema ``properties``)           full
+    ``parameters[].raw_type``   full, with ``int32``/``int64`` flattening   exact
+    ``parameters[].has_default``full (``name not in schema.required``)      full
+    ``parameters[].mode``       ``IN``; ``VARIADIC`` from the GET operation full ``proargmodes``
+    ``parameters[].enum_info``  only if the enum is on a scalar column too  full
+    ``return_type``             **always None** -- never encoded            full
+    ``returns_set``             **always None** -- never encoded            ``proretset``
+    ``volatility``              ``VOLATILE`` iff POST-only, else ``None``   full
+    ``is_read_only``            full (a ``get`` operation exists)           ``provolatile != 'v'``
+    ``description``             full (the raw SQL comment)                  ``pg_description``
+    overloads                   **collapsed upstream** to one signature     full
+    ==========================  =========================================  ==================
+
+    Documented invariant (not runtime-validated -- these are plain mutable dataclasses per
+    decision D1): when ``volatility`` is known, ``is_read_only`` equals
+    ``volatility is not FunctionVolatility.VOLATILE``. Two fields rather than one because a
+    coarse source can honestly assert *"non-volatile"* without knowing *which* -- collapsing
+    them would either discard that fact or fabricate ``STABLE``.
+    """
+
+    name: str
+    schema: str = 'public'
+    parameters: list[ParameterInfo] = field(default_factory=list)
+    return_type: str | None = None
+    returns_set: bool | None = None
+    volatility: FunctionVolatility | None = None
+    is_read_only: bool | None = None
+    description: str | None = None
+
+    def __str__(self) -> str:
+        """Return a short, human-readable representation of the function."""
+        return f'FunctionInfo({self.schema}.{self.name})'
+
+
+@dataclass
 class Schema:
-    """The root IR container: all tables plus a de-duplicated enum registry.
+    """The root IR container: all tables, a de-duplicated enum registry, and functions.
 
     supabase-pydantic returned a bare ``list[TableInfo]``; castiron wraps that in a
     ``Schema`` so an emitter has one object to consume and a single place to emit each
     enum class exactly once (``enums``), while per-column ``ColumnInfo.enum_info`` keeps
     the linkage.
 
-    Forward slot (documented, not built in CI-003): function/RPC introspection lands in
-    CI-011 and will attach here; no empty field is added until it can be populated.
+    ``functions`` is the function/RPC registry (added in CI-005, filling the forward slot
+    CI-003 documented). It is populated from a source's function rows; the OpenAPI source
+    leaves ``FunctionInfo.return_type`` and ``returns_set`` as ``None`` (PostgREST never
+    encodes them) and can only assert ``volatility`` when a function is ``VOLATILE``.
+    CI-011's live-DB ``pg_proc`` path *enriches* those fields rather than redesigning the
+    node. The field is appended last so positional ``Schema(tables, enums)`` construction
+    stays valid.
     """
 
     tables: list[TableInfo] = field(default_factory=list)
     enums: list[EnumInfo] = field(default_factory=list)
+    functions: list[FunctionInfo] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         """Return a stable, JSON-serializable projection of the schema.

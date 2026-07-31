@@ -5,13 +5,17 @@ emitters consume it. This package is stdlib-only by design; nothing here imports
 third-party runtime dependency.
 """
 
-from castiron.ir.build import build_schema, construct_tables
+from castiron.ir.build import Row, build_schema, construct_functions, construct_tables
 from castiron.ir.models import (
     ColumnInfo,
     ConstraintInfo,
     ConstraintType,
     EnumInfo,
     ForeignKeyInfo,
+    FunctionInfo,
+    FunctionVolatility,
+    ParameterInfo,
+    ParameterMode,
     RelationshipInfo,
     RelationType,
     Schema,
@@ -26,12 +30,18 @@ __all__ = [
     'ConstraintType',
     'EnumInfo',
     'ForeignKeyInfo',
+    'FunctionInfo',
+    'FunctionVolatility',
+    'ParameterInfo',
+    'ParameterMode',
     'RelationType',
     'RelationshipInfo',
+    'Row',
     'Schema',
     'SortedColumns',
     'TableInfo',
     'TableType',
     'build_schema',
+    'construct_functions',
     'construct_tables',
 ]

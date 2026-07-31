@@ -26,6 +26,14 @@ class TestPydanticMap:
         assert PYDANTIC_TYPE_MAP['uuid'].python_type == 'UUID4'
         assert PYDANTIC_TYPE_MAP['json'] == PYDANTIC_TYPE_MAP['jsonb']
 
+    def test_character_resolves_to_str(self) -> None:
+        # CI-005 gap-fill: ``char(n)`` reports as ``character`` through
+        # information_schema.data_type, format_type() and PostgREST's ``format`` alike,
+        # yet the ported map had only ``char``/``char(n)``/``character(n)``.
+        assert PYDANTIC_TYPE_MAP['character'] == TypeResolution('str')
+        for token in ('char', 'char(n)', 'character(n)', 'character varying'):
+            assert PYDANTIC_TYPE_MAP[token].python_type == PYDANTIC_TYPE_MAP['character'].python_type
+
     def test_values_are_type_resolutions(self) -> None:
         assert all(isinstance(v, TypeResolution) for v in PYDANTIC_TYPE_MAP.values())
 

@@ -1,0 +1,437 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "12.2.3 (abcdef0)",
+    "title": "standard public schema",
+    "description": "This is a RESTful API for the public schema."
+  },
+  "host": "example.supabase.co:443",
+  "basePath": "/rest/v1/",
+  "schemes": ["https"],
+  "consumes": ["application/json", "application/vnd.pgrst.object+json"],
+  "produces": ["application/json", "application/vnd.pgrst.object+json"],
+  "externalDocs": {
+    "description": "PostgREST Documentation",
+    "url": "https://postgrest.org/en/stable/references/api.html"
+  },
+  "definitions": {
+    "users": {
+      "type": "object",
+      "description": "Application users.",
+      "required": ["id", "email", "status", "login_count", "is_active"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "email": {
+          "format": "character varying",
+          "maxLength": 255,
+          "type": "string"
+        },
+        "created_at": {
+          "default": "now()",
+          "format": "timestamp with time zone",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "enum": ["pending", "shipped", "cancelled"],
+          "format": "order_status",
+          "type": "string"
+        },
+        "metadata": {
+          "format": "jsonb"
+        },
+        "tags": {
+          "format": "text[]",
+          "items": { "type": "string" },
+          "type": "array"
+        },
+        "bio": {
+          "description": "A short profile blurb.",
+          "format": "text",
+          "type": "string"
+        },
+        "class": {
+          "format": "text",
+          "type": "string"
+        },
+        "login_count": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "is_active": {
+          "default": false,
+          "format": "boolean",
+          "type": "boolean"
+        }
+      }
+    },
+    "orders": {
+      "type": "object",
+      "description": "Customer orders.",
+      "required": ["id", "user_id", "total"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int64",
+          "type": "integer"
+        },
+        "user_id": {
+          "description": "The customer who placed the order.\n\nNote:\nThis is a Foreign Key to `users.id`.<fk table='users' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "total": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "code": {
+          "format": "character",
+          "maxLength": 1,
+          "type": "string"
+        },
+        "labels": {
+          "format": "order_status[]",
+          "items": { "type": "string" },
+          "type": "array"
+        }
+      }
+    },
+    "order_items": {
+      "type": "object",
+      "required": ["order_id", "product_id", "quantity"],
+      "properties": {
+        "order_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `orders.id`.<fk table='orders' column='id'/>",
+          "format": "int64",
+          "type": "integer"
+        },
+        "product_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `products.id`.<fk table='products' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "quantity": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "status": {
+          "enum": ["pending", "shipped", "cancelled"],
+          "format": "order_status",
+          "type": "string"
+        }
+      }
+    },
+    "products": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "name": {
+          "format": "text",
+          "type": "string"
+        }
+      }
+    },
+    "active_users_view": {
+      "type": "object",
+      "description": "Users with a recent login.",
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "email": {
+          "format": "character varying",
+          "maxLength": 255,
+          "type": "string"
+        },
+        "favorite_product_id": {
+          "description": "Note:\nThis is a Foreign Key to `products.id`.<fk table='products' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "restricted_table": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "secret": {
+          "format": "text",
+          "type": "string"
+        },
+        "owner_id": {
+          "description": "Note:\nThis is a Foreign Key to `active_users_view.id`.<fk table='active_users_view' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "parameters": {
+    "preferParams": {
+      "name": "Prefer",
+      "in": "header",
+      "type": "string",
+      "required": false,
+      "enum": ["params=single-object"]
+    },
+    "select": {
+      "name": "select",
+      "in": "query",
+      "description": "Filtering Columns",
+      "required": false,
+      "type": "string"
+    },
+    "offset": {
+      "name": "offset",
+      "in": "query",
+      "description": "Limiting and Pagination",
+      "required": false,
+      "type": "string"
+    }
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Introspection"],
+        "summary": "OpenAPI description (this document)",
+        "produces": ["application/openapi+json", "application/json"],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": ["users"],
+        "parameters": [{ "$ref": "#/parameters/select" }, { "$ref": "#/parameters/offset" }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["users"],
+        "parameters": [{ "$ref": "#/parameters/preferParams" }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "patch": {
+        "tags": ["users"],
+        "parameters": [{ "$ref": "#/parameters/preferParams" }],
+        "responses": { "204": { "description": "No Content" } }
+      },
+      "delete": {
+        "tags": ["users"],
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/orders": {
+      "get": {
+        "tags": ["orders"],
+        "parameters": [{ "$ref": "#/parameters/select" }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["orders"],
+        "parameters": [{ "$ref": "#/parameters/preferParams" }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "patch": {
+        "tags": ["orders"],
+        "responses": { "204": { "description": "No Content" } }
+      },
+      "delete": {
+        "tags": ["orders"],
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/order_items": {
+      "get": {
+        "tags": ["order_items"],
+        "parameters": [{ "$ref": "#/parameters/select" }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["order_items"],
+        "parameters": [{ "$ref": "#/parameters/preferParams" }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "patch": {
+        "tags": ["order_items"],
+        "responses": { "204": { "description": "No Content" } }
+      },
+      "delete": {
+        "tags": ["order_items"],
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/products": {
+      "get": {
+        "tags": ["products"],
+        "parameters": [{ "$ref": "#/parameters/select" }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["products"],
+        "parameters": [{ "$ref": "#/parameters/preferParams" }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "patch": {
+        "tags": ["products"],
+        "responses": { "204": { "description": "No Content" } }
+      },
+      "delete": {
+        "tags": ["products"],
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/active_users_view": {
+      "get": {
+        "tags": ["active_users_view"],
+        "parameters": [{ "$ref": "#/parameters/select" }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/restricted_table": {
+      "get": {
+        "tags": ["restricted_table"],
+        "parameters": [{ "$ref": "#/parameters/select" }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/rpc/get_user_stats": {
+      "get": {
+        "tags": ["(rpc) get_user_stats"],
+        "summary": "Aggregate statistics for one user",
+        "description": "Returns lifetime totals.",
+        "parameters": [
+          { "name": "user_id", "in": "query", "required": true, "type": "integer", "format": "int32" },
+          { "name": "since", "in": "query", "required": false, "type": "string", "format": "date" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["(rpc) get_user_stats"],
+        "summary": "Aggregate statistics for one user",
+        "description": "Returns lifetime totals.",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "Aggregate statistics for one user\n\nReturns lifetime totals.",
+              "required": ["user_id"],
+              "properties": {
+                "user_id": { "format": "int32", "type": "integer" },
+                "since": { "format": "date", "type": "string" }
+              }
+            }
+          },
+          { "$ref": "#/parameters/preferParams" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/rpc/create_order": {
+      "post": {
+        "tags": ["(rpc) create_order"],
+        "summary": "Create an order",
+        "description": "Inserts a row and returns its id.",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "Create an order\n\nInserts a row and returns its id.",
+              "required": ["user_id", "status"],
+              "properties": {
+                "user_id": { "format": "int64", "type": "integer" },
+                "status": { "format": "order_status", "type": "string" },
+                "items": { "format": "text[]", "items": { "type": "string" }, "type": "array" }
+              }
+            }
+          },
+          { "$ref": "#/parameters/preferParams" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/rpc/ping": {
+      "post": {
+        "tags": ["(rpc) ping"],
+        "summary": "Health check",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "Health check",
+              "properties": {}
+            }
+          }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/rpc/search_products": {
+      "get": {
+        "tags": ["(rpc) search_products"],
+        "summary": "Search products",
+        "description": "Returns matching product rows.",
+        "parameters": [
+          {
+            "name": "terms",
+            "in": "query",
+            "required": true,
+            "type": "array",
+            "format": "text[]",
+            "items": { "type": "string" },
+            "collectionFormat": "multi"
+          },
+          { "name": "limit_to", "in": "query", "required": false, "type": "integer", "format": "int32" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "tags": ["(rpc) search_products"],
+        "summary": "Search products",
+        "description": "Returns matching product rows.",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "Search products\n\nReturns matching product rows.",
+              "required": ["terms"],
+              "properties": {
+                "terms": { "format": "text[]", "items": { "type": "string" }, "type": "array" },
+                "limit_to": { "format": "int32", "type": "integer" }
+              }
+            }
+          },
+          { "$ref": "#/parameters/preferParams" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 """Tuple-contract → Schema IR builder.
 
 A faithful port of supabase-pydantic's ``construct_table_info`` pipeline and its
-marshalers (schema / relationships / constraints / column). It turns the five
+marshalers (schema / relationships / constraints / column). It turns the six
 positional-tuple row contracts a source produces into a fully-populated
 :class:`~castiron.ir.models.Schema` — filling columns, PK/unique/FK/check flags,
 foreign keys, constraints, relationships, bridge-table detection, and per-column
@@ -24,6 +24,23 @@ Positional tuple contracts (the source ↔ builder boundary)
   typtype, enum_values)`` — only ``typtype == 'e'`` rows are enums.
 - **enum-type-mapping row (6-tuple):** ``(column_name, table_name, namespace,
   type_name, type_category, type_description)``.
+- **function row (8-tuple):** ``(schema, function_name, description, return_type,
+  returns_set, raw_volatility, is_read_only, parameters)`` -- ``returns_set`` and
+  ``is_read_only`` are ``bool | None`` (``None`` == unknown); ``raw_volatility`` is the
+  source's raw code (pg ``provolatile``: ``'v'|'s'|'i'``) or ``None``; ``parameters`` is a
+  list of **parameter 5-tuples**.
+- **parameter row (5-tuple):** ``(name, raw_type, raw_mode, has_default,
+  array_element_type)`` -- ``raw_mode`` is the source's raw code (pg ``proargmodes``:
+  ``'i'|'o'|'b'|'v'|'t'``) or ``None`` (which normalizes to ``ParameterMode.IN``).
+
+A nested list inside a positional row is already the house style (the enum-type row's 7th
+field is a ``list[str]``; the constraint row's 3rd is a ``list[str]``), and a live-DB
+source will naturally ``array_agg`` a function's arguments the same way.
+
+⚠ **Ordering caveat:** ``function_details`` is the *last* parameter of
+:func:`build_schema`, not the sixth -- inserting it after ``enum_type_mapping`` would
+silently break any caller that passes ``schema`` positionally. The cosmetic cost is that
+the six row contracts are no longer adjacent in the signature.
 """
 
 import builtins
@@ -40,6 +57,10 @@ from castiron.ir.models import (
     ConstraintType,
     EnumInfo,
     ForeignKeyInfo,
+    FunctionInfo,
+    FunctionVolatility,
+    ParameterInfo,
+    ParameterMode,
     RelationshipInfo,
     RelationType,
     Schema,
@@ -64,9 +85,90 @@ CONSTRAINT_TYPE_MAP: dict[str, ConstraintType] = {
 }
 
 
+# Maps raw Postgres ``pg_proc.provolatile`` codes to normalized IR volatility members.
+VOLATILITY_MAP: dict[str, FunctionVolatility] = {
+    'v': FunctionVolatility.VOLATILE,
+    's': FunctionVolatility.STABLE,
+    'i': FunctionVolatility.IMMUTABLE,
+}
+
+# Maps raw Postgres ``pg_proc.proargmodes`` codes to normalized IR parameter modes.
+PARAMETER_MODE_MAP: dict[str, ParameterMode] = {
+    'i': ParameterMode.IN,
+    'o': ParameterMode.OUT,
+    'b': ParameterMode.INOUT,
+    'v': ParameterMode.VARIADIC,
+    't': ParameterMode.TABLE,
+}
+
+
 def normalize_constraint_type(raw_constraint_type: str) -> ConstraintType:
     """Map a raw source constraint code to a normalized :class:`ConstraintType`."""
     return CONSTRAINT_TYPE_MAP.get(raw_constraint_type.lower(), ConstraintType.OTHER)
+
+
+def normalize_volatility(raw_volatility: str | None) -> FunctionVolatility | None:
+    """Map a raw source volatility code to a :class:`FunctionVolatility`, or ``None``.
+
+    Args:
+        raw_volatility: The source's raw code (pg ``provolatile``), or ``None`` when the
+            source cannot tell (the OpenAPI source only knows *volatile* vs *not*).
+
+    Returns:
+        The normalized member, or ``None`` for an absent or unrecognized code.
+    """
+    if raw_volatility is None:
+        return None
+    return VOLATILITY_MAP.get(raw_volatility.lower())
+
+
+def normalize_parameter_mode(raw_mode: str | None) -> ParameterMode:
+    """Map a raw source parameter-mode code to a :class:`ParameterMode`.
+
+    Args:
+        raw_mode: The source's raw code (pg ``proargmodes``), or ``None``.
+
+    Returns:
+        The normalized member; ``ParameterMode.IN`` for an absent or unrecognized code
+        (pg itself leaves ``proargmodes`` NULL when every argument is ``IN``).
+    """
+    if raw_mode is None:
+        return ParameterMode.IN
+    return PARAMETER_MODE_MAP.get(raw_mode.lower(), ParameterMode.IN)
+
+
+def split_type_name(type_name: str) -> tuple[str | None, str]:
+    """Split a raw type token into its optional schema qualifier and its bare name.
+
+    Removes pg decoration first -- leading underscores (the array-type naming ``_int4``),
+    a trailing ``[]`` (``test_status[]``), and surrounding double quotes
+    (``"FourthType"``) -- then splits on the last ``.``. Case is preserved; callers
+    compare case-insensitively.
+
+    The namespace matters: a schema-qualified token is the *only* thing that
+    distinguishes ``public.status`` from ``audit.status``, and two enums may legitimately
+    share a bare name across schemas. Dropping the qualifier silently resolves one of
+    them to the other's values.
+
+    Args:
+        type_name: The raw type token.
+
+    Returns:
+        A ``(namespace, bare_name)`` pair; ``namespace`` is ``None`` for an unqualified
+        token.
+    """
+    clean_name = type_name
+    while clean_name.startswith('_'):
+        clean_name = clean_name[1:]
+
+    if clean_name.endswith('[]'):
+        clean_name = clean_name[:-2]
+
+    if clean_name.startswith('"') and clean_name.endswith('"'):
+        clean_name = clean_name[1:-1]
+
+    namespace, separator, bare_name = clean_name.rpartition('.')
+    return (namespace if separator else None), bare_name
 
 
 # ---------------------------------------------------------------------------
@@ -89,26 +191,18 @@ class UserEnumType:
     def matches_type_name(self, type_name: str) -> bool:
         """Whether ``type_name`` names this enum, tolerating pg array-naming quirks.
 
-        Handles leading underscores (pg array types), a trailing ``[]``, surrounding
-        quotes, schema qualification (``public.Foo``), and case-insensitivity.
+        Decoration handling is delegated to :func:`split_type_name` so every caller that
+        compares a raw type token to an enum shares one implementation. A **schema-
+        qualified** token must also match this enum's namespace: ``audit.status`` is not
+        ``public.status``, and treating them as the same silently gives a column the wrong
+        member list. An unqualified token matches on name alone, as before.
         """
         if not type_name:
             return False
-
-        clean_name = type_name
-        while clean_name.startswith('_'):
-            clean_name = clean_name[1:]
-
-        if clean_name.endswith('[]'):
-            clean_name = clean_name[:-2]
-
-        if clean_name.startswith('"') and clean_name.endswith('"'):
-            clean_name = clean_name[1:-1]
-
-        if '.' in clean_name:
-            clean_name = clean_name.split('.')[-1]
-
-        return self.type_name.lower() == clean_name.lower()
+        namespace, bare_name = split_type_name(type_name)
+        if namespace is not None and self.namespace.lower() != namespace.lower():
+            return False
+        return self.type_name.lower() == bare_name.lower()
 
 
 @dataclass
@@ -234,12 +328,23 @@ def get_table_details_from_columns(
 # ---------------------------------------------------------------------------
 
 
-def add_foreign_key_info_to_table_details(tables: dict[tuple[str, str], TableInfo], fk_details: Sequence[Row]) -> None:
+def add_foreign_key_info_to_table_details(
+    tables: dict[tuple[str, str], TableInfo],
+    fk_details: Sequence[Row],
+    disable_model_prefix_protection: bool = False,
+) -> None:
     """Parse FK rows into :class:`ForeignKeyInfo`, skipping edges to absent tables.
 
     Column names are standardized (reserved-name protection). A first-pass relationship
     type is inferred from primary-key shape; :func:`analyze_table_relationships` refines
     it afterwards.
+
+    Args:
+        tables: The tables built from the column rows, keyed by ``(schema, name)``.
+        fk_details: Foreign-key rows (7-tuple contract).
+        disable_model_prefix_protection: Must match the value used to build the columns.
+            A mismatch renames a column here but not there (or vice versa), so the FK
+            silently stops matching any column and ``is_foreign_key`` is never set.
     """
     for row in fk_details:
         (
@@ -274,9 +379,11 @@ def add_foreign_key_info_to_table_details(tables: dict[tuple[str, str], TableInf
 
         fk_info = ForeignKeyInfo(
             constraint_name=constraint_name,
-            column_name=standardize_column_name(column_name) or column_name,
+            column_name=standardize_column_name(column_name, disable_model_prefix_protection) or column_name,
             foreign_table_name=foreign_table_name,
-            foreign_column_name=standardize_column_name(foreign_column_name) or foreign_column_name,
+            foreign_column_name=(
+                standardize_column_name(foreign_column_name, disable_model_prefix_protection) or foreign_column_name
+            ),
             relation_type=relation_type,
             foreign_table_schema=foreign_table_schema,
         )
@@ -343,12 +450,24 @@ def parse_constraint_definition_for_fk(constraint_definition: str) -> tuple[str,
 
 
 def add_constraints_to_table_details(
-    tables: dict[tuple[str, str], TableInfo], schema: str, constraints: Sequence[Row]
+    tables: dict[tuple[str, str], TableInfo],
+    schema: str,
+    constraints: Sequence[Row],
+    disable_model_prefix_protection: bool = False,
 ) -> None:
     """Parse constraint rows into :class:`ConstraintInfo` and attach them to their table.
 
     A leading ``{schema}.`` on the table name is stripped, and the raw constraint code is
     normalized to a :class:`ConstraintType` (the raw code is retained for fidelity).
+
+    Args:
+        tables: The tables built from the column rows, keyed by ``(schema, name)``.
+        schema: The schema these constraint rows belong to.
+        constraints: Constraint rows (5-tuple contract).
+        disable_model_prefix_protection: Must match the value used to build the columns.
+            A mismatch makes ``ConstraintInfo.columns`` name a column that does not
+            exist, so ``primary``/``is_unique``/``is_foreign_key`` are never set and
+            ``TableInfo.primary_key()`` returns a phantom name.
     """
     for row in constraints:
         (constraint_name, table_name, columns, raw_constraint_type, constraint_definition) = row
@@ -362,7 +481,7 @@ def add_constraints_to_table_details(
             constraint = ConstraintInfo(
                 constraint_name=constraint_name,
                 type=normalize_constraint_type(raw_constraint_type),
-                columns=[standardize_column_name(c) or str(c) for c in columns],
+                columns=[standardize_column_name(c, disable_model_prefix_protection) or str(c) for c in columns],
                 constraint_definition=constraint_definition,
                 raw_constraint_type=raw_constraint_type,
             )
@@ -625,6 +744,84 @@ def get_user_type_mappings(enum_type_mapping: Sequence[Row], schema: str | None 
     return mappings
 
 
+def _rank_enum_candidates(
+    namespaces: Sequence[str],
+    token_namespace: str | None,
+    default_schema: str,
+    allow_any_schema: bool,
+) -> list[int]:
+    """Return the indexes of ``namespaces`` to try, best first, for one type token.
+
+    This is the single statement of castiron's enum-resolution order; every matching site
+    calls it so the rule cannot be re-derived (and re-broken) per call site. ``namespaces``
+    holds the owning schema of each *name-matching* candidate, in registry order.
+
+    The order is:
+
+    1. the token's own namespace, when it is schema-qualified;
+    2. otherwise ``default_schema`` -- **a bare token means the schema under
+       construction.** PostgREST omits the prefix exactly when the type is in
+       ``search_path``, so ``status`` is ``public.status``, not "whichever namespace sorts
+       first". Enum rows arrive sorted by ``(namespace, type_name)``, so without this rule
+       a bare token deterministically binds to the alphabetically-first schema;
+    3. any remaining namespace, but only when ``allow_any_schema``.
+
+    Step 3 is disabled for a *qualified* token: naming a schema castiron has no enum for
+    is a statement, not a gap, and silently binding to a same-named enum elsewhere is the
+    entire bug class this function exists to prevent.
+
+    Args:
+        namespaces: The owning schema of each name-matching candidate, in registry order.
+        token_namespace: The token's schema qualifier, or ``None`` when it is bare.
+        default_schema: The schema currently being built.
+        allow_any_schema: Whether an unrelated namespace may be used as a last resort.
+
+    Returns:
+        Candidate indexes in preference order; empty when nothing is acceptable.
+    """
+    wanted = (token_namespace or default_schema).lower()
+    preferred = [i for i, ns in enumerate(namespaces) if ns.lower() == wanted]
+    if token_namespace is not None and not allow_any_schema:
+        return preferred
+    return preferred + [i for i, ns in enumerate(namespaces) if ns.lower() != wanted]
+
+
+def _find_enum_type(
+    enums: Sequence[UserEnumType],
+    namespace: str,
+    type_name: str,
+    default_schema: str = 'public',
+) -> UserEnumType | None:
+    """Return the enum named ``namespace.type_name``, or ``None``.
+
+    An exact ``(namespace, type_name)`` match wins, then one in ``default_schema``, then
+    the bare name. The fallbacks preserve the behavior of sources that do not report a
+    type's owning schema consistently; they never fire when the namespaces line up.
+    """
+    matching = [e for e in enums if e.type_name == type_name]
+    ranked = _rank_enum_candidates([e.namespace for e in matching], namespace, default_schema, allow_any_schema=True)
+    return matching[ranked[0]] if ranked else None
+
+
+def _find_enum_type_for_token(
+    enums: Sequence[UserEnumType],
+    type_token: str,
+    default_schema: str,
+) -> UserEnumType | None:
+    """Return the enum a raw type token names, honoring its namespace (or the default)."""
+    token_namespace, bare_name = split_type_name(type_token)
+    if not bare_name:
+        return None
+    matching = [e for e in enums if e.matches_type_name(type_token)]
+    ranked = _rank_enum_candidates(
+        [e.namespace for e in matching],
+        token_namespace,
+        default_schema,
+        allow_any_schema=token_namespace is None,
+    )
+    return matching[ranked[0]] if ranked else None
+
+
 def add_user_defined_types_to_tables(
     tables: dict[tuple[str, str], TableInfo],
     schema: str,
@@ -638,6 +835,11 @@ def add_user_defined_types_to_tables(
     or ends with ``'[]'`` and an element type is present), since castiron does not
     resolve a Python type; enum-name normalization is delegated to
     :meth:`UserEnumType.matches_type_name`.
+
+    Both branches are **namespace-aware** via :func:`_rank_enum_candidates`: two schemas
+    may define a same-named enum, and matching on the bare name alone gives one of the
+    columns the other's member list -- silently wrong generated code, with no warning.
+    An unqualified token resolves against ``schema``, the schema under construction.
     """
     enums = get_enum_types(enum_types)
     mappings = get_user_type_mappings(enum_type_mapping)
@@ -645,7 +847,7 @@ def add_user_defined_types_to_tables(
     # Direct column→enum mappings.
     for mapping in mappings:
         table_key = (schema, mapping.table_name)
-        enum_info = next((e for e in enums if e.type_name == mapping.type_name), None)
+        enum_info = _find_enum_type(enums, mapping.namespace, mapping.type_name, schema)
         enum_values = enum_info.enum_values if enum_info else None
         if table_key in tables:
             for col in tables[table_key].columns:
@@ -653,8 +855,11 @@ def add_user_defined_types_to_tables(
                     col.user_defined_values = enum_values
                     col.enum_info = None
                     if enum_info:
+                        # The MATCHED enum's namespace, not the mapping's: when the
+                        # fallback fires they differ, and recording the mapping's would
+                        # name a schema that does not own the type.
                         col.enum_info = EnumInfo(
-                            name=enum_info.type_name, values=enum_info.enum_values, schema=mapping.namespace
+                            name=enum_info.type_name, values=enum_info.enum_values, schema=enum_info.namespace
                         )
                     break
 
@@ -667,7 +872,7 @@ def add_user_defined_types_to_tables(
             if not is_array or col.array_element_type is None:
                 continue
 
-            matched_enum = next((e for e in enums if e.matches_type_name(col.array_element_type)), None)
+            matched_enum = _find_enum_type_for_token(enums, col.array_element_type, schema)
             if matched_enum:
                 col.enum_info = EnumInfo(
                     name=matched_enum.type_name, values=matched_enum.enum_values, schema=matched_enum.namespace
@@ -693,6 +898,122 @@ def _collect_enum_registry(tables: dict[tuple[str, str], TableInfo]) -> list[Enu
 
 
 # ---------------------------------------------------------------------------
+# Functions / RPCs.
+# ---------------------------------------------------------------------------
+
+
+def _match_enum(
+    type_token: str | None,
+    enums: Sequence[EnumInfo],
+    default_schema: str = 'public',
+) -> EnumInfo | None:
+    """Return the registered enum named by ``type_token``, or ``None``.
+
+    Decoration is stripped by :func:`split_type_name`, then :func:`_rank_enum_candidates`
+    applies castiron's single enum-resolution order: a qualified token must match its own
+    schema, and a bare token resolves against ``default_schema`` before anything else.
+    """
+    if not type_token:
+        return None
+    namespace, bare_name = split_type_name(type_token)
+    if not bare_name:
+        return None
+
+    lowered = bare_name.lower()
+    matching = [e for e in enums if e.name.lower() == lowered]
+    ranked = _rank_enum_candidates(
+        [e.schema for e in matching],
+        namespace,
+        default_schema,
+        allow_any_schema=namespace is None,
+    )
+    return matching[ranked[0]] if ranked else None
+
+
+def construct_parameters(
+    parameter_rows: Sequence[Row],
+    enums: Sequence[EnumInfo] = (),
+    schema: str = 'public',
+) -> list[ParameterInfo]:
+    """Parse parameter rows (5-tuple contract) into :class:`ParameterInfo` nodes.
+
+    Args:
+        parameter_rows: The parameter rows, in the source's (pg argument) order.
+        enums: The schema's enum registry, used to link a parameter whose type names one.
+        schema: The schema under construction -- an unqualified parameter type token
+            resolves against it before any other namespace.
+
+    Returns:
+        The parameters, in row order.
+    """
+    parameters: list[ParameterInfo] = []
+    for row in parameter_rows:
+        (name, raw_type, raw_mode, has_default, array_element_type) = row
+        parameters.append(
+            ParameterInfo(
+                name=name,
+                raw_type=raw_type,
+                mode=normalize_parameter_mode(raw_mode),
+                has_default=bool(has_default),
+                array_element_type=array_element_type,
+                enum_info=_match_enum(array_element_type or raw_type, enums, schema),
+            )
+        )
+    return parameters
+
+
+def construct_functions(
+    function_details: Sequence[Row],
+    schema: str = 'public',
+    enums: Sequence[EnumInfo] = (),
+) -> list[FunctionInfo]:
+    """Parse function rows (8-tuple contract) into :class:`FunctionInfo` nodes.
+
+    Raw source codes are normalized here (``raw_volatility`` →
+    :class:`~castiron.ir.models.FunctionVolatility`, a parameter's ``raw_mode`` →
+    :class:`~castiron.ir.models.ParameterMode`), mirroring how constraint codes are
+    handled. Rows are *not* filtered by ``schema`` -- each row carries its own, matching
+    how :func:`get_enum_types` is called unfiltered. Function order is row order: ordering
+    is the source's responsibility (Hard Rule #9).
+
+    Args:
+        function_details: Function rows (8-tuple contract).
+        schema: The schema name to fall back on when a row does not carry one.
+        enums: The schema's enum registry, used to link parameter enum types.
+
+    Returns:
+        The functions, in row order.
+    """
+    functions: list[FunctionInfo] = []
+    for row in function_details:
+        (
+            row_schema,
+            function_name,
+            description,
+            return_type,
+            returns_set,
+            raw_volatility,
+            is_read_only,
+            parameters,
+        ) = row
+        functions.append(
+            FunctionInfo(
+                name=function_name,
+                schema=row_schema if row_schema else schema,
+                # The function's OWN schema resolves its bare parameter tokens: an
+                # unqualified type in an `audit` function means `audit.<type>`.
+                parameters=construct_parameters(parameters or (), enums, row_schema if row_schema else schema),
+                return_type=return_type,
+                returns_set=returns_set,
+                volatility=normalize_volatility(raw_volatility),
+                is_read_only=is_read_only,
+                description=description,
+            )
+        )
+    return functions
+
+
+# ---------------------------------------------------------------------------
 # Public entrypoint.
 # ---------------------------------------------------------------------------
 
@@ -713,8 +1034,8 @@ def construct_tables(
     carried for output parity — decision D7).
     """
     tables = get_table_details_from_columns(column_details, disable_model_prefix_protection)
-    add_foreign_key_info_to_table_details(tables, fk_details)
-    add_constraints_to_table_details(tables, schema, constraints)
+    add_foreign_key_info_to_table_details(tables, fk_details, disable_model_prefix_protection)
+    add_constraints_to_table_details(tables, schema, constraints, disable_model_prefix_protection)
     add_relationships_to_table_details(tables, fk_details)
     add_user_defined_types_to_tables(tables, schema, enum_types, enum_type_mapping)
     update_columns_with_constraints(tables)
@@ -733,12 +1054,17 @@ def build_schema(
     enum_type_mapping: Sequence[Row],
     schema: str = 'public',
     disable_model_prefix_protection: bool = False,
+    function_details: Sequence[Row] = (),
 ) -> Schema:
-    """Build a :class:`~castiron.ir.models.Schema` from the five tuple contracts.
+    """Build a :class:`~castiron.ir.models.Schema` from the six tuple contracts.
 
     This is castiron's canonical construction entrypoint: pluggable sources emit the
     documented positional rows and every emitter consumes the returned ``Schema``. No
     database or network access is involved, and no Python type is resolved.
+
+    ``function_details`` is deliberately the **last** parameter rather than the sixth, so
+    that a caller passing ``schema``/``disable_model_prefix_protection`` positionally is
+    unaffected (see the module docstring).
 
     Args:
         column_details: Column rows (12-tuple contract).
@@ -748,6 +1074,8 @@ def build_schema(
         enum_type_mapping: Enum-type-mapping rows (6-tuple contract).
         schema: The schema name these rows belong to.
         disable_model_prefix_protection: If ``True``, do not rename ``model_`` columns.
+        function_details: Function rows (8-tuple contract). Defaults to empty, so a source
+            that exposes no functions produces the same ``Schema`` it always did.
 
     Returns:
         A fully-populated, deterministic :class:`~castiron.ir.models.Schema`.
@@ -761,4 +1089,9 @@ def build_schema(
         schema,
         disable_model_prefix_protection,
     )
-    return Schema(tables=list(tables.values()), enums=_collect_enum_registry(tables))
+    enums = _collect_enum_registry(tables)
+    return Schema(
+        tables=list(tables.values()),
+        enums=enums,
+        functions=construct_functions(function_details, schema, enums),
+    )

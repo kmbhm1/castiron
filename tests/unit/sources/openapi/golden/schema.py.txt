@@ -1,0 +1,339 @@
+from __future__ import annotations
+from decimal import Decimal
+from enum import Enum
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import Json
+from typing import Any
+import datetime
+
+
+# ENUM TYPES
+# These are generated from Postgres user-defined enum types.
+
+
+class PublicOrderStatusEnum(str, Enum):
+    PENDING = "pending"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+
+
+# CUSTOM CLASSES
+# Custom model classes defining common features shared by the generated schemas.
+
+
+class CustomModel(BaseModel):
+    """Base model class with common features."""
+
+
+class CustomModelInsert(CustomModel):
+    """Base model for insert operations with common features."""
+
+
+class CustomModelUpdate(CustomModel):
+    """Base model for update operations with common features."""
+
+
+# BASE CLASSES
+# These are the base Row models that include all fields.
+
+
+class ActiveUsersViewBaseSchema(CustomModel):
+    """ActiveUsersView Base Schema."""
+
+    # Columns
+    email: str | None = Field(default=None)
+    favorite_product_id: int | None = Field(default=None)
+    id: int | None = Field(default=None)
+
+
+class OrderItemsBaseSchema(CustomModel):
+    """OrderItems Base Schema."""
+
+    # Primary Keys
+    order_id: int
+    product_id: int
+
+    # Columns
+    quantity: int
+    status: PublicOrderStatusEnum | None = Field(default=None)
+
+
+class OrdersBaseSchema(CustomModel):
+    """Orders Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    code: str | None = Field(default=None)
+    labels: list[PublicOrderStatusEnum] | None = Field(default=None)
+    total: Decimal
+    user_id: int = Field(description="The customer who placed the order.")
+
+
+class ProductsBaseSchema(CustomModel):
+    """Products Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    name: str
+
+
+class RestrictedTableBaseSchema(CustomModel):
+    """RestrictedTable Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    owner_id: int | None = Field(default=None)
+    secret: str | None = Field(default=None)
+
+
+class UsersBaseSchema(CustomModel):
+    """Users Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime | None = Field(default=None)
+    email: str
+    field_class: str | None = Field(default=None, alias="class")
+    is_active: bool
+    login_count: int
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    status: PublicOrderStatusEnum
+    tags: list[str] | None = Field(default=None)
+
+
+# INSERT CLASSES
+# Models for insert operations; auto-generated fields are optional.
+
+
+class ActiveUsersViewInsert(CustomModelInsert):
+    """ActiveUsersView Insert Schema."""
+
+    # Optional fields
+    email: str | None = Field(default=None)
+    favorite_product_id: int | None = Field(default=None)
+    id: int | None = Field(default=None)
+
+
+class OrderItemsInsert(CustomModelInsert):
+    """OrderItems Insert Schema."""
+
+    # Primary Keys
+    order_id: int
+    product_id: int
+
+    # Required fields
+    quantity: int
+
+    # Optional fields
+    status: PublicOrderStatusEnum | None = Field(default=None)
+
+
+class OrdersInsert(CustomModelInsert):
+    """Orders Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    total: Decimal
+    user_id: int = Field(description="The customer who placed the order.")
+
+    # Optional fields
+    code: str | None = Field(default=None)
+    labels: list[PublicOrderStatusEnum] | None = Field(default=None)
+
+
+class ProductsInsert(CustomModelInsert):
+    """Products Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    name: str
+
+
+class RestrictedTableInsert(CustomModelInsert):
+    """RestrictedTable Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Optional fields
+    owner_id: int | None = Field(default=None)
+    secret: str | None = Field(default=None)
+
+
+class UsersInsert(CustomModelInsert):
+    """Users Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    email: str
+
+    # Optional fields
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime | None = Field(default=None)
+    field_class: str | None = Field(default=None, alias="class")
+    is_active: bool | None = Field(default=None)
+    login_count: int | None = Field(default=None)
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    status: PublicOrderStatusEnum | None = Field(default=None)
+    tags: list[str] | None = Field(default=None)
+
+
+# UPDATE CLASSES
+# Models for update operations; all fields are optional.
+
+
+class ActiveUsersViewUpdate(CustomModelUpdate):
+    """ActiveUsersView Update Schema."""
+
+    # Columns
+    email: str | None = Field(default=None)
+    favorite_product_id: int | None = Field(default=None)
+    id: int | None = Field(default=None)
+
+
+class OrderItemsUpdate(CustomModelUpdate):
+    """OrderItems Update Schema."""
+
+    # Primary Keys
+    order_id: int | None = Field(default=None)
+    product_id: int | None = Field(default=None)
+
+    # Columns
+    quantity: int | None = Field(default=None)
+    status: PublicOrderStatusEnum | None = Field(default=None)
+
+
+class OrdersUpdate(CustomModelUpdate):
+    """Orders Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    code: str | None = Field(default=None)
+    labels: list[PublicOrderStatusEnum] | None = Field(default=None)
+    total: Decimal | None = Field(default=None)
+    user_id: int | None = Field(default=None, description="The customer who placed the order.")
+
+
+class ProductsUpdate(CustomModelUpdate):
+    """Products Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    name: str | None = Field(default=None)
+
+
+class RestrictedTableUpdate(CustomModelUpdate):
+    """RestrictedTable Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    owner_id: int | None = Field(default=None)
+    secret: str | None = Field(default=None)
+
+
+class UsersUpdate(CustomModelUpdate):
+    """Users Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime | None = Field(default=None)
+    email: str | None = Field(default=None)
+    field_class: str | None = Field(default=None, alias="class")
+    is_active: bool | None = Field(default=None)
+    login_count: int | None = Field(default=None)
+    metadata: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    status: PublicOrderStatusEnum | None = Field(default=None)
+    tags: list[str] | None = Field(default=None)
+
+
+# OPERATIONAL CLASSES
+# Extend these models to add custom behavior; they carry relationship fields.
+
+
+class ActiveUsersView(ActiveUsersViewBaseSchema):
+    """ActiveUsersView Schema for Pydantic.
+
+    Inherits from ActiveUsersViewBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    product: Products | None = Field(default=None)
+    restricted_tables: list[RestrictedTable] | None = Field(default=None)
+
+
+class OrderItems(OrderItemsBaseSchema):
+    """OrderItems Schema for Pydantic.
+
+    Inherits from OrderItemsBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    order: Orders | None = Field(default=None)
+    product: Products | None = Field(default=None)
+
+
+class Orders(OrdersBaseSchema):
+    """Orders Schema for Pydantic.
+
+    Inherits from OrdersBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    user: Users | None = Field(default=None)
+    order_items: list[OrderItems] | None = Field(default=None)
+
+
+class Products(ProductsBaseSchema):
+    """Products Schema for Pydantic.
+
+    Inherits from ProductsBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    active_users_views: list[ActiveUsersView] | None = Field(default=None)
+    order_items: list[OrderItems] | None = Field(default=None)
+
+
+class RestrictedTable(RestrictedTableBaseSchema):
+    """RestrictedTable Schema for Pydantic.
+
+    Inherits from RestrictedTableBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    active_users_view: ActiveUsersView | None = Field(default=None)
+
+
+class Users(UsersBaseSchema):
+    """Users Schema for Pydantic.
+
+    Inherits from UsersBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    orders: list[Orders] | None = Field(default=None)

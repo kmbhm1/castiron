@@ -58,6 +58,10 @@ PYDANTIC_TYPE_MAP: TypeMap = {
     'varchar': TypeResolution('str'),
     'character varying(n)': TypeResolution('str'),
     'varchar(n)': TypeResolution('str'),
+    # ``character`` is what ``char(n)`` reports through information_schema.data_type,
+    # format_type(), and PostgREST's ``format`` -- a gap in supabase-pydantic's map
+    # (``char``, ``char(n)`` and ``character(n)`` were all present) filled in CI-005.
+    'character': TypeResolution('str'),
     'character(n)': TypeResolution('str'),
     'char(n)': TypeResolution('str'),
     'char': TypeResolution('str'),

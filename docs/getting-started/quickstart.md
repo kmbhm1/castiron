@@ -100,7 +100,10 @@ One file, `schema.py`, organised into bands of classes:
 
 ```python
 class UsersBaseSchema(CustomModel):
-    """Users Base Schema."""
+    """Users Base Schema.
+
+    Application users.
+    """
 
     # Primary Keys
     id: int
@@ -125,8 +128,9 @@ class UsersBaseSchema(CustomModel):
 | Update | `UsersUpdate` | Update payloads: every field optional |
 | Operational | `Users` | The Base model plus nested foreign-key relationship fields — extend this one |
 
-Column comments become `description=`, a reserved word like `class` becomes
-`field_class` with `alias="class"`, and a foreign key becomes a real nested model:
+Column comments become `description=`, a table comment (`COMMENT ON TABLE`) becomes the
+model docstring on every class generated for that table, a reserved word like `class`
+becomes `field_class` with `alias="class"`, and a foreign key becomes a real nested model:
 
 ```python
 class Orders(OrdersBaseSchema):

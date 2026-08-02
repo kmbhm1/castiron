@@ -60,7 +60,7 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Column default | ⚠ **only when it survives a JSON decode** — string-ish defaults (`now()`, `gen_random_uuid()`, `'text'`) come through; **`nextval(...)` is silently dropped** | ✅ | PostgREST re-quotes string-ish defaults as JSON; for other types the raw default text must itself be valid JSON |
 | Identity / generated columns | ❌ **always false** — see [below](#identity-and-generated-columns) | ✅ | no `nextval` reaches the document |
 | Column comments | ✅ full | ✅ | `description` |
-| Table comments | ❌ dropped | ⚠ same today | the IR has no field for them yet |
+| Table comments | ✅ full | ✅ | `definitions.<t>.description` → the model docstring |
 | Objects the API role cannot see | ❌ **invisible** — RLS and privileges silently shrink the schema | ✅ | PostgREST's default openapi-mode |
 
 ### Keys and constraints
@@ -127,7 +127,10 @@ castiron will not guess, so by default it believes what it was told and marks th
 
 ```python
 class OrdersInsert(CustomModelInsert):
-    """Orders Insert Schema."""
+    """Orders Insert Schema.
+
+    Customer orders.
+    """
 
     # Primary Keys
     id: int
@@ -164,7 +167,10 @@ castiron gen --from ./openapi.json --infer-generated-primary-keys
 
 ```python
 class OrdersInsert(CustomModelInsert):
-    """Orders Insert Schema."""
+    """Orders Insert Schema.
+
+    Customer orders.
+    """
 
     # Required fields
     total: Decimal
@@ -207,7 +213,10 @@ is optional:
 
 ```python
 class ActiveUsersViewBaseSchema(CustomModel):
-    """ActiveUsersView Base Schema."""
+    """ActiveUsersView Base Schema.
+
+    Users with a recent login.
+    """
 
     # Columns
     email: str | None = Field(default=None)

@@ -58,6 +58,8 @@ nested foreign-key relationships:
 class Orders(OrdersBaseSchema):
     """Orders Schema for Pydantic.
 
+    Customer orders.
+
     Inherits from OrdersBaseSchema. Add any customization here.
     """
 

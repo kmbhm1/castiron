@@ -455,8 +455,12 @@ class TestFidelityFloor:
         assert users_id.is_generated is False
         assert users_id.has_default is False
         # ...and the visible consequence: it is a *required* field on the Insert model.
+        # The docstring here carries the table's SQL comment as a body paragraph (CI-009);
+        # the subject of this assertion is still `id: int` under `# Primary Keys`.
         insert_block = (
-            'class UsersInsert(CustomModelInsert):\n    """Users Insert Schema."""\n\n    # Primary Keys\n    id: int\n'
+            'class UsersInsert(CustomModelInsert):\n'
+            '    """Users Insert Schema.\n\n    Application users.\n    """\n\n'
+            '    # Primary Keys\n    id: int\n'
         )
         assert insert_block in emit(schema)
 
@@ -467,7 +471,9 @@ class TestFidelityFloor:
         assert users_id.is_generated is True
         # Identity columns are omitted from Insert/Update entirely.
         emitted = emit(schema)
-        assert '    """Users Insert Schema."""\n\n    # Required fields\n    email: str' in emitted
+        assert (
+            '    """Users Insert Schema.\n\n    Application users.\n    """\n\n    # Required fields\n    email: str'
+        ) in emitted
 
     def test_no_check_or_exclude_constraints_exist_anywhere(self, document: dict[str, Any]) -> None:
         # The document carries no constraint information at all. The only UNIQUE rows that
@@ -758,3 +764,16 @@ class TestTableDescriptions:
         assert {t.name: t.description for t in build_schema_from_document(reordered).tables} == {
             t.name: t.description for t in build_schema_from_document(document).tables
         }
+
+    def test_the_comment_reaches_the_emitted_docstring(self, document: dict[str, Any]) -> None:
+        out = emit(build_schema_from_document(document))
+
+        assert (
+            'class UsersBaseSchema(CustomModel):\n    """Users Base Schema.\n\n    Application users.\n    """' in out
+        )
+
+    def test_an_uncommented_table_emits_a_one_line_docstring(self, document: dict[str, Any]) -> None:
+        out = emit(build_schema_from_document(document))
+
+        assert '    """Products Base Schema."""' in out
+        assert '    """OrderItems Base Schema."""' in out

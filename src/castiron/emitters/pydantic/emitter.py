@@ -103,6 +103,82 @@ def _py_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _docstring_text(description: str | None) -> str | None:
+    r"""Render a table's SQL comment as an indented, escaped docstring paragraph.
+
+    A SQL comment is arbitrary user text being injected into a Python source file, so this
+    has to be **total**, not merely correct for well-behaved input (the standing CI-063
+    lesson). Each rule earns its place:
+
+    - **CRLF and lone CR are folded to LF first.** The builder already normalizes what it
+      stores, but this keeps the *renderer* total for a hand-built ``TableInfo``, and a CR
+      in generated output is a byte-stability hazard across platforms (Hard Rule #9).
+    - **Backslashes are doubled before anything else.** Otherwise ``C:\temp\new`` renders a
+      real tab and newline inside the docstring value, ``\d+`` raises
+      ``SyntaxWarning: invalid escape sequence`` on 3.12+, and a *trailing* backslash
+      escapes the closing delimiter.
+    - **Every** ``"`` **is escaped, unconditionally.** A comment containing ``\"\"\"`` would
+      otherwise terminate the docstring early -- an injection that breaks the generated
+      module. Escaping all of them makes ``\"\"\"``, ``\"\"\"\"`` and a trailing quote safe with
+      no position-dependent cleverness. The cost is source prettiness: the *file* reads
+      ``\\\"app\\\"`` while the runtime ``__doc__`` is exactly ``"app"``, which is what
+      mkdocstrings/Sphinx/IDE hover show.
+    - ⚠ **Split on** ``'\n'``, **never** :meth:`str.splitlines`. ``splitlines`` also breaks on
+      ``\x0b``, ``\x0c``, ``\x1c``-``\x1e``, ``\x85``, ``\u2028`` and ``\u2029``, every one of
+      which is legal inside a Postgres comment. Using it would silently re-indent such a
+      comment -- nondeterministic-looking output from valid input. Do not "simplify" this.
+    - **Blank lines render truly empty** (no indent), so generated code carries no trailing
+      whitespace (``W291`` for the user, and pure diff noise).
+    - **Content lines are indented and right-stripped, never left-stripped**, so the
+      comment's own relative indentation (lists, code blocks) survives.
+
+    Control characters and non-ASCII are deliberately *not* escaped: they compile inside a
+    triple-quoted literal and round-trip to the right ``__doc__``, and the CLI writes UTF-8
+    with LF (``cli/output.py``). Postgres text cannot contain NUL, the only character that
+    would break the file.
+
+    Args:
+        description: The table's SQL comment, or ``None``.
+
+    Returns:
+        The indented, escaped paragraph, or ``None`` when there is nothing to render -- so
+        an absent, empty or whitespace-only comment all produce byte-identical output.
+    """
+    if description is None:
+        return None
+    text = description.replace('\r\n', '\n').replace('\r', '\n').strip()
+    if not text:
+        return None
+    escaped = text.replace('\\', '\\\\').replace('"', '\\"')
+    return '\n'.join(f'{IND}{line.rstrip()}' if line.strip() else '' for line in escaped.split('\n'))
+
+
+def _class_docstring(summary: str, description: str | None, trailer: str | None = None) -> str:
+    """Assemble a class docstring from its summary, optional description and optional trailer.
+
+    The description is inserted as the **first body paragraph, after the summary line**; it
+    never replaces the summary. The summary is castiron's statement about the *class*
+    (``UsersBaseSchema`` vs ``UsersInsert`` vs ``UsersUpdate``), while the comment is the
+    user's statement about the *table* -- replacing it would give every variant an identical
+    docstring and destroy the only line saying which one you are reading. Keeping it also
+    makes the golden diff pure insertion, so a reviewer can verify "nothing was rewritten"
+    from the deletion count alone.
+
+    Args:
+        summary: The one-line summary (already ending in a period).
+        description: The table's SQL comment, or ``None``.
+        trailer: A trailing boilerplate paragraph (already indented), or ``None``.
+
+    Returns:
+        The complete, indented docstring including its delimiters.
+    """
+    paragraphs = [p for p in (_docstring_text(description), trailer) if p]
+    if not paragraphs:
+        return f'{IND}"""{summary}"""'
+    body = '\n\n'.join(paragraphs)
+    return f'{IND}"""{summary}\n\n{body}\n{IND}"""'
+
+
 class PydanticEmitter(Emitter):
     """Emit Pydantic v2 models from a :class:`castiron.ir.Schema`."""
 
@@ -291,7 +367,7 @@ class PydanticEmitter(Emitter):
         name = self._write_name(table, variant)
         metaclass = self._metaclass(table, variant)
         header = f'class {name}({metaclass}):'
-        docstring = f'{IND}"""{self._class_name(table)} {self._qualifier(variant)} Schema."""'
+        docstring = _class_docstring(f'{self._class_name(table)} {self._qualifier(variant)} Schema.', table.description)
 
         blocks: list[str] = []
         if self.config.disable_model_prefix_protection and self._has_model_prefix_columns(table):
@@ -443,10 +519,13 @@ class PydanticEmitter(Emitter):
         name = self._class_name(table)
         base_name = f'{name}BaseSchema'
         header = f'class {name}({base_name}):'
-        docstring = (
-            f'{IND}"""{name} Schema for Pydantic.\n\n'
-            f'{IND}Inherits from {base_name}. Add any customization here.\n'
-            f'{IND}"""'
+        # The description goes *before* the "Inherits from ..." trailer: the trailer is
+        # castiron's boilerplate instruction to the reader and conventionally comes last,
+        # while the substantive description belongs directly under the summary.
+        docstring = _class_docstring(
+            f'{name} Schema for Pydantic.',
+            table.description,
+            f'{IND}Inherits from {base_name}. Add any customization here.',
         )
 
         fields = self._foreign_columns(table) if self.config.include_foreign_keys else []

@@ -568,6 +568,40 @@ class TestRejectUrlUserinfo:
         assert '--key' in excinfo.value.message
         assert 'CASTIRON_KEY' in excinfo.value.message
 
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'https://user:{PASSWORD}@[::1',  # urlsplit: ValueError('Invalid IPv6 URL')
+            f'https://u:{PASSWORD}@h:notaport/',
+            # U+FF20 NFKC-normalizes to `@`, which is what urlsplit's _checknetloc rejects --
+            # and its ValueError quotes the WHOLE netloc back, password included.
+            f'https://user:{PASSWORD}@ex＠ample.com/rest/v1/',
+            'https://[',
+            '://@',
+            '@',
+            '',
+        ],
+    )
+    def test_a_malformed_url_is_not_a_crash(self, source: str) -> None:
+        # ⚠ Round 3. This callback runs inside click's `make_context`, OUTSIDE
+        # `cli_error_handling`, so anything it raises but click does not understand escapes the
+        # error boundary: a raw, unredacted traceback at exit 1 instead of a redacted message at
+        # 70. Using `urlsplit` here to read the scheme reintroduced exactly the failure mode
+        # CI-066-D1 rejected it for -- it raises on the malformed URLs this row exists to defend.
+        # Either outcome is fine (refuse, or pass through); crashing is not, and neither is
+        # echoing the value.
+        try:
+            assert reject_url_userinfo(source) == source
+        except click.UsageError as exc:
+            assert PASSWORD not in exc.message
+
+    @pytest.mark.parametrize('scheme', ['https', 'HTTPS', 'Http'])
+    def test_the_scheme_match_is_case_insensitive(self, scheme: str) -> None:
+        # Splitting the scheme by hand instead of with urlsplit must not lose urlsplit's
+        # case-folding: RFC 3986 schemes are case-insensitive.
+        with pytest.raises(click.UsageError):
+            reject_url_userinfo(f'{scheme}://user:{PASSWORD}@x.supabase.co')
+
 
 @pytest.mark.unit
 class TestRedactSource:

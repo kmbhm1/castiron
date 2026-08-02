@@ -30,7 +30,7 @@ import sys
 import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 import click
 from click.core import ParameterSource
@@ -166,6 +166,20 @@ def _mop_up_bare_userinfo(text: str, host: str) -> str:
     to stop a *short substring* from mangling unrelated text, and a positional rewrite anchored on
     a host has no such failure mode. A short password is therefore masked here, which is the whole
     point — it is below the length the spelling pass will touch.
+
+    ⚠ **Known limitation, measured — a quote *inside* the password strands its prefix.** The run
+    class excludes ``'`` and ``"`` so the quoting of ``nonnumeric port: '…'`` survives, which means
+    a password containing one is masked only from its last quote onward::
+
+        MSG: ... nonnumeric port: 'SECRETPREFIX9'x@x.supabase.co'
+        RED: ... nonnumeric port: 'SECRETPREFIX9'***@x.supabase.co'
+
+    ``'`` is a legal RFC 3986 sub-delimiter in userinfo, so this is reachable, not theoretical.
+    The trade is deliberate and strictly narrower than the colon hole this anchoring closed:
+    including quotes in the run would swallow the message's own quoting on *every* message, and
+    a quote-bearing password is far rarer than a colon-bearing one. Recorded here rather than
+    fixed so the next reader does not over-trust the paragraph above — and so that whoever needs
+    it closed knows the cost of closing it.
 
     Args:
         text: The partly-masked message.
@@ -414,6 +428,16 @@ def reject_url_userinfo(source: str | None) -> str | None:
     layers deliberately have different scopes: the boundary refuses what cannot work, the mask
     covers everything castiron might print.
 
+    ⚠ **The scheme is split off by hand rather than with** ``urlsplit`` **— that is not a style
+    choice.** This callback runs inside click's ``make_context``, *outside*
+    :func:`cli_error_handling`, so anything it raises escapes the CLI's error boundary entirely:
+    an unhandled ``ValueError`` here prints a raw, **unredacted** traceback and exits 1 instead
+    of :data:`EXIT_INTERNAL`. And ``urlsplit`` raises on exactly the inputs this function exists
+    to defend — ``urlsplit('https://user:SECRET@[::1')`` is ``ValueError: Invalid IPv6 URL``, and
+    ``_checknetloc``'s ``ValueError`` quotes the whole netloc back, password included. It is the
+    same argument CI-066-D1 made for :func:`redact` (malformed input must degrade to "refuse or
+    pass", never to "raise"), and the boundary is the one place it matters most.
+
     Args:
         source: The resolved ``--from`` value — a URL, a path, or ``None``.
 
@@ -423,9 +447,11 @@ def reject_url_userinfo(source: str | None) -> str | None:
 
     Raises:
         click.UsageError: ``source`` is an http(s) URL with a ``user:password@`` (exit 2,
-            matching :func:`sanitize_key`'s refusal).
+            matching :func:`sanitize_key`'s refusal). Nothing else — in particular, never on a
+            malformed URL.
     """
-    if source and urlsplit(source).scheme in URL_SCHEMES and _URL_USERINFO.search(source):
+    scheme = source.split('://', 1)[0].lower() if source else ''
+    if source and scheme in URL_SCHEMES and _URL_USERINFO.search(source):
         raise click.UsageError(
             'The --from URL carries credentials in its userinfo (the `user:password@` before the '
             'host). castiron will not use it: the HTTP client rejects such a URL before it opens a '

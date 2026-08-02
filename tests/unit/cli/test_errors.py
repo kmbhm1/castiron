@@ -528,10 +528,67 @@ class TestCliErrorHandling:
         assert secret not in printed
         assert 'eyJhbGciOi' not in printed
 
-    def test_debug_re_raises_the_original_exception(self) -> None:
-        with pytest.raises(RuntimeError):  # noqa: PT012 - the boundary is the subject
+    def test_debug_prints_the_traceback_itself_and_exits_seventy(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # CI-062. Re-raising handed the exception to the interpreter, which prints the traceback
+        # with no redaction at all -- and exits 1 rather than 70. castiron prints it instead.
+        with pytest.raises(SystemExit) as excinfo:  # noqa: PT012 - the boundary is the subject
             with cli_error_handling(debug=True, key=None):
                 raise RuntimeError('kaboom')
+        assert excinfo.value.code == EXIT_INTERNAL
+        printed = capsys.readouterr().err
+        assert 'Traceback (most recent call last)' in printed
+        assert 'RuntimeError: kaboom' in printed
+
+    def test_the_debug_traceback_is_redacted_through_the_chain(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The load-bearing one. The `Error:` line was already clean; the chained "During handling
+        # of the above exception" block below it carried the *original* message in full -- and
+        # `internal_error_message` invites the user to paste that output into a public issue.
+        with pytest.raises(SystemExit) as excinfo:  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=True, key=None):
+                try:
+                    raise SourceFetchError(f'{SERVICE_ROLE_URL} failed')
+                except SourceFetchError as inner:
+                    raise RuntimeError('inner blew up while handling the fetch failure') from inner
+        printed = capsys.readouterr().err
+        # Non-vacuity first: a test that passes because nothing was printed is worse than none.
+        assert 'Traceback (most recent call last)' in printed
+        assert 'The above exception was the direct cause' in printed
+        assert 'RuntimeError: inner blew up' in printed
+        assert SERVICE_ROLE_KEY not in printed
+        assert excinfo.value.code == EXIT_INTERNAL
+
+    @pytest.mark.parametrize(
+        ('message', 'secret'),
+        [
+            ('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET failed', 'SUPERSECRET'),
+            (f'{SERVICE_ROLE_URL} failed', SERVICE_ROLE_KEY),
+            (NONNUMERIC_PORT, PASSWORD),
+        ],
+        ids=['apikey', 'service_role_key', 'url-userinfo'],
+    )
+    def test_the_debug_traceback_is_redacted_in_the_context_chain_too(
+        self, capsys: pytest.CaptureFixture[str], message: str, secret: str
+    ) -> None:
+        # The implicit chain ("During handling of the above exception"), which is what an
+        # exception raised *while handling* a SourceFetchError produces -- and it is the shape
+        # the CI-061 audit predicted would open this leak.
+        with pytest.raises(SystemExit):  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=True, key='eyJhbGciOi'):
+                try:
+                    raise SourceFetchError(message)
+                except SourceFetchError:
+                    raise RuntimeError('inner blew up while handling the fetch failure')  # noqa: B904
+        printed = capsys.readouterr().err
+        assert 'During handling of the above exception' in printed  # not vacuous
+        assert secret not in printed
+        assert 'eyJhbGciOi' not in printed
+
+    def test_without_debug_no_traceback_is_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The guard that --debug is still what turns it on: the default stays a one-line message.
+        with pytest.raises(SystemExit):  # noqa: PT012 - the boundary is the subject
+            with cli_error_handling(debug=False, key=None):
+                raise RuntimeError('kaboom')
+        assert 'Traceback' not in capsys.readouterr().err
 
     def test_a_clean_block_yields_and_returns(self) -> None:
         seen = []

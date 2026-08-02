@@ -27,6 +27,7 @@ user who silently picks up another project's ``SUPABASE_KEY`` has no other way t
 import os
 import re
 import sys
+import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from urllib.parse import unquote
@@ -443,6 +444,23 @@ def source_error_hint(exc: SourceError, *, key: str | None, schema: str, origin:
     return None
 
 
+def _format_traceback(exc: BaseException) -> str:
+    """Render ``exc``'s full chained traceback the way the interpreter would.
+
+    The single-argument form of ``traceback.format_exception`` is 3.10+, which is castiron's
+    floor. It renders the ``__cause__``/``__context__`` chain — including the ``During handling
+    of the above exception`` block — identically to the deprecated three-argument form, which
+    matters because that chained block is where the unredacted original message lived.
+
+    Args:
+        exc: The exception to render.
+
+    Returns:
+        The traceback text, newline-terminated as the interpreter prints it.
+    """
+    return ''.join(traceback.format_exception(exc))
+
+
 @contextmanager
 def cli_error_handling(
     *,
@@ -456,11 +474,20 @@ def cli_error_handling(
     :class:`~castiron.cli.output.OutputError`, ``UsageError``) and ``Abort`` are already
     exit-coded and are re-raised untouched; a :class:`~castiron.sources.SourceError`
     becomes a redacted ``ClickException`` (exit 1) carrying a ``Hint:`` line when one
-    applies; anything else is a castiron bug and exits :data:`EXIT_INTERNAL`, showing the
-    traceback only under ``--debug``.
+    applies; anything else is a castiron bug and exits :data:`EXIT_INTERNAL`, printing the
+    traceback — through :func:`redact`, like every other string castiron prints — only under
+    ``--debug``.
+
+    ⚠ castiron prints that traceback itself rather than re-raising. Re-raising hands the
+    exception to the interpreter, which renders it with no redaction at all: the ``Error:``
+    line above it would be clean while the chained ``During handling of the above exception``
+    block below it carried the raw original message. Since the internal-error text invites the
+    user to paste the output into a public issue, that is the worst possible surface to leave
+    unmasked. Printing it here also means an internal error exits :data:`EXIT_INTERNAL` with
+    ``--debug`` exactly as it does without, instead of Python's 1 for an uncaught exception.
 
     Args:
-        debug: Re-raise unexpected exceptions so Python prints the traceback.
+        debug: Print the redacted traceback of an unexpected exception.
         key: The API key in play, redacted out of any message.
         hint: Builds the ``Hint:`` line for a source failure. Normally
             :func:`source_error_hint` bound to the run's key, schema and origin.
@@ -481,5 +508,5 @@ def cli_error_handling(
     except Exception as exc:
         click.echo(redact(internal_error_message(exc), key), err=True)
         if debug:
-            raise
+            click.echo(redact(_format_traceback(exc), key), err=True)
         sys.exit(EXIT_INTERNAL)

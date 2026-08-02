@@ -334,15 +334,39 @@ class TestFailureMapping:
         assert 'This is a bug' in result.output
         assert 'Traceback' not in result.output
 
-    def test_debug_lets_the_exception_escape_so_python_prints_the_traceback(
+    def test_debug_prints_a_redacted_traceback_and_still_exits_seventy(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # CI-062. Against main this exits 1 with the interpreter's own unredacted traceback;
+        # castiron now prints it, through `redact`, and keeps the documented exit code.
         def boom(url: str, **kwargs: Any) -> Schema:
-            raise RuntimeError('a castiron bug')
+            raise RuntimeError(f'a castiron bug on {url}?service_role_key={SECRET}')
 
         monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
-        with pytest.raises(RuntimeError, match='a castiron bug'):
-            run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', catch_exceptions=False)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug')
+        assert result.exit_code == 70
+        assert 'Traceback (most recent call last)' in result.stderr  # not vacuous
+        assert 'RuntimeError: a castiron bug' in result.stderr
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
+
+    def test_the_debug_traceback_of_a_chained_failure_is_redacted(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The reachable shape: a bug raised *while* a SourceFetchError is being handled. The
+        # `Error:` line is clean either way; the chained block below it was not.
+        def boom(url: str, **kwargs: Any) -> Schema:
+            try:
+                raise SourceFetchError(f'{url}?apikey={SECRET} failed')
+            except SourceFetchError:
+                raise RuntimeError('inner blew up while handling the fetch failure')  # noqa: B904
+
+        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', '--key', SECRET)
+        assert result.exit_code == 70
+        assert 'During handling of the above exception' in result.stderr  # not vacuous
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
 
     def test_no_overwrite_with_an_existing_target_exits_one(self, runner: CliRunner, project: Path) -> None:
         (project / 'schema.py').write_text('mine\n', encoding='utf-8')

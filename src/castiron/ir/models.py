@@ -18,6 +18,9 @@ Deliberate deviations from supabase-pydantic (per the CI-003 spec):
 - ``TableInfo.generated_data`` (Faker seed output) and the pg-specific
   ``is_user_defined_type`` helper are dropped.
 - ``EnumInfo`` Python-naming helpers move to the CI-004 emitter.
+- ``TableInfo.description`` (a table's ``COMMENT ON TABLE``) is a castiron **addition**,
+  not a port: supabase-pydantic had no table-comment field, so the comment was dropped
+  before it could reach an emitter (CI-009).
 """
 
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -187,7 +190,17 @@ class SortedColumns:
 
 @dataclass
 class TableInfo:
-    """A table (or view): its columns, constraints, foreign keys, and relationships."""
+    """A table (or view): its columns, constraints, foreign keys, and relationships.
+
+    ``description`` is the table's own SQL comment (``COMMENT ON TABLE``), or ``None`` when
+    the source does not report one. It is **never** a guess: a source that cannot see
+    comments leaves it ``None``, and an empty or whitespace-only comment normalizes to
+    ``None`` too, so "no comment" has exactly one representation. The OpenAPI source fills
+    it from ``definitions.<t>.description`` (CI-009); CI-010's live-DB path fills it from
+    ``obj_description(c.oid, 'pg_class')`` — an *enrichment* of the same field, not a
+    redesign. The field is appended last so positional ``TableInfo(...)`` construction
+    stays valid (the ``Schema.functions`` precedent).
+    """
 
     name: str
     schema: str = 'public'
@@ -197,6 +210,7 @@ class TableInfo:
     foreign_keys: list[ForeignKeyInfo] = field(default_factory=list)
     constraints: list[ConstraintInfo] = field(default_factory=list)
     relationships: list[RelationshipInfo] = field(default_factory=list)
+    description: str | None = None
 
     def __str__(self) -> str:
         """Return a short, human-readable representation of the table."""

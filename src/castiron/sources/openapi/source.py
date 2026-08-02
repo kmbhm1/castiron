@@ -55,6 +55,7 @@ def build_schema_from_document(
         schema,
         disable_model_prefix_protection,
         function_details=rows.function_details,
+        table_details=rows.table_details,
     )
 
 

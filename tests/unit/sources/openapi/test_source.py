@@ -696,3 +696,65 @@ class TestModuleHygiene:
                         assert alias.name.split('.')[0] in stdlib_or_castiron, path
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     assert node.module.split('.')[0] in stdlib_or_castiron, path
+
+
+# ---------------------------------------------------------------------------
+# Table-level SQL comments (CI-009), end to end.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTableDescriptions:
+    """``definitions.<t>.description`` reaching ``TableInfo.description``."""
+
+    def test_a_base_table_carries_its_comment(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+
+        assert table(schema, 'users').description == 'Application users.'
+        assert table(schema, 'orders').description == 'Customer orders.'
+
+    def test_a_view_carries_its_comment_too(self, document: dict[str, Any]) -> None:
+        """A VIEW is a table for this purpose; ``COMMENT ON VIEW`` populates the same field."""
+        view = table(build_schema_from_document(document), 'active_users_view')
+
+        assert view.table_type == 'VIEW'
+        assert view.description == 'Users with a recent login.'
+
+    def test_an_uncommented_table_is_none(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+
+        assert table(schema, 'products').description is None
+        assert table(schema, 'order_items').description is None
+        assert table(schema, 'restricted_table').description is None
+
+    def test_every_table_description_matches_the_document(self, document: dict[str, Any]) -> None:
+        """CI6-Q7: enumerate the tables rather than sampling two of them."""
+        schema = build_schema_from_document(document)
+
+        for name, definition in document['definitions'].items():
+            expected = definition.get('description')
+            assert table(schema, name).description == expected, name
+
+    def test_the_comment_reaches_as_dict(self, document: dict[str, Any]) -> None:
+        as_dict = build_schema_from_document(document).as_dict()
+        by_name = {t['name']: t for t in as_dict['tables']}
+
+        assert by_name['users']['description'] == 'Application users.'
+        assert by_name['products']['description'] is None
+        assert json.dumps(as_dict) == json.dumps(build_schema_from_document(document).as_dict())
+
+    def test_building_twice_yields_the_same_descriptions(self, document: dict[str, Any]) -> None:
+        first = build_schema_from_document(document)
+        second = build_schema_from_document(document)
+
+        assert [t.description for t in first.tables] == [t.description for t in second.tables]
+
+    def test_a_reordered_document_yields_the_same_descriptions(self, document: dict[str, Any]) -> None:
+        import copy
+
+        reordered = copy.deepcopy(document)
+        reordered['definitions'] = dict(reversed(list(reordered['definitions'].items())))
+
+        assert {t.name: t.description for t in build_schema_from_document(reordered).tables} == {
+            t.name: t.description for t in build_schema_from_document(document).tables
+        }

@@ -24,7 +24,10 @@ The document is **Swagger 2.0** (root key ``swagger``), describes exactly **one*
 filtered by the API role's privileges. Columns live in ``definitions.<t>.properties.<c>``:
 ``format`` carries the raw pg type name, ``required`` lists exactly the NOT NULL columns,
 and keys/relationships exist only as ``<pk/>`` / ``<fk table='..' column='..'/>`` markers
-inside a column's ``description``. Functions live at ``paths./rpc/<name>``.
+inside a column's ``description``. Functions live at ``paths./rpc/<name>``. A definition's
+**own** ``description`` is the table's SQL comment (``COMMENT ON TABLE``) — PostgREST
+carries it verbatim, and castiron routes it to ``TableInfo.description`` via the table
+3-tuple contract (CI-009); it is *not* a fidelity loss.
 
 The fidelity floor (what this source structurally cannot see)
 -------------------------------------------------------------
@@ -164,16 +167,18 @@ class OpenApiRows:
     enum_types: tuple[Row, ...] = ()
     enum_type_mapping: tuple[Row, ...] = ()
     function_details: tuple[Row, ...] = ()
+    table_details: tuple[Row, ...] = ()
 
 
 @dataclass
 class _RowAccumulator:
-    """Mutable per-parse collector for the six row contracts."""
+    """Mutable per-parse collector for the row contracts."""
 
     columns: list[Row] = field(default_factory=list)
     fks: list[Row] = field(default_factory=list)
     constraints: list[Row] = field(default_factory=list)
     enum_mappings: list[Row] = field(default_factory=list)
+    tables: list[Row] = field(default_factory=list)
     #: ``(namespace, type_name)`` → the enum's labels, de-duplicated across columns.
     enums: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
@@ -300,7 +305,7 @@ def parse_openapi_document(
             guessed wrong.
 
     Returns:
-        The six row contracts, ready for :func:`castiron.ir.build_schema`.
+        The row contracts, ready for :func:`castiron.ir.build_schema`.
 
     Raises:
         SourceParseError: The document is not PostgREST Swagger 2.0 output, exposes no
@@ -333,6 +338,7 @@ def parse_openapi_document(
         ),
         enum_type_mapping=tuple(rows.enum_mappings),
         function_details=_parse_functions(paths, schema),
+        table_details=tuple(rows.tables),
     )
 
 
@@ -386,6 +392,14 @@ def _parse_definition(
 
     required = {value for value in _as_list(definition.get('required')) if isinstance(value, str)}
     table_type = classify_table_type(table_name, definition, paths)
+
+    # The definition's own `description` is the table's SQL comment (`COMMENT ON TABLE`).
+    # Emitted for every parsed table -- including as `None` -- so `table_details` stays one
+    # row per table and the contract is uniform. A definition skipped above (not an object,
+    # or no `properties`) contributes no row at all, since it contributes no table.
+    # `_as_str` is what keeps a non-string `description` from being mistaken for one; the
+    # builder owns the rest of the normalization.
+    rows.tables.append((schema, table_name, _as_str(definition.get('description'))))
 
     parsed: list[tuple[str, JsonObject, ColumnMarkers]] = []
     for column_name, raw_property in properties.items():

@@ -16,15 +16,22 @@ What the fixture deliberately exercises:
   (PostgREST drops ``nextval(...)``), a ``character varying`` + ``maxLength``, a string-ish
   ``now()`` default, a scalar enum with a default, a ``jsonb`` column with **no** ``type``
   key, a ``text[]`` array, a plain-comment description, a Python-keyword column (``class``),
-  and numeric/boolean defaults (``0`` / ``false``) that must be stringified.
+  and numeric/boolean defaults (``0`` / ``false``) that must be stringified, **and a
+  table-level SQL comment** (``Application users.``).
 - ``orders`` -- an ``int64`` PK, a single-column FK marker preceded by a real SQL comment,
-  ``numeric``, ``character`` + ``maxLength: 1``, and an **enum array** with no ``enum`` key
-  (its labels are unknowable from the document, so it links only via the scalar column).
+  ``numeric``, ``character`` + ``maxLength: 1``, an **enum array** with no ``enum`` key
+  (its labels are unknowable from the document, so it links only via the scalar column),
+  and a **table-level SQL comment** (``Customer orders.``).
 - ``order_items`` -- a bridge table: a composite PK whose members are both FK columns.
 - ``products`` -- the far side of two relationships.
-- ``active_users_view`` -- GET-only **and** no ``required`` array => classified ``VIEW``.
+- ``active_users_view`` -- GET-only **and** no ``required`` array => classified ``VIEW``,
+  with a **table-level SQL comment** (``Users with a recent login.``) proving a VIEW carries
+  one too.
 - ``restricted_table`` -- GET-only but **has** ``required`` => stays ``BASE TABLE`` (the
   conservative two-signal heuristic).
+
+``order_items``, ``products`` and ``restricted_table`` deliberately carry **no** table
+comment, so the golden proves an uncommented table gains nothing (CI-009).
 - ``/rpc/*`` -- ``get_user_stats`` (GET+POST: non-volatile, one defaulted arg),
   ``create_order`` (POST-only: volatile, an enum arg and an array arg), ``ping``
   (POST-only, zero args), and ``search_products`` (GET+POST with a VARIADIC arg visible

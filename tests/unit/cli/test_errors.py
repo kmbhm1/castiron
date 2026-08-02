@@ -517,9 +517,27 @@ class TestRejectUrlUserinfo:
     @pytest.mark.parametrize(
         'source',
         [
+            f'postgresql://postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+            f'postgres://postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+            f'mysql://root:{PASSWORD}@db.example.com:3306/app',
+        ],
+    )
+    def test_a_non_http_userinfo_url_is_accepted(self, source: str) -> None:
+        # ⚠ Fix round. The "cannot succeed" measurement is about *HTTP* fetching and does not
+        # generalize: `postgresql://user:password@host/db` is the canonical libpq connection
+        # string, and CI-010's live-database source will consume it. Refusing it -- with a
+        # message telling the user to "pass the key with --key" -- would be wrong, and the same
+        # docstring that justifies the userinfo *mask* cites exactly these DSNs. The mask still
+        # covers them; only the boundary refusal is scoped to what castiron fetches over HTTP.
+        assert reject_url_userinfo(source) == source
+        assert PASSWORD not in redact(f'Could not connect to {source}')
+
+    @pytest.mark.parametrize(
+        'source',
+        [
             f'https://user:{PASSWORD}@x.supabase.co',
             f'https://{PASSWORD}@x.supabase.co/rest/v1/',
-            f'postgresql://postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+            f'http://user:{PASSWORD}@x.supabase.co/rest/v1/',
         ],
     )
     def test_a_userinfo_url_is_refused(self, source: str) -> None:

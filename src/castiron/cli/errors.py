@@ -30,11 +30,12 @@ import sys
 import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import click
 from click.core import ParameterSource
 
+from castiron.cli.config import URL_SCHEMES
 from castiron.sources import SourceError
 
 #: Everything worked: files were written, or ``--dry-run`` completed.
@@ -348,28 +349,38 @@ def key_option_callback(ctx: click.Context, param: click.Parameter, value: str |
 
 
 def reject_url_userinfo(source: str | None) -> str | None:
-    """Refuse a ``--from`` URL that carries credentials in its userinfo. Never echoes the value.
+    """Refuse an **HTTP(S)** ``--from`` URL that carries credentials in its userinfo.
 
-    The boundary half of the two-layer defence :func:`redact` completes — the same shape as
-    :func:`sanitize_key`, and settled the same way (CI-063: sanitize at the boundary *and*
-    harden the mask). Removing the trigger costs nothing, because **castiron cannot
-    successfully fetch from a userinfo URL under any circumstance**: ``urllib.request`` does not
-    apply userinfo as HTTP Basic auth, it hands the whole netloc to ``http.client``, which
-    either fails to parse it (``https://u:p@host`` → ``InvalidURL: nonnumeric port: 'p@host'``,
-    raised before a socket opens) or fails to resolve a host literally named ``u@host``. The
-    first of those quotes the netloc back, which is how the password reached the terminal.
+    Never echoes the value. The boundary half of the two-layer defence :func:`redact` completes
+    — the same shape as :func:`sanitize_key`, and settled the same way (CI-063: sanitize at the
+    boundary *and* harden the mask). Removing the trigger costs nothing, because **castiron
+    cannot successfully fetch from an http(s) userinfo URL under any circumstance**:
+    ``urllib.request`` does not apply userinfo as HTTP Basic auth, it hands the whole netloc to
+    ``http.client``, which either fails to parse it (``https://u:p@host`` → ``InvalidURL:
+    nonnumeric port: 'p@host'``, raised before a socket opens) or fails to resolve a host
+    literally named ``u@host``. The first of those quotes the netloc back, which is how the
+    password reached the terminal.
+
+    ⚠ **Scoped to** :data:`~castiron.cli.config.URL_SCHEMES` **on purpose.** That measurement is
+    about *HTTP* fetching and does not generalize: ``postgresql://user:password@host/db`` is the
+    canonical libpq connection string, and CI-010's live-database source will consume it happily.
+    Refusing it here — telling a user to "pass the key with --key" for a DSN — would be wrong,
+    and it is why :func:`redact` masks DSN userinfo whether or not this refusal fires. The two
+    layers deliberately have different scopes: the boundary refuses what cannot work, the mask
+    covers everything castiron might print.
 
     Args:
         source: The resolved ``--from`` value — a URL, a path, or ``None``.
 
     Returns:
-        ``source`` unchanged when it carries no userinfo.
+        ``source`` unchanged when it carries no userinfo, or when its scheme is not one castiron
+        fetches over HTTP.
 
     Raises:
-        click.UsageError: ``source`` is a URL with a ``user:password@`` (exit 2, matching
-            :func:`sanitize_key`'s refusal).
+        click.UsageError: ``source`` is an http(s) URL with a ``user:password@`` (exit 2,
+            matching :func:`sanitize_key`'s refusal).
     """
-    if source and _URL_USERINFO.search(source):
+    if source and urlsplit(source).scheme in URL_SCHEMES and _URL_USERINFO.search(source):
         raise click.UsageError(
             'The --from URL carries credentials in its userinfo (the `user:password@` before the '
             'host). castiron will not use it: the HTTP client rejects such a URL before it opens a '

@@ -56,11 +56,12 @@ to get it:
 castiron: internal error (RuntimeError: kaboom). This is a bug in castiron, please report it at https://github.com/kmbhm1/castiron/issues -- rerun with --debug for the traceback.
 ```
 
-!!! note "`--debug` changes the exit code of an internal error"
-    `--debug` re-raises the original exception so Python prints the full traceback, which
-    means the process exits **`1`** (Python's code for an uncaught exception), not `70`.
-    Use `--debug` when you are collecting a traceback for a bug report; do not use it in a
-    script that branches on `70`.
+!!! note "`--debug` adds the traceback without changing the exit code"
+    `--debug` prints the full traceback — chained exceptions included — after the message
+    above, and the process still exits **`70`**. castiron prints that traceback itself, so it
+    passes through the same redaction as every other string castiron prints: an API key, a
+    URL's `user:password@`, or a `?service_role_key=` value in the traceback is masked before
+    you see it. Paste the whole thing into a bug report.
 
 ## Scripting against them
 

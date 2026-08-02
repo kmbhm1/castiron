@@ -68,7 +68,7 @@ generated constraint.
 ## Install
 
 ```bash
-uv add castiron        # or: pip install castiron
+uv add cast-iron       # or: pip install cast-iron
 ```
 
 Until the first release, [run it from a checkout](getting-started/quickstart.md#from-a-checkout).

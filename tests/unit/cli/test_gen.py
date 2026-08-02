@@ -334,15 +334,39 @@ class TestFailureMapping:
         assert 'This is a bug' in result.output
         assert 'Traceback' not in result.output
 
-    def test_debug_lets_the_exception_escape_so_python_prints_the_traceback(
+    def test_debug_prints_a_redacted_traceback_and_still_exits_seventy(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # CI-062. Against main this exits 1 with the interpreter's own unredacted traceback;
+        # castiron now prints it, through `redact`, and keeps the documented exit code.
         def boom(url: str, **kwargs: Any) -> Schema:
-            raise RuntimeError('a castiron bug')
+            raise RuntimeError(f'a castiron bug on {url}?service_role_key={SECRET}')
 
         monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
-        with pytest.raises(RuntimeError, match='a castiron bug'):
-            run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', catch_exceptions=False)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug')
+        assert result.exit_code == 70
+        assert 'Traceback (most recent call last)' in result.stderr  # not vacuous
+        assert 'RuntimeError: a castiron bug' in result.stderr
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
+
+    def test_the_debug_traceback_of_a_chained_failure_is_redacted(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The reachable shape: a bug raised *while* a SourceFetchError is being handled. The
+        # `Error:` line is clean either way; the chained block below it was not.
+        def boom(url: str, **kwargs: Any) -> Schema:
+            try:
+                raise SourceFetchError(f'{url}?apikey={SECRET} failed')
+            except SourceFetchError:
+                raise RuntimeError('inner blew up while handling the fetch failure')  # noqa: B904
+
+        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', '--key', SECRET)
+        assert result.exit_code == 70
+        assert 'During handling of the above exception' in result.stderr  # not vacuous
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
 
     def test_no_overwrite_with_an_existing_target_exits_one(self, runner: CliRunner, project: Path) -> None:
         (project / 'schema.py').write_text('mine\n', encoding='utf-8')
@@ -383,21 +407,25 @@ class TestSecrets:
         assert SECRET not in result.output
         assert 'apikey=***' in result.output
 
+    @pytest.mark.parametrize('name', ['apikey', 'service_role_key'])
     def test_a_query_string_key_is_redacted_out_of_the_summary(
         self,
         runner: CliRunner,
         project: Path,
         monkeypatch: pytest.MonkeyPatch,
         openapi_fixture_path: Path,
+        name: str,
     ) -> None:
+        # An **exit-0** printed surface: the run summary names the origin, so a secret that only
+        # leaks on success would never show up in a failure-shaped test.
         def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--output', 'out')
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?{name}={SECRET}', '--output', 'out')
         assert result.exit_code == 0, result.output
         assert SECRET not in result.output
-        assert 'apikey=***' in result.stdout
+        assert f'{name}=***' in result.stdout
 
     def test_the_literal_key_value_never_reaches_the_terminal(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -417,15 +445,34 @@ class TestSecrets:
     # message tells users to paste into an issue. The verbosity flags are now part of the
     # matrix rather than an afterthought.
     @pytest.mark.parametrize('verbosity', [[], ['-v'], ['-vv'], ['--debug'], ['-vv', '--debug']])
+    @pytest.mark.parametrize(
+        ('source', 'expected_exit'),
+        [
+            (f'https://x.supabase.co/rest/v1/?apikey={SECRET}', 1),
+            # CI-066: the old pattern anchored the credential word to the `?`/`&`, so every
+            # prefixed spelling printed in full -- and a service-role key is the worst one.
+            (f'https://x.supabase.co/rest/v1/?service_role_key={SECRET}', 1),
+            # CI-066/CI066-Q1: a userinfo URL is refused at the boundary (exit 2) rather than
+            # handed to an HTTP client that quotes the password back in its InvalidURL.
+            (f'https://user:{SECRET}@x.supabase.co/rest/v1/', 2),
+        ],
+        ids=['apikey', 'service_role_key', 'url-userinfo'],
+    )
     def test_a_query_string_key_is_redacted_at_every_verbosity(
-        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch, verbosity: list[str]
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        verbosity: list[str],
+        source: str,
+        expected_exit: int,
     ) -> None:
         def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
             raise URLError('down')
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', *verbosity)
-        assert result.exit_code == 1
+        result = run(runner, '--from', source, *verbosity)
+        assert result.exit_code == expected_exit
         assert SECRET not in result.output
         assert SECRET not in result.stderr
 
@@ -460,18 +507,120 @@ class TestSecrets:
         result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--debug')
         assert 'Fetching the OpenAPI document from https://x.supabase.co/rest/v1/?apikey=***' in result.stderr
 
+    @pytest.mark.parametrize('name', ['apikey', 'service_role_key'])
     def test_a_typo_that_drops_the_scheme_is_redacted_out_of_the_usage_error(
-        self, runner: CliRunner, project: Path
+        self, runner: CliRunner, project: Path, name: str
     ) -> None:
         # `x.supabase.co/...` has no scheme, so it is neither a URL nor a file and click echoes
         # the value back verbatim. Omitting `https://` while pasting a project URL is a very
         # plausible typo, and that pasted URL carries the key -- so this path really does
         # print a secret. It was the one printed surface with no test on it.
-        result = run(runner, '--from', f'x.supabase.co/rest/v1/?apikey={SECRET}')
+        result = run(runner, '--from', f'x.supabase.co/rest/v1/?{name}={SECRET}')
         assert result.exit_code == 2
         assert 'neither a URL nor an existing file' in result.output
         assert SECRET not in result.output
-        assert 'apikey=***' in result.output
+        assert f'{name}=***' in result.output
+
+    # ⚠ CI-068, folded in by captain ruling. The sibling of the test above: the same echo, but
+    # with the secret in a schemeless `user:password@host` rather than a query parameter.
+    # `redact` cannot anchor on that shape (a bare `a:b@c` is ordinary prose), so `gen` sends
+    # this one surface through `redact_source` instead. Note PR #8 created an asymmetry this
+    # closes: `postgresql://user:pw@host` is safely refused while the schemeless
+    # `postgres:user:pw@host` -- the shape psql connection strings circulate in -- printed
+    # in full.
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'postgres:{SECRET}@db.x.supabase.co:5432/postgres',
+            f'user:{SECRET}@x.supabase.co',
+        ],
+    )
+    def test_a_schemeless_userinfo_source_is_redacted_out_of_the_usage_error(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        result = run(runner, '--from', source)
+        assert result.exit_code == 2
+        assert 'neither a URL nor an existing file' in result.output  # not vacuous
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    def test_a_schemeless_userinfo_source_from_the_environment_is_redacted_too(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The secret does NOT have to be on the command line, so "it was in the shell history
+        # anyway" does not hold: CASTIRON_FROM, SUPABASE_URL and a `from = "..."` in
+        # pyproject.toml all reach the same echo.
+        monkeypatch.setenv('SUPABASE_URL', f'postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        result = run(runner)
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    def test_a_schemeless_userinfo_source_from_the_config_file_is_redacted_too(
+        self, runner: CliRunner, project: Path
+    ) -> None:
+        (project / 'pyproject.toml').write_text(
+            f'[tool.castiron]\nfrom = "postgres:{SECRET}@db.x.supabase.co:5432/postgres"\n', encoding='utf-8'
+        )
+        result = run(runner, '--output', 'out')
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'nosuchfile-{SECRET}.json',
+            f'nope.json?bearerthing={SECRET}',
+        ],
+    )
+    def test_the_key_is_redacted_out_of_the_usage_error_too(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        # ⚠ Round 3. Surface 7 with a --key in play. `redact_source` replaced `redact(source,
+        # key)` and dropped the key, so the API key printed in full here -- a leak introduced by
+        # the commit that closed one, on the same surface. Every CI-068 test ran without --key.
+        result = run(runner, '--from', source, '--key', SECRET)
+        assert result.exit_code == 2
+        assert 'neither a URL nor an existing file' in result.output  # not vacuous
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'https://user:{SECRET}@[::1',
+            f'https://u:{SECRET}@h:notaport/',
+        ],
+    )
+    def test_a_malformed_userinfo_url_does_not_escape_the_error_boundary(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        # ⚠ Round 3. The option callback runs in click's make_context, outside
+        # `cli_error_handling`. An unhandled ValueError there printed a raw UNREDACTED traceback
+        # and exited 1 -- regressing CI6-D9's exit-code contract and CI-062, which is commit 2 of
+        # this same PR. Measured against a real process: on main rc=70 with no traceback, on the
+        # unpatched branch rc=1 with the full unredacted traceback on stderr.
+        #
+        # ⚠ The assertion is `result.exception`, NOT `'Traceback' not in result.output`. Measured:
+        # CliRunner swallows an escaping exception into `result.exception` and leaves `output`
+        # EMPTY, so the obvious spelling of this test passes against the bug. Every path out of
+        # the CLI is a SystemExit; anything else escaped the boundary.
+        result = run(runner, '--from', source)
+        assert isinstance(result.exception, SystemExit), f'{type(result.exception).__name__} escaped the CLI'
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    def test_a_postgres_dsn_is_not_refused_at_the_boundary(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ⚠ Fix round. The boundary refusal is scoped to the schemes castiron fetches over HTTP.
+        # A postgresql:// DSN is the canonical libpq connection string that CI-010's live-database
+        # source will consume, so it must reach the source layer -- where it fails as an unknown
+        # source, not as a usage error -- with its password still masked out of the message.
+        result = run(runner, '--from', f'postgresql://postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        assert 'userinfo' not in result.output  # the boundary did NOT refuse it
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
 
     def test_the_internal_error_message_is_redacted(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -583,14 +732,110 @@ class TestSecrets:
 
     def test_a_local_path_that_carries_a_key_is_redacted_in_the_summary(self, runner: CliRunner, project: Path) -> None:
         # A filesystem path is an unlikely place for a key -- but "every printed string is
-        # redacted" (CI6-D7) is a claim with no exceptions, and `?apikey=` survives a URL
+        # redacted" (CI6-D7) is a claim with no exceptions, and `apikey=` survives a URL
         # pasted into a `curl -o` filename. The local branch printed it verbatim.
-        weird = project / f'openapi.json?apikey={SECRET}'
+        #
+        # ⚠ CI-067: the separator is `&`, NOT `?`. This line creates a real file, and `?` is one
+        # of Windows' reserved filename characters (< > : " / \ | ? *), so `write_bytes` raises
+        # OSError there -- green today only because the CI matrix is ubuntu-latest. `&` is a
+        # shell metacharacter, not a filesystem-reserved one, so it is legal on every supported
+        # platform, and it is in the leading class of the parameter pattern just like `?`. Do
+        # not "restore" the `?`. The `?` spelling keeps its coverage file-free, one test below,
+        # through `source_origin(f'dump.json?apikey={SECRET}', SECRET)`.
+        weird = project / f'openapi.json&apikey={SECRET}'
         weird.write_bytes((project / 'openapi.json').read_bytes())
         result = run(runner, '--from', weird.name, '--output', 'out')
         assert result.exit_code == 0, result.output
         assert SECRET not in result.output
         assert 'apikey=***' in result.stdout
+
+    # ⚠ CI-066's userinfo class, across the surfaces of §11.2's enumeration. The boundary
+    # rejection closes the `--from` route, so the surfaces the *mask* still has to hold are the
+    # ones a URL reaches by some other path: a source error carrying a DSN (CI-010's shape), a
+    # log record, and the summary origin.
+    def test_a_userinfo_url_is_refused_at_exit_two(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Fails against main with exit 1 and `nonnumeric port: '<password>@x.supabase.co'` --
+        # the password printed twice, the second time with no scheme in front of it.
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('a refused source must never reach the fetcher')
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', explode)
+        result = run(runner, '--from', f'https://user:{SECRET}@x.supabase.co')
+        assert result.exit_code == 2
+        assert 'userinfo' in result.output
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    def test_the_refusal_names_the_shape_and_never_the_value(self, runner: CliRunner, project: Path) -> None:
+        result = run(runner, '--from', f'https://user:{SECRET}@x.supabase.co')
+        assert 'user:password@' in result.output
+        assert '--key' in result.output
+        assert 'x.supabase.co' not in result.output
+
+    def test_a_userinfo_url_from_the_environment_is_refused_too(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The check hangs off the option, not the command body, so it covers CASTIRON_FROM /
+        # SUPABASE_URL and the [tool.castiron] default map as well as the flag.
+        monkeypatch.setenv('SUPABASE_URL', f'https://user:{SECRET}@x.supabase.co')
+        result = run(runner)
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    def test_a_userinfo_url_from_the_config_file_is_refused_too(self, runner: CliRunner, project: Path) -> None:
+        (project / 'pyproject.toml').write_text(
+            f'[tool.castiron]\nfrom = "https://user:{SECRET}@x.supabase.co"\n', encoding='utf-8'
+        )
+        result = run(runner, '--output', 'out')
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    def test_a_dsn_password_never_reaches_the_terminal(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The mask ships regardless of the boundary rejection: CI-010's live-DB source will carry
+        # postgresql://user:password@host/db in its failures, and this is the surface they print
+        # on. Fails against main -- the password prints in full on the `Error:` line at exit 1.
+        def fail(url: str, **kwargs: Any) -> Schema:
+            raise SourceFetchError(f'Could not connect to postgresql://postgres:{SECRET}@db.x.supabase.co:5432/db')
+
+        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        result = run(runner, '--from', 'https://x.supabase.co')
+        assert result.exit_code == 1
+        assert SECRET not in result.output
+        assert 'postgresql://postgres:***@db.x.supabase.co' in result.output
+
+    def test_a_logged_dsn_password_is_redacted_on_a_successful_run(
+        self,
+        runner: CliRunner,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        openapi_fixture_path: Path,
+    ) -> None:
+        # An **exit-0** userinfo surface (§11.2 row 5): a log record at -vv, on a run that
+        # succeeds, so nothing about the failure path is doing the work.
+        def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
+            logging.getLogger('castiron.sources.openapi.fetch').debug(
+                f'connected via postgresql://postgres:{SECRET}@db.x.supabase.co:5432/db'
+            )
+            return FakeResponse(openapi_fixture_path.read_bytes())
+
+        monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
+        result = run(runner, '--from', 'https://x.supabase.co', '--output', 'out', '-vv')
+        assert result.exit_code == 0, result.output
+        assert 'postgres:***@db.x.supabase.co' in result.stderr
+        assert SECRET not in result.stderr
+        assert SECRET not in result.output
+
+    def test_the_summary_origin_masks_a_userinfo_password(self) -> None:
+        # §11.2 row 6, reached directly: `source_origin` feeds both the exit-0 summary line and
+        # `schema_hint`'s "castiron read ..." line, and the boundary rejection means no CLI run
+        # can carry a userinfo URL this far any more.
+        origin = source_origin(f'https://user:{SECRET}@x.supabase.co/rest/v1/', None)
+        assert SECRET not in origin
+        assert 'https://user:***@x.supabase.co' in origin
 
     def test_the_origin_of_a_local_path_is_redacted_for_the_hint_too(self) -> None:
         # The same value reaches `schema_hint`'s "castiron read <origin>" line through

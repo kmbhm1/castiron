@@ -2,8 +2,8 @@
 # castiron — developer tasks (uv + hatchling)         #
 #######################################################
 
-.PHONY: help sync format lint typecheck vulture test test-unit coverage \
-        validate build check-next-version serve-docs pre-commit-setup clean
+.PHONY: help sync format lint typecheck vulture test test-unit test-integration \
+        coverage validate build check-next-version serve-docs pre-commit-setup clean
 
 help: ## Display this help message
 	@echo "castiron — available commands:"
@@ -26,11 +26,18 @@ typecheck: ## Type-check src/ with mypy (strict)
 vulture: ## Find unused code with vulture
 	@uv run vulture src/
 
-test: ## Run all tests with coverage (90% floor)
-	@uv run pytest -vv --cov=src/castiron --cov-report=term-missing --cov-fail-under=90
+# `-m "not integration"` is what keeps the static gate offline: the live-source suite under
+# tests/integration/ needs the external castiron-testbed apparatus, which most machines running
+# this target do not have. It skips itself when the apparatus is absent, but it is excluded here
+# as well so a developer who DOES have it exported still gets a network-free `make validate`.
+test: ## Run all tests with coverage (90% floor); excludes the live-source suite
+	@uv run pytest -vv -m "not integration" --cov=src/castiron --cov-report=term-missing --cov-fail-under=90
 
 test-unit: ## Run only unit tests
 	@uv run pytest -vv -m unit tests/unit/
+
+test-integration: ## Run the live-source suite (needs the castiron-testbed apparatus; see tests/integration/README.md)
+	@uv run pytest -vv -m integration tests/integration/
 
 coverage: ## Generate an HTML coverage report
 	@uv run pytest --cov=src/castiron --cov-report=term-missing --cov-report=html

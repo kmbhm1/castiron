@@ -631,9 +631,17 @@ class TestSecrets:
 
     def test_a_local_path_that_carries_a_key_is_redacted_in_the_summary(self, runner: CliRunner, project: Path) -> None:
         # A filesystem path is an unlikely place for a key -- but "every printed string is
-        # redacted" (CI6-D7) is a claim with no exceptions, and `?apikey=` survives a URL
+        # redacted" (CI6-D7) is a claim with no exceptions, and `apikey=` survives a URL
         # pasted into a `curl -o` filename. The local branch printed it verbatim.
-        weird = project / f'openapi.json?apikey={SECRET}'
+        #
+        # ⚠ CI-067: the separator is `&`, NOT `?`. This line creates a real file, and `?` is one
+        # of Windows' reserved filename characters (< > : " / \ | ? *), so `write_bytes` raises
+        # OSError there -- green today only because the CI matrix is ubuntu-latest. `&` is a
+        # shell metacharacter, not a filesystem-reserved one, so it is legal on every supported
+        # platform, and it is in the leading class of the parameter pattern just like `?`. Do
+        # not "restore" the `?`. The `?` spelling keeps its coverage file-free, one test below,
+        # through `source_origin(f'dump.json?apikey={SECRET}', SECRET)`.
+        weird = project / f'openapi.json&apikey={SECRET}'
         weird.write_bytes((project / 'openapi.json').read_bytes())
         result = run(runner, '--from', weird.name, '--output', 'out')
         assert result.exit_code == 0, result.output

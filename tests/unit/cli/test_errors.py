@@ -1,7 +1,10 @@
 """Exit codes, the error boundary, secret redaction, and the ``Hint:`` lines."""
 
 import json
+import os
 import socket
+import subprocess
+import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -17,6 +20,7 @@ from castiron.cli.errors import (
     EXIT_USAGE,
     FROM_HINT,
     REDACTED,
+    _key_spellings,
     cli_error_handling,
     key_hint,
     key_option_callback,
@@ -101,6 +105,58 @@ class TestRedactRenderedKeys:
 
     def test_a_short_key_is_still_left_alone_in_every_spelling(self) -> None:
         assert redact('the code is nope and nope', 'nop\r') == 'the code is nope and nope'
+
+    # ⚠ CI-065. The CI-061 final review falsified that row's own "zero mutation survivors"
+    # claim: `_key_spellings` emits four spellings, but each *new* one independently satisfied
+    # every existing assertion, so none was individually pinned. These four tests pin them.
+    def test_only_the_escaped_spelling_is_present_and_it_is_masked(self) -> None:
+        # An interior literal backslash, chosen so `key.strip(_TRIMMABLE_KEY_CHARS) == key` and
+        # the trimmed spelling collapses onto the raw one. `repr` doubles the backslash, so only
+        # the unicode_escape spelling occurs in the text at all.
+        key = 'abcdefg\\hijk'
+        text = f'value {key!r} rejected'
+        assert key not in text  # not vacuous: the raw and trimmed spellings are absent
+        assert 'abcdefg\\\\hijk' in text  # ...and the escaped one is what is really there
+        assert 'abcdefg' not in redact(text, key)
+
+    def test_only_the_trimmed_spelling_is_present_and_it_is_masked(self) -> None:
+        # A leading control character, in text where some layer already stripped it.
+        key = '\rabcdefghij'
+        text = 'the server rejected abcdefghij'
+        assert key not in text  # not vacuous
+        assert key.encode('unicode_escape').decode('ascii') not in text  # nor the escaped one
+        assert 'abcdefghij' not in redact(text, key)
+
+    def test_the_spellings_are_ordered_longest_first_with_a_stable_tie_break(self) -> None:
+        # Four spellings of lengths 11/10/10/8. `sorted` is stable, so before the total-order
+        # key the two ten-character ones kept their set-iteration order.
+        assert _key_spellings('\rabcdefgh ') == ['\\rabcdefgh ', '\rabcdefgh ', '\\rabcdefgh', 'abcdefgh']
+
+    def test_the_spelling_order_does_not_depend_on_the_hash_seed(self) -> None:
+        # Measured fallible: the unpatched code returns two different orders across these ten
+        # seeds (0/3/6/7 give one, the rest the other), so a false pass is under 1% likely.
+        script = 'from castiron.cli.errors import _key_spellings; print(_key_spellings(chr(13) + "abcdefgh "))'
+        orders = {
+            subprocess.run(
+                [sys.executable, '-c', script],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, 'PYTHONHASHSEED': str(seed)},
+            ).stdout
+            for seed in range(10)
+        }
+        assert len(orders) == 1
+
+    def test_spellings_of_several_secrets_are_merged_and_ordered(self) -> None:
+        # The variadic form CI-066's userinfo mask relies on: one union, one sort, one place the
+        # order lives. Short spellings are still dropped, and duplicates collapse.
+        assert _key_spellings(None) == []
+        assert _key_spellings() == []
+        assert _key_spellings('zzzzzzzzzz', 'aaaaaaaaaaaa', 'short', 'zzzzzzzzzz') == [
+            'aaaaaaaaaaaa',
+            'zzzzzzzzzz',
+        ]
 
 
 # ---------------------------------------------------------------------------

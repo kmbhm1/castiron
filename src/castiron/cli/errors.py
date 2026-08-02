@@ -97,7 +97,7 @@ _CONTROL_CHARACTER = re.compile(r'[\x00-\x1f\x7f]')
 
 
 def _key_spellings(*secrets: str | None) -> list[str]:
-    """Return every spelling of each secret a printed string might carry, longest first.
+    r"""Return every spelling of each secret a printed string might carry, longest first.
 
     :func:`redact` masks a **literal** match, so any surface that *renders* the key rather
     than printing it defeats it. That is not hypothetical: a key ending in a carriage return
@@ -105,21 +105,35 @@ def _key_spellings(*secrets: str | None) -> list[str]:
     ``http.client.putheader`` raise ``ValueError('Invalid header value %r' % value)`` before
     the socket is even opened. ``%r`` renders that control character as two ordinary
     characters, so the raw key no longer occurs in the message being redacted and the whole
-    JWT prints at exit 1. Masking the escaped and trimmed spellings as well covers ``%r``,
-    ``!r``, ``json.dumps`` and every other renderer that escapes the character which made
-    the key unusable in the first place.
+    JWT prints at exit 1. The escaped spelling covers **that** case — a renderer escaping the
+    very control character that made the key unusable, which is ``%r`` and ``!r``.
+
+    **Stated limit, measured rather than assumed:** it does *not* cover every renderer.
+    ``unicode_escape`` escapes a non-ASCII character (``é`` → ``\xe9``) where ``repr`` and
+    ``json.dumps`` do not, and it leaves a quote alone where they escape it — so a key
+    containing ``é`` or ``"`` survives a ``json.dumps`` rendering, and one containing both
+    quote styles survives a ``repr``. No renderer in ``src/`` produces those forms today: the
+    key is rendered only through ``%r`` in ``http.client.putheader``, and :func:`sanitize_key`
+    is the boundary layer that stops the value which triggers it from being sent at all. That
+    is why the covered case is the one that matters, and why widening the spelling set is not
+    the right trade.
 
     Variadic because a run can have more than one secret in play: the ``--key`` value, plus
     whatever :func:`_mask_url_userinfo` found inside a URL's userinfo. Every secret's spellings
-    are unioned and sorted once, so the ordering rule lives in exactly one place.
+    are unioned and sorted **once**, so the ordering rule lives in exactly one place.
 
     Args:
         *secrets: The secrets in play. ``None`` and empty values are skipped, so
             ``_key_spellings()`` and ``_key_spellings(None)`` both return ``[]``.
 
     Returns:
-        The distinct spellings long enough to mask, longest first — a shorter spelling is
-        usually a substring of a longer one, and masking it first would strand the remainder.
+        The distinct spellings long enough to mask, longest first, ties broken lexically. The
+        tie-break is what makes the order **total**: ``sorted`` is stable, so equal-length
+        spellings otherwise kept their set-iteration order, which varies with
+        ``PYTHONHASHSEED`` — nondeterminism in a security-relevant path, and against the spirit
+        of Hard Rule #9. Longest-first is tidiness rather than security here: with this
+        spelling set, masking a shorter spelling first strands only non-secret residue (a
+        ``\r``, a space), never key material.
     """
     spellings: set[str] = set()
     for secret in secrets:
@@ -127,7 +141,7 @@ def _key_spellings(*secrets: str | None) -> list[str]:
             continue
         escaped = secret.encode('unicode_escape').decode('ascii')
         spellings |= {secret, secret.strip(_TRIMMABLE_KEY_CHARS), escaped, escaped.strip(_TRIMMABLE_KEY_CHARS)}
-    return sorted((s for s in spellings if len(s) >= _MIN_REDACTABLE_KEY), key=len, reverse=True)
+    return sorted((s for s in spellings if len(s) >= _MIN_REDACTABLE_KEY), key=lambda s: (-len(s), s))
 
 
 def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:

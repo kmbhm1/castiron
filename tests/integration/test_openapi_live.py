@@ -704,6 +704,14 @@ class TestFunctions:
         # Enumerated (CI-072). Three separate losses are visible in this one comparison:
         # OUT parameters are excluded, INOUT ones are included, TABLE columns are invisible, and
         # the ORDER is alphabetical rather than declaration order (see the two tests below).
+        #
+        # ⚠ **This enumeration pins a DEFECT, and `CI-078` is the row that fixes it.** Every list
+        # below is alphabetical, which for a STABLE/IMMUTABLE function is recoverable declaration
+        # order that castiron discards -- `search_products` is declared `(p_terms, p_limit)` and
+        # appears here as `['p_limit', 'p_terms']`. When `CI-078` lands, the STABLE entries here
+        # move and this test goes red **by design**: update it to declaration order, do not
+        # re-sort the fixture. `test_a_stable_functions_argument_order_is_present_but_not_used`
+        # below is the companion that proves the order is available in the document today.
         assert {f.name: [p.name for p in f.parameters] for f in live_public_schema.functions} == {
             'bump_counter': ['p_value'],  # INOUT -- included
             'create_order': ['p_customer_id', 'p_lines', 'p_status'],
@@ -878,16 +886,16 @@ class TestEmitterEndToEnd:
         assert (region.code, region.name) == ('NA', 'North America')
         assert namespace['CurrenciesInsert'](code='USD', symbol='$').minor_units is None
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            'CI9-Q1: _py_string() escapes backslashes and quotes but NOT newlines, so a multi-line '
-            'COMMENT ON COLUMN (orders.tax here) emits an unterminated string literal in '
-            'Field(description=...). Fixed by CI-009 commit 1; strict=False because that fix is in '
-            'flight, so this XPASSes rather than going red the hour it merges. Delete then.'
-        ),
-    )
     def test_the_public_schema_emits_a_module_that_parses(self, live_public_schema: Schema) -> None:
+        # Carried `xfail(strict=False)` for CI9-Q1 until CI-089: `_py_string()` did not escape
+        # newlines, so a multi-line COMMENT ON COLUMN (orders.tax) emitted an unterminated string
+        # literal. CI-009 fixed it and the marker went on XPASSing silently -- `strict=False`
+        # announces nothing, ever. Deleted as its own reason line instructed.
+        #
+        # Note this proves the module PARSES, not that it RUNS: `compile()` does not execute class
+        # bodies, so a pydantic field clashing with a BaseModel attribute (PydanticUserError) or an
+        # annotation naming an un-emitted enum (NameError) both compile clean and fail at exec.
+        # The exec-and-instantiate proof is the separate test above.
         compile(_emit(live_public_schema), 'schema.py', 'exec')
 
 

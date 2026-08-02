@@ -69,7 +69,15 @@ generated constraint.
 
 ```bash
 uv add cast-iron       # or: pip install cast-iron
+castiron --version     # the command has no hyphen
 ```
+
+!!! info "You install `cast-iron`; you run `castiron`"
+    The hyphen belongs to the distribution name and nothing else. The command, the import
+    package (`import castiron`), and this repository all stay unhyphenated — the same
+    ordinary split as `pip install python-dateutil` → `import dateutil`, or
+    `pip install scikit-learn` → `import sklearn`. PyPI does not allow `castiron` as a
+    distribution name, so this is permanent rather than a stopgap.
 
 Until the first release, [run it from a checkout](getting-started/quickstart.md#from-a-checkout).
 

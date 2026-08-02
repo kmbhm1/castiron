@@ -14,8 +14,44 @@ document, one name to put in a bug report.
 | --- | --- |
 | `https://<ref>.supabase.co` | Rewrites it to the REST root `https://<ref>.supabase.co/rest/v1/` and fetches the OpenAPI document |
 | `https://api.example.com/` (any PostgREST root) | Fetches the OpenAPI document from that root, appending a trailing slash if needed |
+| `https://user:pw@api.example.com/` (any `http(s)` URL with a `user@` or `user:password@`) | **Refuses it** — exits `2` before any request, without echoing the URL back |
 | `./openapi.json` (any existing file) | Reads and parses the file — **no network access at all** |
 | anything else | Exits `2`: *"is neither a URL nor an existing file"* — castiron never silently prepends `https://` |
+
+Two of those rows exit `2`, and they are not the only ones: see [exit codes](exit-codes.md)
+for the full list.
+
+### Credentials in the URL are refused, not fetched
+
+A `--from` URL on `http` or `https` that carries credentials in its userinfo — the
+`user:password@`, or a bare `token@`, before the host — is rejected at the command line,
+before castiron opens a socket:
+
+```
+Usage: castiron gen [OPTIONS]
+Try 'castiron gen --help' for help.
+
+Error: The --from URL carries credentials in its userinfo (the `user:password@` before the host). castiron will not use it: the HTTP client rejects such a URL before it opens a socket, and the error it raises quotes the host back -- which would print your password. Drop the `user:password@` and pass the key with --key or CASTIRON_KEY.
+```
+
+**The message never contains the URL you passed** — printing it back is exactly the leak
+this refusal exists to prevent. Nothing is lost by refusing: Python's HTTP client does not
+apply userinfo as HTTP Basic auth, so such a URL could never have fetched anything. Pass
+the credential as `--key` or `CASTIRON_KEY` instead.
+
+The check is attached to the resolved value rather than to the flag, so it fires however
+you supplied the source — `--from`, `CASTIRON_FROM`, `SUPABASE_URL`, or `from = "..."`
+under `[tool.castiron]`.
+
+**Only `http` and `https` are refused, deliberately.** A `postgresql://`, `postgres://` or
+`mysql://` value keeps its userinfo, because a password in the connection string is the
+normal, correct form for a database DSN and the planned live-database source will read
+them. None of those is a source `gen` can read today, so passing one still fails — but
+with the password masked:
+
+```
+Error: --from 'postgresql://user:***@localhost/db' is neither a URL nor an existing file. Pass a Supabase/PostgREST URL (https://...) or a path to an OpenAPI JSON document.
+```
 
 ## Verbosity, quietness and debugging
 
@@ -27,9 +63,11 @@ Three orthogonal knobs, worth keeping straight:
 - `--debug` logs at debug level *and* shows the full traceback when castiron itself
   fails unexpectedly (exit `70`).
 
-API keys are masked in every string the CLI prints, at every verbosity — including debug
-logs and the URL echoed back in an error, which is where a `?apikey=` query string would
-otherwise leak.
+Secrets are masked in every string the CLI prints, at every verbosity — including debug
+logs, the traceback `--debug` shows, and the URL echoed back in an error. That covers the
+`--key` value, a URL's `user:password@`, and the value of any query- or fragment-parameter
+whose name reads as a credential (`?apikey=`, `?service_role_key=`), each replaced by
+`***`.
 
 ::: mkdocs-click
     :module: castiron.cli.main
@@ -38,6 +76,12 @@ otherwise leak.
     :depth: 1
 
 ## Notes on individual options
+
+`--key`
+: Whitespace and line endings around the value are trimmed, so a key read from a file with
+  Windows (CRLF) endings just works. A control character **inside** the value — a key
+  pasted across two lines — is refused instead, exiting `2` with an explanation and never
+  the key itself, because such a value cannot be sent as an HTTP header at all.
 
 `--emit`
 : Repeat the flag to run more than one emitter (`--emit pydantic --emit sqlalchemy`).

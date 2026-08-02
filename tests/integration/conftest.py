@@ -18,10 +18,19 @@ Three properties this module is responsible for, in order of how badly they fail
    ``-m "not integration"``. Any one of the three would do; all three means neither a
    forgotten marker nor a stray env var puts a network call inside the static gate.
 3. **The API key never reaches a test's namespace.** It is read in exactly one fixture and
-   captured in one closure (:func:`live_document`), so no test function holds it as a local,
-   no fixture repr renders it, and ``--showlocals`` has nothing to print. Anything that *is*
-   printed on a failure goes through :func:`castiron.cli.errors.redact` first — the same
-   masking the CLI uses (CI-063/CI-068), reused rather than re-implemented.
+   captured in one closure (:func:`live_document`), so no test function holds it as a local and
+   no fixture repr renders it. Anything printed on a failure goes through
+   :func:`castiron.cli.errors.redact` first — the same masking the CLI uses (CI-063/CI-068),
+   reused rather than re-implemented.
+
+   ⚠ **This claim shipped one size too large, and CI-089 measured it.** It used to end
+   "...and ``--showlocals`` has nothing to print". A closure hides the key from *test* functions;
+   it does not hide it from a **traceback**, because ``--showlocals`` renders the locals of every
+   frame — and the loader's own frame binds ``key``. Any exception escaping :func:`_fetch` was
+   therefore enough: a malformed ``CASTIRON_TEST_POSTGREST_URL`` printed the key in full, three
+   times, because ``fetch_openapi_document`` violated its documented ``Raises:`` contract. What
+   makes the property true is that **nothing escapes** :func:`_fetch` — see its ``except
+   Exception`` and ``pytrace=False`` — with the fetcher's contract fixed in ``src/`` behind it.
 
 ``CASTIRON_TEST_SEED_REVISION`` is attached to **every** failing report by
 :func:`pytest_runtest_makereport`. That is the mechanism that makes a moved assertion
@@ -38,7 +47,6 @@ import pytest
 
 from castiron.cli.errors import redact
 from castiron.ir import Schema
-from castiron.sources import SourceError
 from castiron.sources.openapi import build_schema_from_document, fetch_openapi_document
 
 #: The master switch. Unset ⇒ every test in this directory skips.
@@ -80,9 +88,32 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     ⚠ The path filter is load-bearing, not defensive. ``pytest_collection_modifyitems`` is a
     **session** hook: a conftest that implements it is handed the *whole* collected item list, not
-    just the items under its own directory. Without the filter this marks all 950 unit tests as
-    integration, ``make test`` deselects every one of them, and the gate reports success having run
-    nothing. (Measured, not theorized — the unfiltered version deselected 1024/1024.)
+    just the items under its own directory. Without the filter it marks the entire suite
+    ``integration`` and ``-m "not integration"`` then deselects every test there is.
+
+    **What that costs, re-measured on 2026-08-02 (CI-089) rather than asserted.** This docstring
+    used to end "the gate reports success having run nothing". That is **false twice over**, and
+    both corrections matter more than the original claim did. With this filter removed
+    (pytest 9.1.1)::
+
+        pytest -m "not integration"                                   -> 1420 deselected, exit 5
+        pytest -m "not integration" --cov=... --cov-fail-under=90     -> exit 1, coverage 31.57%
+
+    First, ``make test`` carries ``--cov-fail-under=90`` and a run of nothing cannot clear a 90%
+    floor. Second — and this is the part that was simply wrong — a **totally** deselected run
+    exits **5**, not 0: ``session.testscollected`` is the *post*-deselection count, so pytest's
+    own "no tests collected" already fires. Nothing about this scenario is silent.
+
+    What IS silent is **partial** deselection, where enough items survive to keep exit 5 away::
+
+        (a filter bug sparing one directory) -> 184 passed, 1236 deselected, exit 0
+                                             -> with the floor: exit 1, coverage 50.59%
+
+    and that is the shape worth fearing, because ``184 passed`` reads like success where
+    ``1420 deselected`` does not. The filter below is still the primary guard; the coverage floor
+    (now on **every** ``make test-matrix`` leg, ``CI-088``) is the backstop that catches the
+    partial case late and obscurely, reporting "coverage too low" for what is really "a conftest
+    hook in a subdirectory is global until you scope it" (standing lesson ``CI-083``).
 
     Args:
         items: Every item collected in the session.
@@ -140,6 +171,21 @@ def _require_testbed(postgrest_url: str) -> None:
 def _fetch(url: str, key: str | None, schema: str) -> Mapping[str, Any]:
     """Fetch one schema's document, failing with a redacted, revision-stamped message.
 
+    ⚠ ``except Exception``, **not** ``except SourceError`` -- deliberately, and measured (CI-089).
+    ``SourceError`` alone is only as good as the fetcher's ``Raises:`` contract, and that contract
+    did not hold: ``normalize_postgrest_url`` let ``urlsplit``'s bare ``ValueError`` escape, so a
+    malformed ``CASTIRON_TEST_POSTGREST_URL`` produced a real traceback -- and ``pytest
+    --showlocals`` renders every frame's locals, which includes the ``key`` free variable that
+    :func:`live_document`'s closure exists to hide. Reproduced with a fake JWT before the fix::
+
+        CASTIRON_TEST_POSTGREST_URL='http://[::1' pytest --showlocals -m integration
+        -> the full key printed 3x (loader, _fetch, fetch_openapi_document)
+
+    The contract is fixed at the root, in ``src/`` -- this is the second layer, and having both is
+    the settled house position (CI-063: sanitize at the boundary *and* harden the mask). The point
+    of the broad clause is that it does not depend on being right about what the code below can
+    raise, which is exactly the assumption that failed.
+
     Args:
         url: The API root.
         key: The API key, which never appears in the failure message.
@@ -151,10 +197,11 @@ def _fetch(url: str, key: str | None, schema: str) -> Mapping[str, Any]:
     failure: str | None = None
     try:
         return fetch_openapi_document(url, key=key, schema=schema)
-    except SourceError as exc:
+    except Exception as exc:
         # Built here but raised BELOW, outside the ``except`` block: ``pytest.fail(pytrace=False)``
         # prints no traceback, so nothing renders the chained exception's unmasked message either.
-        failure = redact(str(exc), key)
+        # The type is named because the message no longer implies SourceError.
+        failure = redact(f'{type(exc).__name__}: {exc}', key)
     pytest.fail(
         f'Could not read the {schema!r} document from the castiron-testbed apparatus '
         f'(seed revision {seed_revision()}): {failure}',

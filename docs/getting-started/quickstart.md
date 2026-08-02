@@ -136,6 +136,8 @@ becomes `field_class` with `alias="class"`, and a foreign key becomes a real nes
 class Orders(OrdersBaseSchema):
     """Orders Schema for Pydantic.
 
+    Customer orders.
+
     Inherits from OrdersBaseSchema. Add any customization here.
     """
 

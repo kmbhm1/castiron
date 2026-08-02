@@ -638,6 +638,28 @@ class TestRedactSource:
     def test_a_value_without_an_at_sign_is_untouched(self, source: str) -> None:
         assert redact_source(source) == source
 
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'nosuchfile-{JWT}.json',
+            f'nope.json?bearerthing={JWT}',  # a parameter name OUTSIDE the credential-word list
+            f'{JWT}',
+            f'./dir/{JWT}/openapi.json',
+        ],
+    )
+    def test_the_api_key_is_still_masked(self, source: str) -> None:
+        # ⚠ Round 3. `redact_source` wraps `redact`, and it shipped calling `redact(source)` with
+        # no key -- so this function, introduced to CLOSE a leak on this surface, opened a
+        # different one on the same surface. Every CI-068 test ran without a key, so nothing
+        # caught it; the suite actively pinned the key-dropping behaviour. CI6-D7 has no
+        # exceptions, and spec §11.2 singles this surface out as needing key coverage.
+        assert JWT in source  # not vacuous
+        assert JWT not in redact_source(source, JWT)
+
+    def test_without_a_key_nothing_changes(self) -> None:
+        # The default is for callers with no key in play; it must not mask anything by itself.
+        assert redact_source('nosuchfile.json') == 'nosuchfile.json'
+
     def test_a_nonexistent_path_containing_an_at_sign_is_over_masked(self) -> None:
         # The accepted cost, asserted rather than left to be discovered. Only the "neither a URL
         # nor an existing file" message prints this, so a path that resolves is never affected,

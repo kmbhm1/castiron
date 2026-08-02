@@ -565,6 +565,51 @@ class TestSecrets:
         assert result.exit_code == 2
         assert SECRET not in result.output
 
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'nosuchfile-{SECRET}.json',
+            f'nope.json?bearerthing={SECRET}',
+        ],
+    )
+    def test_the_key_is_redacted_out_of_the_usage_error_too(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        # ⚠ Round 3. Surface 7 with a --key in play. `redact_source` replaced `redact(source,
+        # key)` and dropped the key, so the API key printed in full here -- a leak introduced by
+        # the commit that closed one, on the same surface. Every CI-068 test ran without --key.
+        result = run(runner, '--from', source, '--key', SECRET)
+        assert result.exit_code == 2
+        assert 'neither a URL nor an existing file' in result.output  # not vacuous
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'https://user:{SECRET}@[::1',
+            f'https://u:{SECRET}@h:notaport/',
+        ],
+    )
+    def test_a_malformed_userinfo_url_does_not_escape_the_error_boundary(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        # ⚠ Round 3. The option callback runs in click's make_context, outside
+        # `cli_error_handling`. An unhandled ValueError there printed a raw UNREDACTED traceback
+        # and exited 1 -- regressing CI6-D9's exit-code contract and CI-062, which is commit 2 of
+        # this same PR. Measured against a real process: on main rc=70 with no traceback, on the
+        # unpatched branch rc=1 with the full unredacted traceback on stderr.
+        #
+        # ⚠ The assertion is `result.exception`, NOT `'Traceback' not in result.output`. Measured:
+        # CliRunner swallows an escaping exception into `result.exception` and leaves `output`
+        # EMPTY, so the obvious spelling of this test passes against the bug. Every path out of
+        # the CLI is a SystemExit; anything else escaped the boundary.
+        result = run(runner, '--from', source)
+        assert isinstance(result.exception, SystemExit), f'{type(result.exception).__name__} escaped the CLI'
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
     def test_a_postgres_dsn_is_not_refused_at_the_boundary(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -303,7 +303,7 @@ def redact(text: str, key: str | None = None) -> str:
     return masked
 
 
-def redact_source(source: str) -> str:
+def redact_source(source: str, key: str | None = None) -> str:
     """Redact a ``--from`` value that is about to be echoed back to the user (CI-068).
 
     :func:`redact` masks userinfo only in a ``scheme://user:password@host`` — matching on
@@ -335,17 +335,25 @@ def redact_source(source: str) -> str:
     affected, and over-masking a filename the user just typed is far cheaper than printing a DSN
     password.
 
+    ⚠ ``key`` is **not** optional in practice, whatever the signature says. This wraps
+    :func:`redact`, and dropping the key here silently un-redacts the API key on this surface —
+    which is spec §11.2's surface 7, the one the spec singles out as needing key coverage, and a
+    direct breach of CI6-D7 ("redact the key from *every* printed string"). It shipped that way
+    for exactly one round because every test of this function ran without a key. The default
+    exists only so a caller with no key in play reads naturally; every real call site passes one.
+
     Args:
         source: The raw ``--from`` value about to be quoted back into an error message.
+        key: The API key in play, masked out of the result exactly as :func:`redact` would.
 
     Returns:
         ``source`` with any scheme-less userinfo masked, then passed through :func:`redact` so
-        the query-parameter and ``scheme://`` rules still apply.
+        the key, the query-parameter and the ``scheme://`` rules all still apply.
     """
     if '@' in source and '://' not in source:
         _, separator, host = source.rpartition('@')
         source = f'{REDACTED}{separator}{host}'
-    return redact(source)
+    return redact(source, key)
 
 
 def sanitize_key(key: str | None) -> str | None:

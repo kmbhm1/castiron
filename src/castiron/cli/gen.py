@@ -329,7 +329,7 @@ def load_schema(
             # `redact_source`, not `redact`: this echoes the raw --from value back, and a
             # scheme-less `postgres:user:password@host` (the shape psql connection strings
             # circulate in) has no `://` for redact's userinfo anchor to see. CI-068.
-            f"--from '{redact_source(source)}' is neither a URL nor an existing file. Pass a "
+            f"--from '{redact_source(source, key)}' is neither a URL nor an existing file. Pass a "
             'Supabase/PostgREST URL (https://...) or a path to an OpenAPI JSON document.'
         )
     logger.debug(f'Reading the schema from {path}')

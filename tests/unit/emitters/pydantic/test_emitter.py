@@ -536,6 +536,8 @@ ADVERSARIAL_TEXT = [
     'a\x0cb',
     'a\u2028b',
     'a\x1bb',
+    'a\x00b',
+    '\x00',
     '\n\n  Indented?\n\n',
     'Summary here.\n  - bullet one\n  - bullet two',
     'Note:\nThis is a Primary Key.<pk/>',
@@ -771,7 +773,7 @@ class TestTableDocstring:
         assert 'class UsersParent(CustomModel):' in out
         assert out.count('    Application users.\n') == 5
 
-    @pytest.mark.parametrize('blank', ['', '   ', '\n\t\n', '\r\n', '  \r\n  \t '])
+    @pytest.mark.parametrize('blank', ['', '   ', '\n\t\n', '\r\n', '  \r\n  \t ', '\x00', '\x00\x00\x00', ' \x00 '])
     def test_a_blank_description_emits_byte_identically_to_none(self, blank: str) -> None:
         """No stray blank line, no empty paragraph — 'no comment' has one rendering."""
         assert _emit(_described(blank)) == _emit(_described(None))
@@ -859,6 +861,9 @@ class TestTableDocstringAdversarial:
         ('a\x0cb', 'FORM FEED — splitlines() would split here'),
         ('a\u2028b', 'LINE SEPARATOR — splitlines() would split here'),
         ('a\x1bb', 'ESC control character'),
+        ('a\x00b', 'NUL -- the ONE code point no escaping saves; raw NUL breaks import'),
+        ('\x00\x00', 'NUL-only -- must emit as if absent (D6)'),
+        ('  \x00  ', 'NUL surrounded by whitespace -- still absent (D6)'),
         ('\n\n  Indented?\n\n', 'leading/trailing blank lines'),
         ('Summary here.\n  - bullet one\n  - bullet two', 'relative indentation preserved'),
         ('Note:\nThis is a Primary Key.<pk/>', 'PostgREST column marker text passes through'),
@@ -900,7 +905,7 @@ class TestTableDocstringAdversarial:
         doc = ast.get_docstring(cls, clean=False)
         assert doc is not None
 
-        normalized = text.replace('\r\n', '\n').replace('\r', '\n').strip()
+        normalized = text.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '').strip()
         expected = '\n'.join(line.rstrip() for line in normalized.split('\n')) if normalized else ''
 
         if not expected:
@@ -1075,3 +1080,106 @@ class TestClassDocstringHelper:
         from castiron.emitters.pydantic.emitter import _class_docstring
 
         assert _class_docstring('X Base Schema.', blank) == _class_docstring('X Base Schema.', None)
+
+
+@pytest.mark.unit
+class TestNulByte:
+    """``U+0000`` is the one code point no escaping saves (reviewer finding, fix round 2).
+
+    A raw NUL anywhere in a module makes CPython raise
+    ``SyntaxError: source code string cannot contain null bytes`` at import -- so castiron
+    would *write* schema.py successfully and the user's import would fail. That is the exact
+    failure shape the ``_py_string`` fix exists to prevent, and before this fix the PR only
+    half-closed it: the **column**-comment path went from broken to safe while the **new**
+    table-docstring path became the one place a NUL still broke.
+
+    Postgres text cannot contain NUL, but that is a property of one source, not of the input:
+    the OpenAPI source accepts any JSON document via ``--from``, and ``\x00`` is a
+    perfectly ordinary JSON escape.
+    """
+
+    NUL = '\x00'
+
+    def test_a_nul_is_removed_from_the_docstring(self) -> None:
+        out = _emit(_described(f'a{self.NUL}b'))
+
+        assert self.NUL not in out
+        assert '    ab\n' in out
+
+    def test_the_emitted_module_compiles_and_has_no_nul_byte(self) -> None:
+        out = _emit(_described(f'before{self.NUL}after'))
+
+        assert self.NUL not in out
+        assert out.encode('utf-8').count(b'\x00') == 0
+        compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('text', ['\x00', '\x00\x00', '  \x00  ', '\n\x00\t'])
+    def test_a_nul_only_comment_is_indistinguishable_from_absent(self, text: str) -> None:
+        """Decision D6 -- and the reason NUL is *stripped* rather than escaped.
+
+        Rendering it as a visible ``\\x00`` or as a real NUL escape would both make these
+        emit a docstring body of invisible characters.
+        """
+        assert _emit(_described(text)) == _emit(_described(None))
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('\x00  a', '    a'),
+            ('  a\x00', '    a'),
+            ('\x00 a \x00', '    a'),
+            ('\x00' + chr(10) + '  a', '    a'),
+        ],
+        ids=['nul-before-leading-ws', 'nul-after-trailing-ws', 'nul-both-sides', 'nul-before-newline'],
+    )
+    def test_nul_is_removed_before_stripping_not_after(self, text: str, expected: str) -> None:
+        """Order matters: removing NUL *after* ``.strip()`` leaves stray indentation.
+
+        ``.strip()`` does not treat NUL as whitespace, so for ``"\x00  a"`` a
+        strip-then-remove implementation yields ``"  a"`` -- rendered as six spaces of
+        indent instead of four. Found by mutant N3, which the symmetric NUL cases could not
+        kill.
+        """
+        from castiron.emitters.pydantic.emitter import _docstring_text
+
+        assert _docstring_text(text.replace('NUL', self.NUL)) == expected
+
+    def test_the_ir_still_carries_the_nul(self) -> None:
+        """Nothing is lost from the system of record -- only the rendered docstring drops it.
+
+        The builder deliberately does **not** strip NUL, so drift detection still sees it.
+        """
+        table = TableInfo(name='users', description=f'a{self.NUL}b')
+
+        assert table.description == f'a{self.NUL}b'
+        assert Schema(tables=[table]).as_dict()['tables'][0]['description'] == f'a{self.NUL}b'
+
+    def test_end_to_end_from_an_openapi_document(self) -> None:
+        """The realistic path: any JSON document via ``--from``, not only PostgREST output."""
+        from castiron.sources import build_schema_from_document
+
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'users': {
+                    'type': 'object',
+                    'description': f'a{self.NUL}b',
+                    'properties': {'id': {'type': 'integer', 'format': 'int32'}},
+                }
+            },
+            'paths': {'/users': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        assert schema.tables[0].description == f'a{self.NUL}b'
+
+        out = _emit(schema)
+        assert out.encode('utf-8').count(b'\x00') == 0
+        compile(out, '<generated>', 'exec')
+
+    def test_the_column_comment_path_is_also_nul_safe(self) -> None:
+        """The sibling path, fixed by commit 1 -- pinned so the two cannot diverge again."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        rendered = _py_string(f'a{self.NUL}b')
+        assert self.NUL not in rendered
+        assert ast.literal_eval(rendered) == f'a{self.NUL}b'

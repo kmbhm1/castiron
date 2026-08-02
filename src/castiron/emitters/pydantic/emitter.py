@@ -132,21 +132,42 @@ def _docstring_text(description: str | None) -> str | None:
     - **Content lines are indented and right-stripped, never left-stripped**, so the
       comment's own relative indentation (lists, code blocks) survives.
 
-    Control characters and non-ASCII are deliberately *not* escaped: they compile inside a
-    triple-quoted literal and round-trip to the right ``__doc__``, and the CLI writes UTF-8
-    with LF (``cli/output.py``). Postgres text cannot contain NUL, the only character that
-    would break the file.
+    - ⚠ **NUL is removed, and it is the only character that is.** ``U+0000`` is the one
+      code point that no amount of escaping saves: a raw NUL anywhere in a module makes
+      CPython raise ``SyntaxError: source code string cannot contain null bytes`` at import,
+      so castiron would *write* the file successfully and the user's import would fail --
+      the exact failure shape the ``_py_string`` fix exists to prevent. It is stripped
+      rather than rendered as a visible ``\x00`` (which would inject four characters the
+      user never wrote) or as a real NUL escape (which would merely relocate the NUL into
+      every consumer of ``__doc__``). **Stripping is also the only option that preserves
+      decision D6:** it lets a NUL-only comment collapse to "no comment", so it stays
+      indistinguishable from an absent one. Nothing is lost from the system of record --
+      the builder does not strip it, so ``TableInfo.description`` and ``Schema.as_dict()``
+      still carry the NUL.
+
+    Every other control character and all non-ASCII are deliberately *not* escaped: they
+    compile inside a triple-quoted literal and round-trip to the right ``__doc__``, and the
+    CLI writes UTF-8 with LF (``cli/output.py``).
+
+    ⚠ Postgres text cannot contain NUL, so a PostgREST document never carries one -- but
+    **that is a property of one source, not of the input**. The OpenAPI source accepts any
+    JSON document via ``--from``, a NUL is perfectly expressible as the JSON escape
+    ``\u0000``, and a future source may be less disciplined. The renderer must be total over
+    its actual input domain, not over the domain its best-behaved caller happens to supply.
 
     Args:
         description: The table's SQL comment, or ``None``.
 
     Returns:
         The indented, escaped paragraph, or ``None`` when there is nothing to render -- so
-        an absent, empty or whitespace-only comment all produce byte-identical output.
+        an absent, empty, whitespace-only or NUL-only comment all produce byte-identical
+        output.
     """
     if description is None:
         return None
-    text = description.replace('\r\n', '\n').replace('\r', '\n').strip()
+    # NUL removal precedes `.strip()` so a NUL-only or NUL-padded comment collapses to
+    # "no comment" (decision D6) rather than to a body of invisible characters.
+    text = description.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '').strip()
     if not text:
         return None
     escaped = text.replace('\\', '\\\\').replace('"', '\\"')

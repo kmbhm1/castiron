@@ -43,6 +43,17 @@ Positional tuple contracts (the source ↔ builder boundary)
   column 12-tuple would be; a source wanting more table-level facts appends a **new**
   contract, not a fourth element.
 
+  ⚠ **Duplicate rows for one table: the LAST one wins.**
+  :func:`add_table_descriptions_to_table_details` assigns unconditionally rather than
+  skipping an already-set description, so the final row for a ``(schema, table)`` key is the
+  one that survives. That is deliberate and pinned by a test -- it keeps the rule stateless
+  and therefore order-deterministic (Hard Rule #9) instead of depending on whether a
+  previous row happened to be ``None``. It is unreachable from the OpenAPI source, which
+  emits exactly one row per sorted ``definitions`` key, but **CI-010 will emit these rows
+  from a query**, and a ``LEFT JOIN`` that fans a table out twice would deliver two rows for
+  one table. A source that can produce duplicates owns making them consistent -- or must
+  order them so the row it wants is last.
+
 A nested list inside a positional row is already the house style (the enum-type row's 7th
 field is a ``list[str]``; the constraint row's 3rd is a ``list[str]``), and a live-DB
 source will naturally ``array_agg`` a function's arguments the same way.
@@ -378,6 +389,10 @@ def add_table_descriptions_to_table_details(
     A row naming a table that has no column rows is skipped, **never created**: a table
     exists in the IR only because a source reported columns for it, and inventing one here
     would add a class to every emitter's output.
+
+    Assignment is **unconditional**, so when two rows name the same ``(schema, table)`` the
+    last one wins -- see the ``table row (3-tuple)`` contract in the module docstring for why
+    that is deliberate and which source can actually hit it.
 
     Args:
         tables: The tables built from the column rows, keyed by ``(schema, name)``.

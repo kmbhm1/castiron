@@ -7,7 +7,7 @@ can tell "your input was wrong" from "castiron has a bug" without parsing text.
 | --- | --- | --- |
 | `0` | Success | Files written, or `--dry-run` completed |
 | `1` | An actionable failure — something you can fix | Unreachable source, bad key, unreadable OpenAPI document, a schema with no visible tables, a bad `[tool.castiron]` table, a target that exists under `--no-overwrite`, an unwritable output path |
-| `2` | Usage error | Unknown option, unknown `--emit` value, missing `--from`, a `--config` file that does not exist, `--filename` with two emitters |
+| `2` | Usage error | Unknown option, unknown `--emit` value, `--filename` with two emitters, a `--config` file that does not exist, a `--from` that is missing or is neither a URL nor an existing file, a `--from` URL carrying credentials in its userinfo, a `--key` containing a control character |
 | `3` | **Reserved** — not returned today | Reserved for drift detected by the future `castiron check`; declared now so the code never has to be renumbered |
 | `70` | Internal error — a castiron bug | An unexpected exception. `70` is `EX_SOFTWARE` from BSD `sysexits` |
 
@@ -42,6 +42,34 @@ Try 'castiron gen --help' for help.
 
 Error: No schema source. Pass --from <url|path>, set CASTIRON_FROM, or add `from = "..."` under [tool.castiron] in pyproject.toml.
 ```
+
+Two of the exit-`2` paths are not typos at all. Both inputs are well-formed; castiron is
+declining to *use* a credential you passed it, and **neither message repeats the value it
+rejected** — echoing it back is precisely the leak the refusal exists to prevent.
+
+A **`--from` URL with credentials in its userinfo** (`https://user:password@host/`, or a
+bare `https://token@host/`) is refused before any request:
+
+```
+Error: The --from URL carries credentials in its userinfo (the `user:password@` before the host). castiron will not use it: the HTTP client rejects such a URL before it opens a socket, and the error it raises quotes the host back -- which would print your password. Drop the `user:password@` and pass the key with --key or CASTIRON_KEY.
+```
+
+Nothing is lost: Python's HTTP client never applies userinfo as Basic auth, so that URL
+could not have fetched a document. Pass the credential as `--key` or `CASTIRON_KEY`. Only
+`http` and `https` values are refused — a database DSN's password is left alone, and
+masked wherever it is printed. See [the `--from` table](cli.md#two-ways-to-name-a-source).
+
+A **`--key` with a control character inside it** — a key pasted across two lines, most
+often — is refused for the same reason: the failure it would otherwise cause quotes the
+value back at you.
+
+```
+Error: The API key contains a control character (a newline, carriage return or tab). A key pasted across two lines, or read from a file with Windows (CRLF) line endings, is the usual cause -- re-save it with LF endings or strip it (`tr -d "\r" < key.txt`). castiron will not send it: an HTTP header cannot carry that value, and the error the HTTP client raises quotes the value back with repr(), which would print your key.
+```
+
+Control characters *around* the key are trimmed rather than refused, so a key file with
+CRLF endings needs no fixing at all. Only an interior one — where the value is not the key
+you think it is — stops the run.
 
 **`3` — you will not see this yet.** `gen` never returns it. It is reserved for the
 planned `castiron check` drift-guard so that scripts written against `check` in future

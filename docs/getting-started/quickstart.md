@@ -7,14 +7,24 @@ firewall.
 
 !!! warning "Pre-alpha"
     castiron is not yet published to PyPI, so today the only way to run it is
-    [from a checkout](#from-a-checkout). The install command is the one forward-looking
-    line on this page; everything else is the CLI as it ships.
+    [from a checkout](#from-a-checkout). The install block is the one forward-looking
+    thing on this page; everything else is the CLI as it ships.
 
 ## Install
 
 ```bash
 uv add cast-iron       # or: pip install cast-iron
+castiron --version     # the command has no hyphen
 ```
+
+!!! info "You install `cast-iron`; you run `castiron`"
+    Install the hyphenated **`cast-iron`**, then run the unhyphenated **`castiron`** —
+    `cast-iron --help` will only ever tell you `command not found`, because no such
+    command is installed. It is the ordinary Python split between what you install and
+    what you get: `pip install python-dateutil` gives you `import dateutil`, and
+    `pip install scikit-learn` gives you `import sklearn`. Here the import package is
+    `castiron` too. PyPI does not allow `castiron` as a distribution name, so the hyphen
+    is permanent; nothing else about the name changes.
 
 castiron supports Python 3.10–3.13 and pulls in three runtime dependencies (`click`,
 `inflection`, `pydantic`) plus `tomli` on Python 3.10 only.

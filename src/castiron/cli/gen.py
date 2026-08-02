@@ -20,7 +20,13 @@ from typing import Any
 import click
 
 from castiron.cli.config import config_option_callback, looks_like_url
-from castiron.cli.errors import cli_error_handling, key_option_callback, redact, source_error_hint
+from castiron.cli.errors import (
+    cli_error_handling,
+    key_option_callback,
+    redact,
+    source_error_hint,
+    source_option_callback,
+)
 from castiron.cli.notices import report as report_notices
 from castiron.cli.output import WriteResult, write_emitted_files
 from castiron.emitters import EMITTERS, EmittedFile, EmitterConfig, get_emitter_spec
@@ -71,6 +77,7 @@ Examples:
     'source',
     envvar=['CASTIRON_FROM', 'SUPABASE_URL'],
     show_envvar=True,
+    callback=source_option_callback,
     help='The schema source: a Supabase project or PostgREST URL, or a path to an OpenAPI JSON document.',
 )
 @click.option(

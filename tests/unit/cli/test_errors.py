@@ -4,6 +4,7 @@ import json
 import socket
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
 import click
 import pytest
@@ -21,9 +22,11 @@ from castiron.cli.errors import (
     key_option_callback,
     key_provenance,
     redact,
+    reject_url_userinfo,
     sanitize_key,
     schema_hint,
     source_error_hint,
+    source_option_callback,
 )
 from castiron.sources import SourceError, SourceFetchError, SourceParseError, build_schema_from_document
 from castiron.sources.openapi import fetch_openapi_document
@@ -98,6 +101,277 @@ class TestRedactRenderedKeys:
 
     def test_a_short_key_is_still_left_alone_in_every_spelling(self) -> None:
         assert redact('the code is nope and nope', 'nop\r') == 'the code is nope and nope'
+
+
+# ---------------------------------------------------------------------------
+# CI-066. Two live credential paths, both reproduced on `main` @ 026af0f with no
+# network: a userinfo password (which http.client quotes back *twice*, the second
+# time with no scheme in front of it) and a `?service_role_key=` value, invisible
+# to a pattern that anchored the credential word to the `?`/`&` itself.
+# ---------------------------------------------------------------------------
+
+#: Long enough to be masked by `_key_spellings` if the URL passes were removed -- so the tests
+#: below that call `redact(text)` with **no key** are testing the URL passes and nothing else.
+PASSWORD = 'SECRETPASSWORD123'
+
+#: The §3.1(a) reproduction, verbatim. `http.client.HTTPConnection._get_hostport` raises
+#: `InvalidURL("nonnumeric port: '%s'" % host[i + 1:])` where `host` is the whole netloc, so the
+#: password appears a second time as a bare `<password>@<host>` with no `scheme://` in front.
+NONNUMERIC_PORT = (
+    f"Could not reach https://user:{PASSWORD}@x.supabase.co/rest/v1/: nonnumeric port: '{PASSWORD}@x.supabase.co'"
+)
+
+SERVICE_ROLE_KEY = 'SUPERSECRETVALUE123'
+SERVICE_ROLE_URL = f'https://x.supabase.co/rest/v1/?service_role_key={SERVICE_ROLE_KEY}'
+
+
+def encodings(value: str) -> list[tuple[str, str]]:
+    """Render ``value`` the ways a printed string can actually carry it (CI-063's lesson)."""
+    return [
+        ('canonical', value),
+        ('repr', f'rejected {value!r}'),
+        ('repr-bytes', f'Invalid header value {value.encode()!r}'),
+        ('json', json.dumps({'url': value})),
+        ('quoted', f'"{value}"'),
+    ]
+
+
+@pytest.mark.unit
+class TestRedactUrlCredentials:
+    def test_a_userinfo_password_is_masked_in_the_url(self) -> None:
+        masked = redact(NONNUMERIC_PORT)
+        assert PASSWORD not in masked
+        assert 'https://user:***@x.supabase.co' in masked
+
+    def test_a_userinfo_password_is_masked_where_http_client_repeats_it(self) -> None:
+        # ⚠ The test a URL-only regex fails: the second occurrence has no `scheme://` prefix,
+        # so only the exact `<password>@<host>` mop-up closes it.
+        masked = redact(NONNUMERIC_PORT)
+        assert f'{PASSWORD}@x.supabase.co' not in masked
+        assert "nonnumeric port: '***@x.supabase.co'" in masked
+
+    def test_a_short_userinfo_password_is_masked_too(self) -> None:
+        # Four characters -- far under _MIN_REDACTABLE_KEY, so the spelling pass cannot touch it.
+        # The mop-up is positional, which is exactly why it is not length-gated.
+        text = "Could not reach https://user:pw12@x.supabase.co/rest/v1/: nonnumeric port: 'pw12@x.supabase.co'"
+        masked = redact(text)
+        assert 'pw12' not in masked
+        assert masked.count(REDACTED) == 2
+
+    def test_a_colonless_userinfo_is_masked_whole(self) -> None:
+        # A colon-less userinfo castiron prints is far more often a bearer token than a username.
+        masked = redact('https://ghp_abcdefghijklmnop@github.com/o/r')
+        assert 'ghp_abcdefghijklmnop' not in masked
+        assert masked == 'https://***@github.com/o/r'
+
+    def test_the_username_survives_so_the_error_stays_diagnostic(self) -> None:
+        # "You connected as postgres, not app_user" is the whole diagnostic value of the line,
+        # and CI-010's postgresql://user:password@host/db DSNs depend on this shape.
+        masked = redact('postgresql://postgres:hunter2pass@db.x.supabase.co:5432/postgres')
+        assert masked == 'postgresql://postgres:***@db.x.supabase.co:5432/postgres'
+
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'https://user:HUNTERPASSWORD@x.supabase.co/rest/v1/',
+            'postgresql://postgres:HUNTERPASSWORD@db.x.supabase.co:5432/postgres',
+            # urllib derives userinfo with netloc.rpartition('@') -- the LAST `@`, not the first --
+            # so here it reports username='a@b', password='HUNTERPASSWORD'. A lazy or
+            # @-excluding class would split at the first `@` and leak the password.
+            'https://a@b:HUNTERPASSWORD@host/x',
+            # The malformed shape CI-066(a) actually fires on: urlsplit().port raises here.
+            'https://u:HUNTERPASSWORD@h:notaport/',
+            'https://user:HUNTERPASSWORD@host',
+        ],
+    )
+    def test_the_mask_agrees_with_urlsplit(self, url: str) -> None:
+        # Pins the regex against urllib's own notion of userinfo rather than against itself.
+        # (The passwords are deliberately distinctive: a one-character password would make the
+        # `not in` assertion pass or fail on unrelated prose.)
+        password = urlsplit(url).password
+        assert password == 'HUNTERPASSWORD'  # not vacuous, and urllib agrees on where it is
+        assert password not in redact(f'Could not reach {url}: boom')
+
+    @pytest.mark.parametrize(
+        'text',
+        [
+            f'https://user:{PASSWORD}@[::1',  # urlsplit raises `Invalid IPv6 URL` on this one
+            f'https://u:{PASSWORD}@h:notaport/',  # and `Port could not be cast` on this one
+            '://@',
+            '@',
+            '',
+            'https://user@',
+        ],
+    )
+    def test_a_malformed_url_never_raises(self, text: str) -> None:
+        # Malformed input must degrade to "mask anyway", never to "raise" and never to "give up":
+        # the URLs this row exists to defend are precisely the ones urllib itself chokes on.
+        masked = redact(text)
+        assert PASSWORD not in masked
+
+    def test_a_url_without_userinfo_is_untouched(self) -> None:
+        assert (
+            redact('Could not reach https://x.supabase.co/rest/v1/') == 'Could not reach https://x.supabase.co/rest/v1/'
+        )
+
+    @pytest.mark.parametrize(('encoding', 'text'), encodings(f'https://user:{PASSWORD}@x.supabase.co/rest/v1/'))
+    def test_it_survives_every_encoding_the_password_can_arrive_in(self, encoding: str, text: str) -> None:
+        # CI-063: a masking function must be tested against the encodings its input can actually
+        # arrive in, not only the canonical one.
+        assert PASSWORD in text  # not vacuous
+        assert PASSWORD not in redact(text)
+
+    def test_a_percent_encoded_password_is_masked(self) -> None:
+        # The mask is positional inside the userinfo, so it does not care how the value is spelled.
+        assert 'SEC%52ETPASS' not in redact('Could not reach https://user:SEC%52ETPASS@x.supabase.co/')
+
+    def test_a_password_truncated_out_of_its_url_is_the_documented_gap(self) -> None:
+        # `fetch._snippet` cuts a body at 200 characters before `redact` ever sees it. A userinfo
+        # cut before its `@` has no shape left to match, so the prefix survives -- spec §10.5,
+        # inherent to substring masking. Asserted rather than pretended closed.
+        cut = f'Could not reach https://user:{PASSWORD}'
+        assert redact(cut) == cut
+        # ...but a secret supplied as --key is still masked by its spelling, cut or not.
+        assert PASSWORD not in redact(cut, PASSWORD)
+
+
+@pytest.mark.unit
+class TestRedactSecretParameters:
+    @pytest.mark.parametrize(
+        'name',
+        [
+            'service_role_key',
+            'sb-publishable-key',
+            'x-api-key',
+            'anon_key',
+            'client_secret',
+            'refresh_token',
+            'serviceRoleKey',
+            'api%5Fkey',
+            'session_id',
+            'authorization',
+            'password',
+        ],
+    )
+    def test_it_masks_a_prefixed_credential_parameter(self, name: str) -> None:
+        # The old pattern required the credential word to start immediately after the `?`/`&`,
+        # so every prefixed spelling was invisible to it -- and a service-role key is strictly
+        # more dangerous than an anon key.
+        masked = redact(f'https://x.supabase.co/rest/v1/?{name}={SERVICE_ROLE_KEY}')
+        assert SERVICE_ROLE_KEY not in masked
+        assert f'?{name}={REDACTED}' in masked
+
+    def test_it_masks_a_fragment_parameter(self) -> None:
+        # A Supabase auth redirect puts the token in the URL *fragment*, not the query.
+        masked = redact(f'https://x.supabase.co/#access_token={SERVICE_ROLE_KEY}&refresh_token=OTHERSECRET1')
+        assert SERVICE_ROLE_KEY not in masked
+        assert 'OTHERSECRET1' not in masked
+
+    @pytest.mark.parametrize('name', ['monkey', 'keyword', 'keys', 'tokens', 'turnkey', 'select', 'order', 'limit'])
+    def test_it_leaves_a_diagnostic_parameter_alone(self, name: str) -> None:
+        # A guard against over-masking, not a regression test: a credential word that is merely a
+        # substring of the parameter name is not a credential.
+        text = f'https://x.supabase.co/rest/v1/table?{name}=eq.5'
+        assert redact(text) == text
+
+    @pytest.mark.parametrize(('encoding', 'text'), encodings(SERVICE_ROLE_URL))
+    def test_it_survives_every_encoding_the_value_can_arrive_in(self, encoding: str, text: str) -> None:
+        assert SERVICE_ROLE_KEY in text  # not vacuous
+        assert SERVICE_ROLE_KEY not in redact(text)
+
+    def test_a_percent_encoded_parameter_name_still_matches(self) -> None:
+        # The name is matched decoded and rewritten as it was found, so the user's own spelling
+        # of their URL survives in the message.
+        masked = redact(f'https://x.supabase.co/rest/v1/?service%5Frole%5Fkey={SERVICE_ROLE_KEY}')
+        assert SERVICE_ROLE_KEY not in masked
+        assert 'service%5Frole%5Fkey=***' in masked
+
+    def test_a_percent_encoded_value_is_masked_whole(self) -> None:
+        assert 'SEC%52ET' not in redact('https://x.supabase.co/rest/v1/?apikey=SEC%52ET')
+
+    def test_a_truncated_value_is_still_masked_because_the_mask_is_positional(self) -> None:
+        # Unlike the substring gap above, cutting the *value* costs nothing here: the parameter
+        # mask keys on the name, so whatever survives the cut is still masked.
+        assert SERVICE_ROLE_KEY[:8] not in redact(f'{SERVICE_ROLE_URL[:60]}...')
+
+
+@pytest.mark.unit
+class TestRejectUrlUserinfo:
+    # The boundary half of the two-layer defence (CI-063's shape, CI066-Q1's ruling): castiron
+    # cannot successfully fetch from a userinfo URL under any circumstance, so refusing it costs
+    # nothing a user could have wanted and removes the trigger rather than masking the symptom.
+    def test_no_source_stays_none(self) -> None:
+        assert reject_url_userinfo(None) is None
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            'https://x.supabase.co/rest/v1/',
+            './openapi.json',
+            'openapi.json',
+            'https://x.supabase.co/rest/v1/table?select=a,b',
+            # An `@` that is not userinfo: it is after the path or query separator.
+            'https://x.supabase.co/rest/v1/table?filter=eq.a@b.com',
+            './my@dir/openapi.json',
+            '',
+        ],
+    )
+    def test_a_source_without_userinfo_is_returned_unchanged(self, source: str) -> None:
+        assert reject_url_userinfo(source) == source
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'https://user:{PASSWORD}@x.supabase.co',
+            f'https://{PASSWORD}@x.supabase.co/rest/v1/',
+            f'postgresql://postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+        ],
+    )
+    def test_a_userinfo_url_is_refused(self, source: str) -> None:
+        with pytest.raises(click.UsageError) as excinfo:
+            reject_url_userinfo(source)
+        assert 'userinfo' in excinfo.value.message
+        assert excinfo.value.exit_code == EXIT_USAGE
+
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'https://user:{PASSWORD}@x.supabase.co',
+            f'https://{PASSWORD}@x.supabase.co/rest/v1/',
+        ],
+    )
+    def test_the_refusal_never_echoes_the_value(self, source: str) -> None:
+        # The whole point: the message castiron prints instead of urllib's must not reproduce
+        # what urllib's did.
+        with pytest.raises(click.UsageError) as excinfo:
+            reject_url_userinfo(source)
+        assert PASSWORD not in excinfo.value.message
+        assert 'x.supabase.co' not in excinfo.value.message
+
+    def test_the_message_says_what_to_do_instead(self) -> None:
+        with pytest.raises(click.UsageError) as excinfo:
+            reject_url_userinfo(f'https://user:{PASSWORD}@x.supabase.co')
+        assert '--key' in excinfo.value.message
+        assert 'CASTIRON_KEY' in excinfo.value.message
+
+
+@pytest.mark.unit
+class TestSourceOptionCallback:
+    def test_it_passes_a_clean_source_through(self) -> None:
+        ctx = click.Context(click.Command('gen'))
+        assert source_option_callback(ctx, click.Option(['--from']), 'openapi.json') == 'openapi.json'
+
+    def test_it_refuses_a_userinfo_source(self) -> None:
+        ctx = click.Context(click.Command('gen'))
+        with pytest.raises(click.UsageError):
+            source_option_callback(ctx, click.Option(['--from']), f'https://user:{PASSWORD}@x.supabase.co')
+
+    def test_resilient_parsing_never_raises(self) -> None:
+        # Shell completion parses with resilient_parsing set; raising there breaks completion.
+        ctx = click.Context(click.Command('gen'))
+        ctx.resilient_parsing = True
+        raw = f'https://user:{PASSWORD}@x.supabase.co'
+        assert source_option_callback(ctx, click.Option(['--from']), raw) == raw
 
 
 @pytest.mark.unit
@@ -186,11 +460,23 @@ class TestCliErrorHandling:
         assert excinfo.value.exit_code == EXIT_ERROR
         assert 'boom' in excinfo.value.message
 
-    def test_a_source_error_message_is_redacted(self) -> None:
+    @pytest.mark.parametrize(
+        ('message', 'secret'),
+        [
+            ('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET failed', 'SUPERSECRET'),
+            (f'{SERVICE_ROLE_URL} failed', SERVICE_ROLE_KEY),
+            (NONNUMERIC_PORT, PASSWORD),
+            # The shape CI-010's live-DB source will raise, which is why the userinfo mask ships
+            # regardless of the boundary rejection.
+            ('Could not connect to postgresql://postgres:hunter2pass@db.x.supabase.co:5432/postgres', 'hunter2pass'),
+        ],
+        ids=['apikey', 'service_role_key', 'url-userinfo', 'dsn'],
+    )
+    def test_a_source_error_message_is_redacted(self, message: str, secret: str) -> None:
         with pytest.raises(click.ClickException) as excinfo:  # noqa: PT012 - the boundary is the subject
             with cli_error_handling(debug=False, key='eyJhbGciOi'):
-                raise SourceFetchError('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET failed for eyJhbGciOi')
-        assert 'SUPERSECRET' not in excinfo.value.message
+                raise SourceFetchError(f'{message} for eyJhbGciOi')
+        assert secret not in excinfo.value.message
         assert 'eyJhbGciOi' not in excinfo.value.message
 
     def test_a_click_exception_propagates_untouched(self) -> None:
@@ -217,17 +503,29 @@ class TestCliErrorHandling:
                 raise RuntimeError('kaboom')
         assert excinfo.value.code == EXIT_INTERNAL
 
-    def test_the_internal_error_echo_is_redacted(self, capsys: pytest.CaptureFixture[str]) -> None:
+    @pytest.mark.parametrize(
+        ('message', 'secret'),
+        [
+            ('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET broke', 'SUPERSECRET'),
+            (f'{SERVICE_ROLE_URL} broke', SERVICE_ROLE_KEY),
+            (NONNUMERIC_PORT, PASSWORD),
+        ],
+        ids=['apikey', 'service_role_key', 'url-userinfo'],
+    )
+    def test_the_internal_error_echo_is_redacted(
+        self, capsys: pytest.CaptureFixture[str], message: str, secret: str
+    ) -> None:
         # CI6-D7: *every* printed string is redacted, and the internal-error echo is printed
         # -- with an invitation to paste it into a public issue, which makes it the worst
         # possible place for a key to survive. A castiron bug can carry the URL (and so the
-        # key) in its str() from anywhere in the pipeline.
+        # key) in its str() from anywhere in the pipeline. Parametrized over all three secret
+        # shapes because "every" is the claim (CI6-Q7).
         with pytest.raises(SystemExit):  # noqa: PT012 - the boundary is the subject
             with cli_error_handling(debug=False, key='eyJhbGciOi'):
-                raise RuntimeError('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET broke on eyJhbGciOi')
+                raise RuntimeError(f'{message} on eyJhbGciOi')
         printed = capsys.readouterr().err
         assert 'internal error (RuntimeError' in printed
-        assert 'SUPERSECRET' not in printed
+        assert secret not in printed
         assert 'eyJhbGciOi' not in printed
 
     def test_debug_re_raises_the_original_exception(self) -> None:
@@ -367,12 +665,24 @@ class TestSourceErrorHint:
     def test_an_unrecognized_failure_earns_no_hint(self) -> None:
         assert source_error_hint(SourceFetchError('something else'), key=None, schema='public', origin=None) is None
 
-    def test_the_hint_is_redacted_before_it_is_printed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        exc = real_fetch_error(monkeypatch, http_error(401), 'https://x.supabase.co/rest/v1/?apikey=SUPERSECRET')
+    @pytest.mark.parametrize(
+        ('url', 'secret'),
+        [
+            ('https://x.supabase.co/rest/v1/?apikey=SUPERSECRET', 'SUPERSECRET'),
+            (SERVICE_ROLE_URL, SERVICE_ROLE_KEY),
+            (f'https://user:{PASSWORD}@x.supabase.co/rest/v1/', PASSWORD),
+        ],
+        ids=['apikey', 'service_role_key', 'url-userinfo'],
+    )
+    def test_the_hint_is_redacted_before_it_is_printed(
+        self, monkeypatch: pytest.MonkeyPatch, url: str, secret: str
+    ) -> None:
+        exc = real_fetch_error(monkeypatch, http_error(401), url)
+        assert secret in str(exc)  # not vacuous: the raw message really does carry it
         with pytest.raises(click.ClickException) as excinfo:  # noqa: PT012 - the boundary is the subject
             with cli_error_handling(debug=False, key=None, hint=lambda e: f'the URL was {exc}'):
                 raise exc
-        assert 'SUPERSECRET' not in excinfo.value.message
+        assert secret not in excinfo.value.message
 
 
 @pytest.mark.unit

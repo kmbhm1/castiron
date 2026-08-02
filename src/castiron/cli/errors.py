@@ -29,6 +29,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from urllib.parse import unquote
 
 import click
 from click.core import ParameterSource
@@ -54,8 +55,34 @@ EXIT_INTERNAL = 70
 #: The placeholder every masked secret is replaced with.
 REDACTED = '***'
 
-#: Query-string parameters that carry a credential.
-_SECRET_QUERY = re.compile(r'(?i)([?&](?:apikey|api[-_]?key|key|token|access_token|jwt)=)[^&\s]*')
+#: Credential words a query- or fragment-parameter name can carry. A longer spelling precedes
+#: its own prefix (``authorization`` before ``auth``, ``credentials`` before ``credential``) so
+#: the boundary lookahead is not defeated by the shorter alternative matching first.
+_SECRET_WORD = (
+    r'(?i:api[-_]?key|authorization|auth|credentials|credential|password|passwd|pwd'
+    r'|signature|sig|secret|session|token|bearer|jwt|key)'
+)
+
+#: A parameter name reads as credential-bearing when a secret word is a whole *segment* of it --
+#: delimited by ``-``, ``_``, ``.``, the ends of the name, or a camelCase hump. The predecessor
+#: pattern anchored the word to the ``?``/``&`` itself, so every prefixed spelling
+#: (``service_role_key``, ``sb-publishable-key``, ``x-api-key``) slipped past unmasked, and a
+#: service-role key is strictly more dangerous than an anon key.
+#:
+#: ⚠ The boundaries are deliberately CASE-SENSITIVE while the words are not. A blanket ``(?i)``
+#: would turn ``(?<=[a-z0-9])(?=[A-Z])`` into "any position after an alphanumeric", which matches
+#: almost everywhere — hence the scoped ``(?i:...)`` on the word list alone.
+_SECRET_PARAM_NAME = re.compile(rf'(?:^|[-_.]|(?<=[a-z0-9])(?=[A-Z])){_SECRET_WORD}(?=$|[-_.]|[A-Z])')
+
+#: One ``?name=value`` / ``&name=value`` / ``#name=value`` pair. ``#`` is in the leading class
+#: because a Supabase auth redirect puts ``access_token`` in the URL *fragment*, not the query.
+_QUERY_PARAM = re.compile(r'([?&#])([^&\s=#]*)=([^&\s#]*)')
+
+#: ``scheme://userinfo@host``. ``[^/?#\s]*`` is greedy on purpose: it backtracks to the **last**
+#: ``@`` before the path, which is how ``urllib.parse.SplitResult`` derives userinfo
+#: (``netloc.rpartition('@')``). On ``https://a@b:c@host/x`` urllib reports the password as ``c``
+#: and so does this; a lazy or ``@``-excluding class would leak it.
+_URL_USERINFO = re.compile(r'([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#\s]*)@([^/?#\s]*)')
 
 #: Shorter values are too likely to be a common substring to blindly replace.
 _MIN_REDACTABLE_KEY = 8
@@ -68,8 +95,8 @@ _TRIMMABLE_KEY_CHARS = ''.join(chr(code) for code in range(0x21)) + '\x7f'
 _CONTROL_CHARACTER = re.compile(r'[\x00-\x1f\x7f]')
 
 
-def _key_spellings(key: str | None) -> list[str]:
-    """Return every spelling of ``key`` a printed string might carry, longest first.
+def _key_spellings(*secrets: str | None) -> list[str]:
+    """Return every spelling of each secret a printed string might carry, longest first.
 
     :func:`redact` masks a **literal** match, so any surface that *renders* the key rather
     than printing it defeats it. That is not hypothetical: a key ending in a carriage return
@@ -81,35 +108,127 @@ def _key_spellings(key: str | None) -> list[str]:
     ``!r``, ``json.dumps`` and every other renderer that escapes the character which made
     the key unusable in the first place.
 
+    Variadic because a run can have more than one secret in play: the ``--key`` value, plus
+    whatever :func:`_mask_url_userinfo` found inside a URL's userinfo. Every secret's spellings
+    are unioned and sorted once, so the ordering rule lives in exactly one place.
+
     Args:
-        key: The API key in play, or ``None``.
+        *secrets: The secrets in play. ``None`` and empty values are skipped, so
+            ``_key_spellings()`` and ``_key_spellings(None)`` both return ``[]``.
 
     Returns:
         The distinct spellings long enough to mask, longest first — a shorter spelling is
         usually a substring of a longer one, and masking it first would strand the remainder.
     """
-    if not key:
-        return []
-    escaped = key.encode('unicode_escape').decode('ascii')
-    spellings = {key, key.strip(_TRIMMABLE_KEY_CHARS), escaped, escaped.strip(_TRIMMABLE_KEY_CHARS)}
+    spellings: set[str] = set()
+    for secret in secrets:
+        if not secret:
+            continue
+        escaped = secret.encode('unicode_escape').decode('ascii')
+        spellings |= {secret, secret.strip(_TRIMMABLE_KEY_CHARS), escaped, escaped.strip(_TRIMMABLE_KEY_CHARS)}
     return sorted((s for s in spellings if len(s) >= _MIN_REDACTABLE_KEY), key=len, reverse=True)
 
 
-def redact(text: str, key: str | None = None) -> str:
-    """Mask API keys in anything castiron prints.
+def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
+    """Mask the credentials in every ``scheme://userinfo@host`` and report what was found.
 
     Args:
         text: The message about to be shown to the user.
-        key: The API key in play, if any. Every spelling of it (:func:`_key_spellings`) is
-            replaced when it is long enough to be unambiguous (short values are left alone:
-            a three-character "key" would mangle unrelated text).
 
     Returns:
-        ``text`` with credential-bearing query parameters and the key's value — literal,
-        trimmed, or escaped — replaced by :data:`REDACTED`.
+        The masked text, and the secrets that were masked out of it — so :func:`redact` can
+        also mask them wherever *else* they occur.
     """
-    masked = _SECRET_QUERY.sub(rf'\1{REDACTED}', text)
-    for spelling in _key_spellings(key):
+    found: list[tuple[str, str]] = []
+
+    def mask(match: re.Match[str]) -> str:
+        scheme, userinfo, host = match.group(1), match.group(2), match.group(3)
+        user, separator, password = userinfo.partition(':')
+        if separator:
+            # Keep the username: it is diagnostically valuable ("you connected as postgres,
+            # not app_user") and is not conventionally secret.
+            found.append((password, host))
+            return f'{scheme}{user}:{REDACTED}@{host}'
+        # A colon-less userinfo in a URL castiron prints is far more often a bearer token
+        # (https://ghp_.../) than a username, so mask the whole of it.
+        found.append((user, host))
+        return f'{scheme}{REDACTED}@{host}'
+
+    masked = _URL_USERINFO.sub(mask, text)
+    # ⚠ The URL is not the only place the password appears. `http.client._get_hostport` reports a
+    # bad port as `nonnumeric port: '<password>@<host>'` -- no scheme, so the pattern above misses
+    # that second occurrence entirely. Both halves are known here, so this mop-up is exact, cannot
+    # mis-fire, and (unlike the spelling pass) is not gated on _MIN_REDACTABLE_KEY.
+    for secret, host in found:
+        if secret:
+            masked = masked.replace(f'{secret}@{host}', f'{REDACTED}@{host}')
+    return masked, [secret for secret, _ in found if secret]
+
+
+def _mask_secret_parameters(text: str) -> str:
+    """Mask the value of any query or fragment parameter whose name names a credential.
+
+    The name is matched **decoded** (so ``?api%5Fkey=`` is caught) but rewritten exactly as it
+    was found, so the message keeps the user's own spelling of their URL.
+
+    Args:
+        text: The message about to be shown to the user.
+
+    Returns:
+        ``text`` with each credential-bearing parameter's value replaced by :data:`REDACTED`.
+    """
+
+    def mask(match: re.Match[str]) -> str:
+        lead, name = match.group(1), match.group(2)
+        if _SECRET_PARAM_NAME.search(unquote(name)):
+            return f'{lead}{name}={REDACTED}'
+        return match.group(0)
+
+    return _QUERY_PARAM.sub(mask, text)
+
+
+def redact(text: str, key: str | None = None) -> str:
+    """Mask API keys, URL credentials and secret parameters in anything castiron prints.
+
+    Three passes, in order: the userinfo of any ``scheme://user:password@host`` (keeping the
+    username, which is diagnostic, and masking the password); the value of any query- or
+    fragment-parameter whose name carries a credential word as a delimited segment; and finally
+    every spelling (:func:`_key_spellings`) of the ``--key`` value **and** of any password the
+    first pass found.
+
+    The first pass is not only for HTTP URLs: CI-010's live-database source will carry
+    ``postgresql://user:password@host/db`` DSNs in its error messages, and this is where their
+    password gets masked.
+
+    Matching is done on **shape**, never on validity — deliberately. ``urlsplit`` raises
+    ``ValueError`` on exactly the malformed URLs this function exists to defend
+    (``https://user:SECRET@[::1``, ``https://u:p@h:notaport/``), and a masking function that
+    raises on malformed input is a masking function that leaks. There is no input on which
+    :func:`redact` can raise.
+
+    Two accepted costs, recorded so they are not "fixed" into leaks:
+
+    1. The value class is greedy up to ``&``, ``#`` or whitespace, so it also swallows the
+       message's own trailing punctuation (``?apikey=*** boom``, not ``?apikey=***: boom``).
+       Nothing positional distinguishes value content from message punctuation, and
+       *under*-masking is the fatal direction.
+    2. A PostgREST filter on a column literally named ``key`` has its value masked
+       (``?key=eq.5`` → ``?key=***``). Pre-existing behaviour; over-masking a diagnostic filter
+       is far cheaper than leaking a credential.
+
+    Args:
+        text: The message about to be shown to the user.
+        key: The API key in play, if any. Every spelling of it is replaced when it is long
+            enough to be unambiguous (short values are left alone: a three-character "key"
+            would mangle unrelated text).
+
+    Returns:
+        ``text`` with URL credentials, credential-bearing parameters and the key's value —
+        literal, trimmed, or escaped — replaced by :data:`REDACTED`.
+    """
+    masked, url_secrets = _mask_url_userinfo(text)
+    masked = _mask_secret_parameters(masked)
+    for spelling in _key_spellings(key, *url_secrets):
         masked = masked.replace(spelling, REDACTED)
     return masked
 
@@ -171,6 +290,59 @@ def key_option_callback(ctx: click.Context, param: click.Parameter, value: str |
     if ctx.resilient_parsing:  # shell completion must never raise
         return value
     return sanitize_key(value)
+
+
+def reject_url_userinfo(source: str | None) -> str | None:
+    """Refuse a ``--from`` URL that carries credentials in its userinfo. Never echoes the value.
+
+    The boundary half of the two-layer defence :func:`redact` completes — the same shape as
+    :func:`sanitize_key`, and settled the same way (CI-063: sanitize at the boundary *and*
+    harden the mask). Removing the trigger costs nothing, because **castiron cannot
+    successfully fetch from a userinfo URL under any circumstance**: ``urllib.request`` does not
+    apply userinfo as HTTP Basic auth, it hands the whole netloc to ``http.client``, which
+    either fails to parse it (``https://u:p@host`` → ``InvalidURL: nonnumeric port: 'p@host'``,
+    raised before a socket opens) or fails to resolve a host literally named ``u@host``. The
+    first of those quotes the netloc back, which is how the password reached the terminal.
+
+    Args:
+        source: The resolved ``--from`` value — a URL, a path, or ``None``.
+
+    Returns:
+        ``source`` unchanged when it carries no userinfo.
+
+    Raises:
+        click.UsageError: ``source`` is a URL with a ``user:password@`` (exit 2, matching
+            :func:`sanitize_key`'s refusal).
+    """
+    if source and _URL_USERINFO.search(source):
+        raise click.UsageError(
+            'The --from URL carries credentials in its userinfo (the `user:password@` before the '
+            'host). castiron will not use it: the HTTP client rejects such a URL before it opens a '
+            'socket, and the error it raises quotes the host back -- which would print your '
+            'password. Drop the `user:password@` and pass the key with --key or CASTIRON_KEY.'
+        )
+    return source
+
+
+def source_option_callback(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    """Refuse a credential-bearing ``--from`` (click callback) before anything can use it.
+
+    On the option rather than in the command body so it covers the ``CASTIRON_FROM`` /
+    ``SUPABASE_URL`` fallbacks and the ``[tool.castiron]`` default map as well as the flag —
+    click runs the callback on the resolved value whatever its origin.
+
+    Args:
+        ctx: The click context (used only to honor ``resilient_parsing``).
+        param: The ``--from`` parameter (unused; part of click's callback contract).
+        value: The resolved source, or ``None``.
+
+    Returns:
+        The source, unchanged.
+    """
+    del param  # click's callback contract; the parameter itself carries no information here
+    if ctx.resilient_parsing:  # shell completion must never raise
+        return value
+    return reject_url_userinfo(value)
 
 
 def internal_error_message(exc: BaseException) -> str:

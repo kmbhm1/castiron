@@ -21,6 +21,7 @@ from castiron.cli.config import (
     config_option_callback,
     discover_config_file,
     load_config_table,
+    looks_like_url,
     resolve_config,
     valid_config_keys,
 )
@@ -519,3 +520,48 @@ class TestArticles:
         path = write_config(tmp_path, body)
         with pytest.raises(ConfigError, match=expected):
             load_config_table(path, explicit=False)
+
+
+@pytest.mark.unit
+class TestLooksLikeUrl:
+    """The source predicate. CI-089: it must answer, never raise."""
+
+    @pytest.mark.parametrize(
+        ('value', 'expected'),
+        [
+            ('https://abc.supabase.co', True),
+            ('http://localhost:3000/', True),
+            ('HTTP://localhost:3000/', True),
+            ('./openapi.json', False),
+            ('/abs/openapi.json', False),
+            ('openapi.json', False),
+            ('', False),
+            # A DSN is not something castiron fetches over HTTP, so it is not a "URL" here.
+            ('postgresql://user:pw@host/db', False),
+        ],
+    )
+    def test_the_ordinary_answers(self, value: str, expected: bool) -> None:
+        assert looks_like_url(value) is expected
+
+    # Every input `urlsplit` rejects, enumerated (CI-072) -- both raising branches, with and
+    # without a scheme. Before CI-089 each of these raised ValueError out of a predicate, and
+    # because the predicate runs before the source is even chosen it was the FIRST thing a
+    # typo'd URL hit: exit 70, "This is a bug in castiron, please report it".
+    @pytest.mark.parametrize(
+        ('malformed', 'expected'),
+        [
+            ('http://[::1', True),  # scheme present -> a network source with a broken URL
+            ('https://[::1', True),
+            ('https://exa℀mple.com/', True),
+            ('//[::1', False),  # scheme-relative: no scheme, so not a URL castiron fetches
+            ('ftp://[::1', False),  # a scheme castiron does not fetch
+        ],
+    )
+    def test_a_malformed_url_is_answered_rather_than_raised(self, malformed: str, expected: bool) -> None:
+        assert looks_like_url(malformed) is expected
+
+    def test_the_hand_rolled_fallback_agrees_with_urlsplit_on_every_scheme_it_can_parse(self) -> None:
+        # The fallback lowercases a hand-split scheme; `urlsplit` lowercases too. Asserting they
+        # agree is what stops the fallback quietly diverging from the primary path.
+        for scheme in ('http', 'HTTP', 'Https', 'ftp', 'postgresql'):
+            assert looks_like_url(f'{scheme}://host/') is looks_like_url(f'{scheme}://[::1')

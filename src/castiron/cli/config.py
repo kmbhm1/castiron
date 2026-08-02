@@ -107,8 +107,35 @@ class ConfigError(click.ClickException):
 
 
 def looks_like_url(value: str) -> bool:
-    """Whether ``value`` is a network source rather than a filesystem path."""
-    return urlsplit(value).scheme in URL_SCHEMES
+    """Whether ``value`` is a network source rather than a filesystem path.
+
+    ⚠ **Never raises, and that is the point (CI-089).** ``urlsplit`` raises a bare ``ValueError``
+    on a malformed URL -- ``urlsplit('http://[::1')`` is ``ValueError: Invalid IPv6 URL`` -- and
+    this predicate runs *before* the source is chosen, so it was the **first** thing a typo'd URL
+    hit. The result was exit **70** with "this is a bug in castiron, please report it at
+    ...issues": a user who mistyped a bracket was told to open an issue. Same argument as
+    :func:`~castiron.cli.errors.reject_url_userinfo` and :func:`~castiron.cli.errors.redact` --
+    malformed input must degrade to a yes/no, never to a raise (CI-066-D1).
+
+    A raising ``urlsplit`` falls back to splitting the scheme off by hand, which is what
+    ``reject_url_userinfo`` does for the same reason. That is total: every input ``urlsplit``
+    rejects has a ``//`` (both raising branches sit behind ``url[:2] == '//'`` after the scheme is
+    stripped), so the ``'://'`` test cannot miss one. Answering **True** for ``http://[::1`` is
+    deliberate -- it is a network source with a broken URL, not a filesystem path, so it reaches
+    ``normalize_postgrest_url`` and fails as a :class:`~castiron.sources.SourceFetchError` naming
+    the URL at exit 1.
+
+    Args:
+        value: The ``--from`` value, a URL or a path.
+
+    Returns:
+        Whether ``value`` names a scheme castiron fetches over the network.
+    """
+    try:
+        scheme = urlsplit(value).scheme
+    except ValueError:
+        scheme = value.split('://', 1)[0].lower() if '://' in value else ''
+    return scheme in URL_SCHEMES
 
 
 def canonical_key(key: str) -> str:

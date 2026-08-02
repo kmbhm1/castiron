@@ -17,6 +17,7 @@ from urllib.request import Request
 import pytest
 
 from castiron import __version__
+from castiron.cli.errors import redact
 from castiron.sources import SourceFetchError, fetch_openapi_document, normalize_postgrest_url
 from castiron.sources.openapi import build_request_headers
 from castiron.sources.openapi import fetch as fetch_module
@@ -115,6 +116,42 @@ class TestNormalizePostgrestUrl:
         with pytest.raises(SourceFetchError, match='No source URL'):
             normalize_postgrest_url('   ')
 
+    # ``urlsplit``'s two raising branches, enumerated rather than sampled (CI-072): the
+    # bracket check (``Invalid IPv6 URL``) and ``_checknetloc``'s NFKC check. Both sit behind
+    # ``url[:2] == '//'`` after the scheme is stripped, so this is the whole surface.
+    @pytest.mark.parametrize(
+        'malformed',
+        [
+            'http://[::1',  # unbalanced bracket
+            'https://user@[::1',  # ...with userinfo in front of it
+            'https://exa℀mple.com/',  # netloc that changes under NFKC normalization
+        ],
+    )
+    def test_a_malformed_url_becomes_a_source_error_not_a_value_error(self, malformed: str) -> None:
+        # CI-089. A bare ValueError here escaped `fetch_openapi_document`'s documented
+        # `Raises: SourceFetchError`, and an escaping exception is what printed the API key
+        # under `pytest --showlocals` in the live suite.
+        with pytest.raises(SourceFetchError) as excinfo:
+            normalize_postgrest_url(malformed)
+        assert 'Could not parse' in str(excinfo.value)
+        assert malformed in str(excinfo.value)
+        # The chain is preserved for a debugger, but the ValueError is no longer what callers see.
+        assert isinstance(excinfo.value.__cause__, ValueError)
+
+    def test_the_message_never_echoes_urlsplits_own_text(self) -> None:
+        # Measured, and the reason `str(exc)` is not interpolated: `_checknetloc` raises
+        # "netloc 'user:SECRET@exa..' contains invalid characters under NFKC normalization" --
+        # the netloc WITH userinfo and WITHOUT a `scheme://`, which is the anchor
+        # `redact`'s _URL_USERINFO pattern needs. Echoing it would leak a password while
+        # closing a leak.
+        secret = 'SUPERSECRETPASSWORD'
+        with pytest.raises(SourceFetchError) as excinfo:
+            normalize_postgrest_url(f'https://user:{secret}@exa℀mple.com/')
+        assert 'NFKC' not in str(excinfo.value)
+        assert secret in str(excinfo.value.__cause__ or '')  # the cause still carries it...
+        assert redact(str(excinfo.value)) != str(excinfo.value)  # ...and what we print is maskable
+        assert secret not in redact(str(excinfo.value))
+
 
 # ---------------------------------------------------------------------------
 # Headers.
@@ -202,6 +239,17 @@ class TestFetchErrors:
         assert str(status) in message
         assert 'API key' in message
         assert 'privileges' in message
+
+    def test_a_malformed_url_honours_the_documented_raises_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The contract as written: "Raises: SourceFetchError ... Nothing else." Asserted at the
+        # `fetch_openapi_document` boundary, not only on the helper, because the defect was that
+        # `normalize_postgrest_url` is called OUTSIDE this function's own try block (CI-089).
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('a malformed URL must fail before any socket is opened')
+
+        monkeypatch.setattr(fetch_module, 'urlopen', explode)
+        with pytest.raises(SourceFetchError, match='Could not parse'):
+            fetch_openapi_document('http://[::1', key='irrelevant')
 
     def test_a_404_asks_about_the_api_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(fetch_module, 'urlopen', raiser(http_error(404)))

@@ -321,6 +321,33 @@ class TestFailureMapping:
         assert result.exit_code == 1
         assert 'Could not reach https://typo.supabase.co/rest/v1/' in result.output
 
+    @pytest.mark.parametrize('malformed', ['http://[::1', 'https://exa℀mple.com/'])
+    def test_a_malformed_url_is_the_users_typo_not_a_castiron_bug(
+        self, runner: CliRunner, project: Path, malformed: str
+    ) -> None:
+        # CI-089. Against main this is exit **70** with "internal error (ValueError: Invalid IPv6
+        # URL) ... This is a bug in castiron, please report it at .../issues" -- a user who
+        # mistyped a bracket was told to open an issue. `urlsplit` raised out of two unguarded
+        # places: `looks_like_url` (which runs first) and `normalize_postgrest_url`.
+        result = run(runner, '--from', malformed)
+        assert result.exit_code == 1
+        assert 'Could not parse' in result.output
+        assert malformed in result.output
+        assert 'This is a bug in castiron' not in result.output
+        # The hint has to fire: naming the URL without saying what a --from may be leaves the
+        # user exactly as stuck as exit 70 did.
+        assert '--from takes a Supabase project URL' in result.output
+
+    def test_a_malformed_url_carrying_a_key_leaks_neither_the_key_nor_the_query_secret(
+        self, runner: CliRunner, project: Path
+    ) -> None:
+        # Both surfaces at once, because this message is new: the --key value and a credential
+        # parameter inside the malformed URL that the message quotes back verbatim.
+        result = run(runner, '--from', f'http://[::1/?apikey={SECRET}', '--key', SECRET, '--debug')
+        assert result.exit_code == 1
+        assert SECRET not in result.output
+        assert 'apikey=***' in result.output
+
     def test_an_unexpected_exception_exits_seventy_without_a_traceback(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

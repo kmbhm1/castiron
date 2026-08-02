@@ -1,5 +1,6 @@
 """Unit tests for the canonical Schema IR nodes (castiron.ir.models)."""
 
+import dataclasses
 import json
 
 import pytest
@@ -318,3 +319,48 @@ def test_schema_as_dict_renders_functions_as_plain_builtins() -> None:
         }
     ]
     assert json.dumps(as_dict) == json.dumps(schema.as_dict())
+
+
+@pytest.mark.unit
+class TestTableDescription:
+    """``TableInfo.description`` — the additive CI-009 field (a table's ``COMMENT ON TABLE``)."""
+
+    def test_defaults_to_none(self) -> None:
+        assert TableInfo(name='t').description is None
+
+    def test_is_the_last_declared_field(self) -> None:
+        """Declaration order is ``as_dict()`` key order; appending last keeps every existing key put."""
+        assert [f.name for f in dataclasses.fields(TableInfo)][-1] == 'description'
+
+    def test_positional_construction_is_unaffected(self) -> None:
+        """The field is appended last, so the pre-CI-009 positional shape still works."""
+        table = TableInfo('t', 'public', 'VIEW')
+        assert (table.name, table.schema, table.table_type) == ('t', 'public', 'VIEW')
+        assert table.description is None
+
+    def test_as_dict_gains_exactly_one_key_in_last_position(self) -> None:
+        """CI5-Q1/L6: an additive IR field adds an additive ``as_dict()`` key. Wanted, not a regression."""
+        schema = Schema(tables=[TableInfo(name='t', description='Application users.')])
+        table_dict = schema.as_dict()['tables'][0]
+
+        assert list(table_dict)[-1] == 'description'
+        assert table_dict['description'] == 'Application users.'
+        assert list(table_dict) == [
+            'name',
+            'schema',
+            'table_type',
+            'is_bridge',
+            'columns',
+            'foreign_keys',
+            'constraints',
+            'relationships',
+            'description',
+        ]
+
+    def test_as_dict_stays_json_serializable_and_stable(self) -> None:
+        schema = Schema(tables=[TableInfo(name='t', description='Customer orders.')])
+        assert json.dumps(schema.as_dict()) == json.dumps(schema.as_dict())
+
+    def test_a_none_description_serializes_as_null(self) -> None:
+        schema = Schema(tables=[TableInfo(name='t')])
+        assert schema.as_dict()['tables'][0]['description'] is None

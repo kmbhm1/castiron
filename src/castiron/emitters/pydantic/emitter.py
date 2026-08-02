@@ -26,6 +26,7 @@ sorted set, ``from __future__ import annotations`` when relationship fields need
 references. castiron owns this output shape; it is not byte-identical to supabase-pydantic.
 """
 
+import json
 import re
 from enum import Enum
 
@@ -85,8 +86,118 @@ def _parse_length_constraint(constraint_def: str | None) -> dict[str, int] | Non
 
 
 def _py_string(value: str) -> str:
-    """Render ``value`` as a double-quoted Python string literal (embedded quotes escaped)."""
-    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    r"""Render ``value`` as a double-quoted, single-line Python string literal.
+
+    JSON's escape alphabet is a strict subset of Python's, so ``json.dumps`` produces a
+    literal Python accepts verbatim -- including for newlines, carriage returns, tabs and
+    C0 control characters. The previous hand-rolled escaping covered only ``\`` and ``"``
+    and emitted the rest raw, so a multi-line ``COMMENT ON COLUMN`` reached
+    ``Field(description=...)`` as an unterminated string literal and the generated module
+    did not parse. ``ensure_ascii=False`` keeps non-ASCII text readable; the CLI writes the
+    file as UTF-8 with LF endings (``cli/output.py``).
+
+    Note this is not a strict no-op against the old helper: a TAB now renders as ``\\t``
+    where it used to be emitted raw (both parse; the escaped form is the correct one). No
+    committed golden contains a tab, a newline or a control character, so no golden moves.
+    """
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _docstring_text(description: str | None) -> str | None:
+    r"""Render a table's SQL comment as an indented, escaped docstring paragraph.
+
+    A SQL comment is arbitrary user text being injected into a Python source file, so this
+    has to be **total**, not merely correct for well-behaved input (the standing CI-063
+    lesson). Each rule earns its place:
+
+    - **CRLF and lone CR are folded to LF first.** The builder already normalizes what it
+      stores, but this keeps the *renderer* total for a hand-built ``TableInfo``, and a CR
+      in generated output is a byte-stability hazard across platforms (Hard Rule #9).
+    - **Backslashes are doubled before anything else.** Otherwise ``C:\temp\new`` renders a
+      real tab and newline inside the docstring value, ``\d+`` raises
+      ``SyntaxWarning: invalid escape sequence`` on 3.12+, and a *trailing* backslash
+      escapes the closing delimiter.
+    - **Every** ``"`` **is escaped, unconditionally.** A comment containing ``\"\"\"`` would
+      otherwise terminate the docstring early -- an injection that breaks the generated
+      module. Escaping all of them makes ``\"\"\"``, ``\"\"\"\"`` and a trailing quote safe with
+      no position-dependent cleverness. The cost is source prettiness: the *file* reads
+      ``\\\"app\\\"`` while the runtime ``__doc__`` is exactly ``"app"``, which is what
+      mkdocstrings/Sphinx/IDE hover show.
+    - ⚠ **Split on** ``'\n'``, **never** :meth:`str.splitlines`. ``splitlines`` also breaks on
+      ``\x0b``, ``\x0c``, ``\x1c``-``\x1e``, ``\x85``, ``\u2028`` and ``\u2029``, every one of
+      which is legal inside a Postgres comment. Using it would silently re-indent such a
+      comment -- nondeterministic-looking output from valid input. Do not "simplify" this.
+    - **Blank lines render truly empty** (no indent), so generated code carries no trailing
+      whitespace (``W291`` for the user, and pure diff noise).
+    - **Content lines are indented and right-stripped, never left-stripped**, so the
+      comment's own relative indentation (lists, code blocks) survives.
+
+    - ⚠ **NUL is removed, and it is the only character that is.** ``U+0000`` is the one
+      code point that no amount of escaping saves: a raw NUL anywhere in a module makes
+      CPython raise ``SyntaxError: source code string cannot contain null bytes`` at import,
+      so castiron would *write* the file successfully and the user's import would fail --
+      the exact failure shape the ``_py_string`` fix exists to prevent. It is stripped
+      rather than rendered as a visible ``\x00`` (which would inject four characters the
+      user never wrote) or as a real NUL escape (which would merely relocate the NUL into
+      every consumer of ``__doc__``). **Stripping is also the only option that preserves
+      decision D6:** it lets a NUL-only comment collapse to "no comment", so it stays
+      indistinguishable from an absent one. Nothing is lost from the system of record --
+      the builder does not strip it, so ``TableInfo.description`` and ``Schema.as_dict()``
+      still carry the NUL.
+
+    Every other control character and all non-ASCII are deliberately *not* escaped: they
+    compile inside a triple-quoted literal and round-trip to the right ``__doc__``, and the
+    CLI writes UTF-8 with LF (``cli/output.py``).
+
+    ⚠ Postgres text cannot contain NUL, so a PostgREST document never carries one -- but
+    **that is a property of one source, not of the input**. The OpenAPI source accepts any
+    JSON document via ``--from``, a NUL is perfectly expressible as the JSON escape
+    ``\u0000``, and a future source may be less disciplined. The renderer must be total over
+    its actual input domain, not over the domain its best-behaved caller happens to supply.
+
+    Args:
+        description: The table's SQL comment, or ``None``.
+
+    Returns:
+        The indented, escaped paragraph, or ``None`` when there is nothing to render -- so
+        an absent, empty, whitespace-only or NUL-only comment all produce byte-identical
+        output.
+    """
+    if description is None:
+        return None
+    # NUL removal precedes `.strip()` so a NUL-only or NUL-padded comment collapses to
+    # "no comment" (decision D6) rather than to a body of invisible characters.
+    text = description.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '').strip()
+    if not text:
+        return None
+    escaped = text.replace('\\', '\\\\').replace('"', '\\"')
+    return '\n'.join(f'{IND}{line.rstrip()}' if line.strip() else '' for line in escaped.split('\n'))
+
+
+def _class_docstring(summary: str, description: str | None, trailer: str | None = None) -> str:
+    """Assemble a class docstring from its summary, optional description and optional trailer.
+
+    The description is inserted as the **first body paragraph, after the summary line**; it
+    never replaces the summary. The summary is castiron's statement about the *class*
+    (``UsersBaseSchema`` vs ``UsersInsert`` vs ``UsersUpdate``), while the comment is the
+    user's statement about the *table* -- replacing it would give every variant an identical
+    docstring and destroy the only line saying which one you are reading. Keeping it also
+    makes the golden diff pure insertion, so a reviewer can verify "nothing was rewritten"
+    from the deletion count alone.
+
+    Args:
+        summary: The one-line summary (already ending in a period).
+        description: The table's SQL comment, or ``None``.
+        trailer: A trailing boilerplate paragraph (already indented), or ``None``.
+
+    Returns:
+        The complete, indented docstring including its delimiters.
+    """
+    paragraphs = [p for p in (_docstring_text(description), trailer) if p]
+    if not paragraphs:
+        return f'{IND}"""{summary}"""'
+    body = '\n\n'.join(paragraphs)
+    return f'{IND}"""{summary}\n\n{body}\n{IND}"""'
 
 
 class PydanticEmitter(Emitter):
@@ -277,7 +388,7 @@ class PydanticEmitter(Emitter):
         name = self._write_name(table, variant)
         metaclass = self._metaclass(table, variant)
         header = f'class {name}({metaclass}):'
-        docstring = f'{IND}"""{self._class_name(table)} {self._qualifier(variant)} Schema."""'
+        docstring = _class_docstring(f'{self._class_name(table)} {self._qualifier(variant)} Schema.', table.description)
 
         blocks: list[str] = []
         if self.config.disable_model_prefix_protection and self._has_model_prefix_columns(table):
@@ -429,10 +540,13 @@ class PydanticEmitter(Emitter):
         name = self._class_name(table)
         base_name = f'{name}BaseSchema'
         header = f'class {name}({base_name}):'
-        docstring = (
-            f'{IND}"""{name} Schema for Pydantic.\n\n'
-            f'{IND}Inherits from {base_name}. Add any customization here.\n'
-            f'{IND}"""'
+        # The description goes *before* the "Inherits from ..." trailer: the trailer is
+        # castiron's boilerplate instruction to the reader and conventionally comes last,
+        # while the substantive description belongs directly under the summary.
+        docstring = _class_docstring(
+            f'{name} Schema for Pydantic.',
+            table.description,
+            f'{IND}Inherits from {base_name}. Add any customization here.',
         )
 
         fields = self._foreign_columns(table) if self.config.include_foreign_keys else []

@@ -21,6 +21,7 @@ from castiron.ir.build import (
     UserTypeMapping,
     add_foreign_key_info_to_table_details,
     add_relationships_to_table_details,
+    add_table_descriptions_to_table_details,
     analyze_bridge_tables,
     analyze_table_relationships,
     construct_parameters,
@@ -1059,3 +1060,244 @@ def test_ir_is_importable_with_stdlib_only() -> None:
     import castiron.ir  # noqa: F401  (import side effect is the assertion)
 
     assert Schema is castiron.ir.Schema
+
+
+# ---------------------------------------------------------------------------
+# Table-level SQL comments (the CI-009 `table_details` 3-tuple contract).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAddTableDescriptions:
+    """``add_table_descriptions_to_table_details`` — the 3-tuple ``(schema, table, description)``."""
+
+    def _tables(self) -> dict[tuple[str, str], TableInfo]:
+        return {
+            ('public', 'users'): TableInfo(name='users', schema='public'),
+            ('public', 'orders'): TableInfo(name='orders', schema='public'),
+            ('audit', 'users'): TableInfo(name='users', schema='audit'),
+        }
+
+    def test_attaches_to_the_named_table(self) -> None:
+        tables = self._tables()
+        add_table_descriptions_to_table_details(tables, [('public', 'users', 'Application users.')])
+
+        assert tables[('public', 'users')].description == 'Application users.'
+        assert tables[('public', 'orders')].description is None
+
+    def test_does_not_cross_attach_between_schemas(self) -> None:
+        """Same table name in two schemas: the key is ``(schema, name)``, not the name."""
+        tables = self._tables()
+        add_table_descriptions_to_table_details(tables, [('audit', 'users', 'Audited users.')])
+
+        assert tables[('audit', 'users')].description == 'Audited users.'
+        assert tables[('public', 'users')].description is None
+
+    def test_a_row_for_a_table_with_no_columns_creates_nothing(self) -> None:
+        """A table exists in the IR only because a source reported columns for it.
+
+        Inventing one here would add a class to every emitter's output.
+        """
+        tables = self._tables()
+        before = set(tables)
+        add_table_descriptions_to_table_details(tables, [('public', 'ghost', 'I do not exist.')])
+
+        assert set(tables) == before
+        assert len(tables) == 3
+
+    def test_multiple_rows_each_attach(self) -> None:
+        tables = self._tables()
+        add_table_descriptions_to_table_details(
+            tables,
+            [('public', 'users', 'Application users.'), ('public', 'orders', 'Customer orders.')],
+        )
+
+        assert tables[('public', 'users')].description == 'Application users.'
+        assert tables[('public', 'orders')].description == 'Customer orders.'
+
+    def test_no_rows_leaves_every_description_none(self) -> None:
+        tables = self._tables()
+        add_table_descriptions_to_table_details(tables, [])
+
+        assert all(t.description is None for t in tables.values())
+
+    @pytest.mark.parametrize(
+        ('raw', 'expected'),
+        [
+            # Absent / blank -> exactly one representation of "no comment".
+            (None, None),
+            ('', None),
+            ('   ', None),
+            ('\n\t ', None),
+            ('\r\n', None),
+            # Line-ending normalization (CI-063: the encodings the input arrives in).
+            ('a\r\nb', 'a\nb'),
+            ('a\rb', 'a\nb'),
+            ('a\r\n\r\nb', 'a\n\nb'),
+            ('a\nb', 'a\nb'),
+            # Trimming.
+            ('  x  ', 'x'),
+            ('\n\nApplication users.\n\n', 'Application users.'),
+            # Interior whitespace is preserved.
+            ('a\n  indented', 'a\n  indented'),
+            # Ordinary text passes through untouched.
+            ('Application users.', 'Application users.'),
+            # A non-string is *unknown*, never a guess.
+            (42, None),
+            (0, None),
+            (True, None),
+            ({'a': 1}, None),
+            ([], None),
+            (b'bytes', None),
+        ],
+    )
+    def test_normalization(self, raw: object, expected: str | None) -> None:
+        tables = self._tables()
+        add_table_descriptions_to_table_details(tables, [('public', 'users', raw)])
+
+        assert tables[('public', 'users')].description == expected
+
+    @pytest.mark.parametrize(
+        'char',
+        [
+            '\x0b',  # VERTICAL TAB
+            '\x0c',  # FORM FEED
+            '\x1c',  # FILE SEPARATOR
+            '\x1d',  # GROUP SEPARATOR
+            '\x1e',  # RECORD SEPARATOR
+            '\x85',  # NEXT LINE
+            ' ',  # LINE SEPARATOR
+            ' ',  # PARAGRAPH SEPARATOR
+        ],
+    )
+    def test_only_cr_is_treated_as_a_line_ending(self, char: str) -> None:
+        """⚠ ``str.splitlines()`` also breaks on these; ``COMMENT ON TABLE`` may legally contain them.
+
+        The normalizer must rewrite ``\\r\\n``/``\\r`` and nothing else. A ``splitlines()``-based
+        implementation looks equivalent on ordinary text and silently rewrites a legal
+        Postgres comment at these code points — nondeterministic-looking output from valid
+        input. Enumerated rather than sampled (CI-072).
+        """
+        tables = self._tables()
+        add_table_descriptions_to_table_details(tables, [('public', 'users', f'a{char}b')])
+
+        assert tables[('public', 'users')].description == f'a{char}b'
+
+    def test_a_later_row_overwrites_an_earlier_one(self) -> None:
+        """Last row wins — deterministic, and the source controls row order."""
+        tables = self._tables()
+        add_table_descriptions_to_table_details(
+            tables,
+            [('public', 'users', 'first'), ('public', 'users', 'second')],
+        )
+
+        assert tables[('public', 'users')].description == 'second'
+
+
+@pytest.mark.unit
+class TestBuildSchemaTableDetails:
+    """``table_details`` reaching the IR through the public entrypoints."""
+
+    def test_build_schema_without_table_details_leaves_every_description_none(self) -> None:
+        """Backward compatibility: the pre-CI-009 call shape is unchanged."""
+        schema = _build_users_orders()
+
+        assert schema.tables
+        assert all(t.description is None for t in schema.tables)
+
+    def test_build_schema_round_trips_table_details(self) -> None:
+        schema = build_schema(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            table_details=[('public', 'users', 'Application users.')],
+        )
+
+        assert _table(schema, 'users').description == 'Application users.'
+        assert _table(schema, 'orders').description is None
+
+    def test_build_schema_normalizes_on_the_way_in(self) -> None:
+        schema = build_schema(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            table_details=[('public', 'users', '  Windows.\r\nSecond line.  '), ('public', 'orders', '   ')],
+        )
+
+        assert _table(schema, 'users').description == 'Windows.\nSecond line.'
+        assert _table(schema, 'orders').description is None
+
+    def test_construct_tables_accepts_table_details(self) -> None:
+        """``construct_tables`` is separately exported, so it carries the parameter too."""
+        tables = construct_tables(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            'public',
+            False,
+            [('public', 'users', 'Application users.')],
+        )
+
+        assert tables[('public', 'users')].description == 'Application users.'
+
+    def test_construct_tables_accepts_table_details_by_keyword(self) -> None:
+        tables = construct_tables(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            table_details=[('public', 'orders', 'Customer orders.')],
+        )
+
+        assert tables[('public', 'orders')].description == 'Customer orders.'
+
+    def test_table_details_row_for_an_unknown_table_adds_no_table(self) -> None:
+        """End to end: a comment must never bring a table (and a generated class) into being."""
+        schema = build_schema(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            table_details=[('public', 'ghost', 'I do not exist.')],
+        )
+
+        assert sorted(t.name for t in schema.tables) == ['orders', 'users']
+
+    def test_table_details_does_not_disturb_the_rest_of_the_ir(self) -> None:
+        """Descriptions are inert for every other build step (CI-074: preserve what you did not intend to change)."""
+        without = _build_users_orders()
+        with_details = build_schema(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            table_details=[('public', 'users', 'Application users.'), ('public', 'orders', 'Customer orders.')],
+        )
+
+        stripped = with_details.as_dict()
+        for table in stripped['tables']:
+            table['description'] = None
+        assert stripped == without.as_dict()
+
+    def test_positional_callers_are_unaffected_by_the_new_parameter(self) -> None:
+        """``table_details`` is appended last, after ``function_details`` (ordering caveat)."""
+        schema = build_schema(
+            _users_orders_columns(),
+            _users_orders_fks(),
+            _users_orders_constraints(),
+            [],
+            [],
+            'public',
+            False,
+        )
+
+        assert all(t.description is None for t in schema.tables)

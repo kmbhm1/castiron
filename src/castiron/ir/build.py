@@ -32,15 +32,37 @@ Positional tuple contracts (the source ↔ builder boundary)
 - **parameter row (5-tuple):** ``(name, raw_type, raw_mode, has_default,
   array_element_type)`` -- ``raw_mode`` is the source's raw code (pg ``proargmodes``:
   ``'i'|'o'|'b'|'v'|'t'``) or ``None`` (which normalizes to ``ParameterMode.IN``).
+- **table row (3-tuple):** ``(schema, table_name, description)`` -- the table's own SQL
+  comment (``COMMENT ON TABLE``), or ``None``. Rows naming a table that has no column rows
+  are ignored: a table exists in the IR only because a source reported columns for it, so
+  attaching a comment must never bring a table (and therefore a generated class) into
+  being. This is exactly the shape a ``pg_class`` introspection query produces per row --
+  ``(n.nspname, c.relname, obj_description(c.oid, 'pg_class'))`` -- so CI-010's live-DB
+  path fills ``TableInfo.description`` by emitting these rows, with no signature change and
+  no redesign. ⚠ Widening this tuple later would be breaking, exactly as widening the
+  column 12-tuple would be; a source wanting more table-level facts appends a **new**
+  contract, not a fourth element.
+
+  ⚠ **Duplicate rows for one table: the LAST one wins.**
+  :func:`add_table_descriptions_to_table_details` assigns unconditionally rather than
+  skipping an already-set description, so the final row for a ``(schema, table)`` key is the
+  one that survives. That is deliberate and pinned by a test -- it keeps the rule stateless
+  and therefore order-deterministic (Hard Rule #9) instead of depending on whether a
+  previous row happened to be ``None``. It is unreachable from the OpenAPI source, which
+  emits exactly one row per sorted ``definitions`` key, but **CI-010 will emit these rows
+  from a query**, and a ``LEFT JOIN`` that fans a table out twice would deliver two rows for
+  one table. A source that can produce duplicates owns making them consistent -- or must
+  order them so the row it wants is last.
 
 A nested list inside a positional row is already the house style (the enum-type row's 7th
 field is a ``list[str]``; the constraint row's 3rd is a ``list[str]``), and a live-DB
 source will naturally ``array_agg`` a function's arguments the same way.
 
-⚠ **Ordering caveat:** ``function_details`` is the *last* parameter of
-:func:`build_schema`, not the sixth -- inserting it after ``enum_type_mapping`` would
-silently break any caller that passes ``schema`` positionally. The cosmetic cost is that
-the six row contracts are no longer adjacent in the signature.
+⚠ **Ordering caveat:** ``function_details`` and ``table_details`` are the *last* two
+parameters of :func:`build_schema`, not the sixth and seventh -- inserting either after
+``enum_type_mapping`` would silently break any caller that passes ``schema`` positionally.
+``table_details`` is appended after ``function_details`` for the same reason. The cosmetic
+cost is that the row contracts are no longer adjacent in the signature.
 """
 
 import builtins
@@ -321,6 +343,68 @@ def get_table_details_from_columns(
         tables[table_key].add_column(column_info)
 
     return tables
+
+
+# ---------------------------------------------------------------------------
+# Table-level SQL comments.
+# ---------------------------------------------------------------------------
+
+
+def _normalize_description(value: Any) -> str | None:
+    r"""Normalize a raw source comment: CRLF→LF, trimmed, empty → ``None``.
+
+    Normalization lives here rather than in a source so that every source inherits one
+    rule instead of re-deriving (and re-breaking) it. Three decisions are load-bearing:
+
+    - **CRLF→LF first.** A comment authored in a Windows editor arrives with ``\\r\\n``. A
+      lone ``\r`` in generated output is a byte-stability hazard across platforms and pure
+      diff noise (Hard Rule #9). This is the CI-063 lesson applied at the IR boundary:
+      normalize the encoding the input actually arrives in, not the canonical one.
+    - **Empty → ``None``.** ``COMMENT ON TABLE t IS ''`` stores an empty string and
+      PostgREST reports ``"description": ""``. Two IRs that both mean *no comment* must be
+      indistinguishable, or ``as_dict()`` reports drift where none exists.
+    - **``isinstance`` rather than ``str(value)``.** Rows are ``tuple[Any, ...]``; a
+      non-string is *unknown*, and castiron's standing posture is that unknown is ``None``,
+      never a guess. It also keeps this function ``mypy --strict``-clean without leaking
+      ``Any``.
+
+    Args:
+        value: The raw value from a table row's third element.
+
+    Returns:
+        The normalized comment, or ``None`` when there is nothing to record.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.replace('\r\n', '\n').replace('\r', '\n').strip()
+    return text or None
+
+
+def add_table_descriptions_to_table_details(
+    tables: dict[tuple[str, str], TableInfo],
+    table_details: Sequence[Row],
+) -> None:
+    """Attach each table's SQL comment to its :class:`TableInfo`.
+
+    A row naming a table that has no column rows is skipped, **never created**: a table
+    exists in the IR only because a source reported columns for it, and inventing one here
+    would add a class to every emitter's output.
+
+    Assignment is **unconditional**, so when two rows name the same ``(schema, table)`` the
+    last one wins -- see the ``table row (3-tuple)`` contract in the module docstring for why
+    that is deliberate and which source can actually hit it.
+
+    Args:
+        tables: The tables built from the column rows, keyed by ``(schema, name)``.
+        table_details: Table rows (3-tuple contract).
+    """
+    for row in table_details:
+        (schema, table_name, description) = row
+        table_key: tuple[str, str] = (schema, table_name)
+        if table_key not in tables:
+            logger.debug(f'Skipping table comment for {schema}.{table_name} - no columns were reported for it')
+            continue
+        tables[table_key].description = _normalize_description(description)
 
 
 # ---------------------------------------------------------------------------
@@ -1087,14 +1171,32 @@ def construct_tables(
     enum_type_mapping: Sequence[Row],
     schema: str = 'public',
     disable_model_prefix_protection: bool = False,
+    table_details: Sequence[Row] = (),
 ) -> dict[tuple[str, str], TableInfo]:
     """Run the full construction pipeline, returning the tables keyed by ``(schema, name)``.
 
     Reproduces supabase-pydantic's ``construct_table_info`` step order, including the
     faithful double-run of :func:`analyze_table_relationships` (a known upstream TODO,
     carried for output parity — decision D7).
+
+    Args:
+        column_details: Column rows (12-tuple contract).
+        fk_details: Foreign-key rows (7-tuple contract).
+        constraints: Constraint rows (5-tuple contract).
+        enum_types: Enum-type rows (7-tuple contract).
+        enum_type_mapping: Enum-type-mapping rows (6-tuple contract).
+        schema: The schema name these rows belong to.
+        disable_model_prefix_protection: If ``True``, do not rename ``model_`` columns.
+        table_details: Table rows (3-tuple contract). Appended **last** and defaulted, so a
+            caller passing ``schema``/``disable_model_prefix_protection`` positionally is
+            unaffected. Descriptions are inert for every later step, so this only has to run
+            once the tables exist.
+
+    Returns:
+        The tables keyed by ``(schema, table_name)``.
     """
     tables = get_table_details_from_columns(column_details, disable_model_prefix_protection)
+    add_table_descriptions_to_table_details(tables, table_details)
     add_foreign_key_info_to_table_details(tables, fk_details, disable_model_prefix_protection)
     add_constraints_to_table_details(tables, schema, constraints, disable_model_prefix_protection)
     add_relationships_to_table_details(tables, fk_details)
@@ -1116,16 +1218,18 @@ def build_schema(
     schema: str = 'public',
     disable_model_prefix_protection: bool = False,
     function_details: Sequence[Row] = (),
+    table_details: Sequence[Row] = (),
 ) -> Schema:
-    """Build a :class:`~castiron.ir.models.Schema` from the six tuple contracts.
+    """Build a :class:`~castiron.ir.models.Schema` from the tuple contracts.
 
     This is castiron's canonical construction entrypoint: pluggable sources emit the
     documented positional rows and every emitter consumes the returned ``Schema``. No
     database or network access is involved, and no Python type is resolved.
 
-    ``function_details`` is deliberately the **last** parameter rather than the sixth, so
-    that a caller passing ``schema``/``disable_model_prefix_protection`` positionally is
-    unaffected (see the module docstring).
+    ``function_details`` and ``table_details`` are deliberately the **last** two parameters
+    rather than the sixth and seventh, so that a caller passing
+    ``schema``/``disable_model_prefix_protection`` positionally is unaffected (see the
+    module docstring).
 
     Args:
         column_details: Column rows (12-tuple contract).
@@ -1137,6 +1241,9 @@ def build_schema(
         disable_model_prefix_protection: If ``True``, do not rename ``model_`` columns.
         function_details: Function rows (8-tuple contract). Defaults to empty, so a source
             that exposes no functions produces the same ``Schema`` it always did.
+        table_details: Table rows (3-tuple contract). Defaults to empty, so a source that
+            cannot see table comments produces the same ``Schema`` it always did, with
+            every ``TableInfo.description`` left ``None``.
 
     Returns:
         A fully-populated, deterministic :class:`~castiron.ir.models.Schema`.
@@ -1149,6 +1256,7 @@ def build_schema(
         enum_type_mapping,
         schema,
         disable_model_prefix_protection,
+        table_details,
     )
     enums = _collect_enum_registry(tables)
     return Schema(

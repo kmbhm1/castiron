@@ -1,9 +1,12 @@
+import ast
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from castiron.emitters import EmittedFile, EmitterConfig, PydanticEmitter
+from castiron.emitters.pydantic.emitter import IND
 from castiron.ir import (
     ColumnInfo,
     ForeignKeyInfo,
@@ -47,10 +50,10 @@ class TestEmitBasics:
 @pytest.mark.unit
 class TestGolden:
     def test_matches_golden(self, representative_schema: Schema) -> None:
-        assert _emit(representative_schema) == GOLDEN.read_text()
+        assert _emit(representative_schema) == GOLDEN.read_text(encoding='utf-8')
 
     def test_golden_is_valid_python(self) -> None:
-        compile(GOLDEN.read_text(), '<golden>', 'exec')
+        compile(GOLDEN.read_text(encoding='utf-8'), '<golden>', 'exec')
 
     def test_a_zero_function_schema_emits_byte_identically_after_ci_005(self, representative_schema: Schema) -> None:
         """CI-005 backward-compat guard: adding ``Schema.functions`` changed no output.
@@ -60,7 +63,7 @@ class TestGolden:
         module must still match the CI-004 golden byte for byte.
         """
         assert representative_schema.functions == []
-        assert _emit(representative_schema) == GOLDEN.read_text()
+        assert _emit(representative_schema) == GOLDEN.read_text(encoding='utf-8')
 
 
 # --------------------------------------------------------------------------- determinism
@@ -509,3 +512,674 @@ class TestDefaultedColumnInsert:
         insert_block = out.split('class TInsert(')[1].split('\n\n\n')[0]
         assert 'active: bool | None = Field(default=None)' in insert_block
         assert '# Optional fields' in insert_block
+
+
+# --------------------------------------------------------------------------- string literals
+
+
+#: The adversarial alphabet every generated string literal must survive. A SQL comment is
+#: arbitrary user text landing inside a Python source file, so these are the encodings the
+#: input actually arrives in (CI-063), not a sample.
+ADVERSARIAL_TEXT = [
+    'line one\nline two',
+    'para one\n\npara two',
+    'a\r\nb',
+    'a\rb',
+    'The "app" users.',
+    'Ends a docstring: """ oops',
+    '""""',
+    'ends with a quote "',
+    'Windows path C:\\temp\\new and a regex \\d+',
+    'ends with a backslash \\',
+    'Ünïcødé — 表 — 🚀',
+    'a\tb',
+    'a\x0cb',
+    'a\u2028b',
+    'a\x1bb',
+    'a\x00b',
+    '\x00',
+    '\n\n  Indented?\n\n',
+    'Summary here.\n  - bullet one\n  - bullet two',
+    'Note:\nThis is a Primary Key.<pk/>',
+    '   ',
+    '',
+    'x' * 400,
+]
+
+
+@pytest.mark.unit
+class TestPyStringLiteral:
+    """``_py_string`` must round-trip any text a SQL comment can carry.
+
+    Regression guard for a live bug on ``main`` @ ``026af0f`` (CI9-Q1): the helper escaped
+    only ``\\`` and ``"``, so a newline emitted an unterminated string literal and the
+    generated module raised ``SyntaxError`` at import. A multi-line ``COMMENT ON COLUMN``
+    is ordinary SQL and PostgREST carries it verbatim in
+    ``properties.<c>.description``.
+    """
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_round_trips_through_literal_eval(self, text: str) -> None:
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert ast.literal_eval(_py_string(text)) == text
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_literal_is_single_line(self, text: str) -> None:
+        """No raw newline may survive into the literal -- that is the actual defect."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        rendered = _py_string(text)
+        assert '\n' not in rendered
+        assert '\r' not in rendered
+
+    @pytest.mark.parametrize(
+        ('raw', 'expected'),
+        [
+            ('a\tb', '"a\\tb"'),
+            ('a\x08b', '"a\\bb"'),
+            ('a\x0cb', '"a\\fb"'),
+            ('a\x0bb', '"a\\u000bb"'),
+            ('a\x07b', '"a\\u0007b"'),
+            ('a\x1bb', '"a\\u001bb"'),
+            ('a\x00b', '"a\\u0000b"'),
+        ],
+    )
+    def test_control_characters_are_escaped_not_raw(self, raw: str, expected: str) -> None:
+        r"""The deliberate behaviour change vs. the old helper, stated precisely.
+
+        ⚠ This is **not** a strict no-op, and it is not only the TAB. The previous escaping
+        emitted every one of these raw inside the literal -- legal Python, but unescaped;
+        ``json.dumps`` escapes them. All parse either way, so nothing was broken before and
+        nothing is broken now, but the escaped rendering is the correct one and is what a
+        reader of generated code expects.
+
+        Enumerated rather than sampled (CI-072), and pinned so the difference stays
+        deliberate. No committed golden contains a tab, a newline or a control character,
+        which is why neither golden moves. The genuinely *fixed* inputs -- ``\n``, ``\r``,
+        ``\r\n`` -- are covered by the round-trip tests above; those produced a module that
+        did not parse at all.
+        """
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string(raw) == expected
+        assert raw[1] not in _py_string(raw)
+        assert ast.literal_eval(_py_string(raw)) == raw
+
+    def test_non_ascii_is_not_escaped(self) -> None:
+        """``ensure_ascii=False`` keeps generated text readable (the file is written UTF-8)."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string('Ünïcødé 🚀') == '"Ünïcødé 🚀"'
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('A short profile blurb.', '"A short profile blurb."'),
+            ('The customer who placed the order.', '"The customer who placed the order."'),
+            ('User email', '"User email"'),
+            ('class', '"class"'),
+            ('active', '"active"'),
+            ('quote "q"', '"quote \\"q\\""'),
+            ('back\\slash', '"back\\\\slash"'),
+        ],
+    )
+    def test_golden_literals_are_unchanged(self, text: str, expected: str) -> None:
+        """Every literal shape present in a committed golden renders exactly as before."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string(text) == expected
+
+    def test_multiline_column_comment_emits_parseable_python(self, build_columns: Callable[..., Row]) -> None:
+        """End-to-end: on ``main`` this module raised ``SyntaxError`` at ``compile()``."""
+        columns = [
+            build_columns('t', 'id', 'integer', identity=True),
+            build_columns('t', 'note', 'text', nullable=True, description='line one\nline two'),
+        ]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        out = _emit(build_schema(columns, [], constraints, [], []))
+
+        compile(out, '<generated>', 'exec')
+        assert 'description="line one\\nline two"' in out
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_column_comment_emits_parseable_python(self, text: str, build_columns: Callable[..., Row]) -> None:
+        """Every adversarial shape survives the ``Field(description=...)`` path."""
+        columns = [
+            build_columns('t', 'id', 'integer', identity=True),
+            build_columns('t', 'note', 'text', nullable=True, description=text),
+        ]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        out = _emit(build_schema(columns, [], constraints, [], []))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_enum_label_renders_a_valid_value_literal(self, text: str, build_columns: Callable[..., Row]) -> None:
+        """The other reachable ``_py_string`` call site: an enum member's *value*.
+
+        ⚠ This asserts only the right-hand side of the member line. It deliberately does
+        **not** assert that the module compiles, because the member *name* is derived
+        separately by ``python_member_name`` (``value.lower()``), which is not
+        identifier-safe: ``CREATE TYPE mood AS ENUM ('in progress')`` emits
+        ``IN PROGRESS = "in progress"``. That is a pre-existing defect on ``main`` @
+        ``026af0f``, independent of this helper and out of scope for CI-009 -- filed, not
+        fixed, and deliberately not pinned here as if it were correct.
+        """
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        columns = [build_columns('t', 'status', 'USER-DEFINED', udt_name='mood')]
+        enum_types = [('mood', 'public', 'owner', 'E', True, 'e', [text, 'other'])]
+        enum_mapping = [('status', 't', 'public', 'mood', 'E', '')]
+        out = _emit(build_schema(columns, [], [], enum_types, enum_mapping))
+
+        literal = _py_string(text)
+        assert f'= {literal}\n' in out
+        assert ast.literal_eval(literal) == text
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_column_alias_emits_parseable_python(self, text: str) -> None:
+        """The third call site: ``Field(alias=...)``, set for a reserved column name."""
+        table = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='field_class', raw_type='text', is_nullable=False, alias=text)],
+        )
+        out = _emit(Schema(tables=[table]))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+
+# --------------------------------------------------------------------------- table docstrings
+
+
+def _described(description: str | None, name: str = 'users') -> Schema:
+    """A one-table schema whose table carries ``description``."""
+    return Schema(
+        tables=[
+            TableInfo(
+                name=name,
+                description=description,
+                columns=[ColumnInfo(name='id', raw_type='integer', is_nullable=False, primary=True)],
+            )
+        ]
+    )
+
+
+@pytest.mark.unit
+class TestTableDocstring:
+    """``TableInfo.description`` rendered as a class-docstring body paragraph (CI-009).
+
+    Captain's ruling CI9-Q2 (A): **every** generated class for the table carries it, with
+    no per-class exception. It is appended after the summary line and never replaces it --
+    the summary is the only line that says which variant you are reading.
+    """
+
+    def test_no_description_is_byte_identical_to_the_pre_ci_009_form(self) -> None:
+        out = _emit(_described(None))
+
+        assert '    """Users Base Schema."""' in out
+        assert '    """Users Insert Schema."""' in out
+        assert '    """Users Update Schema."""' in out
+
+    def test_a_single_line_description_renders_the_exact_block(self) -> None:
+        out = _emit(_described('Application users.'))
+
+        assert (
+            'class UsersBaseSchema(CustomModel):\n    """Users Base Schema.\n\n    Application users.\n    """' in out
+        )
+
+    def test_the_operational_class_puts_it_between_summary_and_trailer(self) -> None:
+        out = _emit(_described('Application users.'))
+
+        assert (
+            'class Users(UsersBaseSchema):\n'
+            '    """Users Schema for Pydantic.\n'
+            '\n'
+            '    Application users.\n'
+            '\n'
+            '    Inherits from UsersBaseSchema. Add any customization here.\n'
+            '    """'
+        ) in out
+
+    def test_the_summary_line_is_never_replaced(self) -> None:
+        """Each variant keeps its own identity line."""
+        out = _emit(_described('Application users.'))
+
+        for summary in ('Users Base Schema.', 'Users Insert Schema.', 'Users Update Schema.'):
+            assert f'    """{summary}\n' in out
+
+    def test_every_generated_class_carries_it(self) -> None:
+        """CI9-Q2 (A). CI6-Q7: enumerate the classes rather than sampling one."""
+        out = _emit(_described('Application users.'))
+
+        assert out.count('    Application users.\n') == 4
+        for header in (
+            'class UsersBaseSchema(CustomModel):',
+            'class UsersInsert(CustomModelInsert):',
+            'class UsersUpdate(CustomModelUpdate):',
+            'class Users(UsersBaseSchema):',
+        ):
+            block = out.split(header)[1].split('\n\n\n')[0]
+            assert 'Application users.' in block, header
+
+    def test_the_parent_class_carries_it_too(self) -> None:
+        """The opt-in fifth class kind — the uniform rule has no exception."""
+        out = _emit(_described('Application users.'), EmitterConfig(add_null_parent_classes=True))
+
+        assert 'class UsersParent(CustomModel):' in out
+        assert out.count('    Application users.\n') == 5
+
+    @pytest.mark.parametrize('blank', ['', '   ', '\n\t\n', '\r\n', '  \r\n  \t ', '\x00', '\x00\x00\x00', ' \x00 '])
+    def test_a_blank_description_emits_byte_identically_to_none(self, blank: str) -> None:
+        """No stray blank line, no empty paragraph — 'no comment' has one rendering."""
+        assert _emit(_described(blank)) == _emit(_described(None))
+
+    def test_a_described_and_an_undescribed_table_coexist(self) -> None:
+        schema = Schema(
+            tables=[
+                TableInfo(
+                    name='users',
+                    description='Application users.',
+                    columns=[ColumnInfo(name='id', raw_type='integer', is_nullable=False)],
+                ),
+                TableInfo(
+                    name='products',
+                    columns=[ColumnInfo(name='id', raw_type='integer', is_nullable=False)],
+                ),
+            ]
+        )
+        out = _emit(schema)
+
+        assert '    """Users Base Schema.\n\n    Application users.\n    """' in out
+        assert '    """Products Base Schema."""' in out
+
+    def test_emitting_twice_is_byte_identical_with_a_description(self) -> None:
+        """Hard Rule #9 with the new field populated."""
+        schema = _described('Application users.')
+        assert _emit(schema) == _emit(schema)
+
+    def test_a_multi_line_description_preserves_relative_indentation(self) -> None:
+        out = _emit(_described('Application users.\n  - soft-deleted rows are kept\n  - see also: orders'))
+
+        assert (
+            '    """Users Base Schema.\n'
+            '\n'
+            '    Application users.\n'
+            '      - soft-deleted rows are kept\n'
+            '      - see also: orders\n'
+            '    """'
+        ) in out
+
+    def test_a_blank_line_inside_the_body_carries_no_indent(self) -> None:
+        """Trailing whitespace in generated code is a W291 for the user and pure diff noise."""
+        out = _emit(_described('Para one.\n\nPara two.'))
+
+        assert '    """Users Base Schema.\n\n    Para one.\n\n    Para two.\n    """' in out
+        assert '    \n' not in out
+
+    def test_no_generated_line_has_trailing_whitespace(self) -> None:
+        out = _emit(_described('Line one.   \n   \nLine two.\t'))
+
+        assert not [line for line in out.splitlines() if line != line.rstrip()]
+
+    def test_a_long_comment_is_not_wrapped_or_truncated(self) -> None:
+        """``section_comment``'s 120-col reflow must NOT be reused here."""
+        long_text = 'x' * 400
+        out = _emit(_described(long_text))
+
+        assert f'    {long_text}\n' in out
+
+
+@pytest.mark.unit
+class TestTableDocstringAdversarial:
+    """The mandatory adversarial matrix (L7 / CI-063).
+
+    A table comment is arbitrary user text landing inside a Python **docstring** in
+    generated code. Each shape must (a) compile with warnings escalated to errors — a
+    ``SyntaxWarning: invalid escape sequence`` fails the test — and (b) round-trip into the
+    class's ``__doc__``.
+    """
+
+    #: ``(comment, what it would break without the corresponding rule)``.
+    CASES = [
+        ('Line one.\nLine two.', 'multi-line body'),
+        ('Para one.\n\nPara two.', 'blank line inside the body'),
+        ('Line one.\r\nLine two.\r\n', 'CR in generated output (CI-063)'),
+        ('Line one.\rLine two.', 'lone CR'),
+        ('The "app" users.', 'quote escaping'),
+        ('Ends a docstring: """ oops', 'docstring injection — terminates the literal early'),
+        ('""""', 'four quotes'),
+        ('ends with a quote "', 'quote adjacent to the closing delimiter'),
+        ('Windows path C:\\temp\\new and a regex \\d+', 'tab/newline escapes; \\d SyntaxWarning'),
+        ('ends with a backslash \\', 'escapes the closing delimiter'),
+        ('Ünïcødé — 表 — 🚀', 'non-ASCII'),
+        ('a\tb', 'tab'),
+        ('a\x0cb', 'FORM FEED — splitlines() would split here'),
+        ('a\u2028b', 'LINE SEPARATOR — splitlines() would split here'),
+        ('a\x1bb', 'ESC control character'),
+        ('a\x00b', 'NUL -- the ONE code point no escaping saves; raw NUL breaks import'),
+        ('\x00\x00', 'NUL-only -- must emit as if absent (D6)'),
+        ('  \x00  ', 'NUL surrounded by whitespace -- still absent (D6)'),
+        ('\n\n  Indented?\n\n', 'leading/trailing blank lines'),
+        ('Summary here.\n  - bullet one\n  - bullet two', 'relative indentation preserved'),
+        ('Note:\nThis is a Primary Key.<pk/>', 'PostgREST column marker text passes through'),
+        ('   ', 'whitespace only — must emit as if absent'),
+        ('', 'empty — must emit as if absent'),
+        ('x' * 400, 'no wrapping, no truncation, no 120-col reflow'),
+    ]
+
+    @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
+    def test_the_module_compiles_with_warnings_as_errors(self, text: str, why: str) -> None:
+        out = _emit(_described(text))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
+    def test_the_comment_round_trips_out_of_the_emitted_source(self, text: str, why: str) -> None:
+        r"""The original comment must be recoverable from the **emitted module**.
+
+        Read via :mod:`ast`, deliberately, and asserted **exactly** rather than by
+        containment.
+
+        ⚠ Do not reach for ``exec`` + ``__doc__`` here. **CPython 3.13 dedents docstrings at
+        compile time** (and expands tabs to the 8-column tab stop while doing so), so
+        ``a\tb`` arrives as ``a   b`` on 3.13 and as ``a\tb`` on 3.10-3.12. That is CPython's
+        *rendering* of our output, not our output: the emitted ``.py`` bytes are identical on
+        every interpreter, which is what Hard Rule #9 governs. The dedent is a **compiler**
+        step, not a parser step, so ``ast`` sees the same literal on 3.10, 3.12 and 3.13 --
+        verified on all three.
+
+        This assertion is the exact inverse of the renderer (normalize -> strip -> escape ->
+        indent), so it is a genuine round-trip rather than a mirror of the implementation:
+        ``ast`` returns the *decoded* string, so the escaping is undone by the parser, not by
+        the test.
+        """
+        module = ast.parse(_emit(_described(text)))
+        cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == 'UsersBaseSchema')
+        doc = ast.get_docstring(cls, clean=False)
+        assert doc is not None
+
+        normalized = text.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '').strip()
+        expected = '\n'.join(line.rstrip() for line in normalized.split('\n')) if normalized else ''
+
+        if not expected:
+            assert doc == 'Users Base Schema.'
+            return
+
+        prefix, suffix = 'Users Base Schema.\n\n', f'\n{IND}'
+        assert doc.startswith(prefix), doc
+        assert doc.endswith(suffix), doc
+        body = doc[len(prefix) : -len(suffix)]
+        recovered = '\n'.join(line[len(IND) :] if line else '' for line in body.split('\n'))
+
+        assert recovered == expected
+
+    @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
+    def test_the_emitted_bytes_do_not_depend_on_the_interpreter(self, text: str, why: str) -> None:
+        """Hard Rule #9 is about the bytes we write, which no interpreter version rewrites.
+
+        Pinned separately from the round-trip so the 3.13 docstring-dedent behaviour can
+        never be mistaken for a determinism regression in the emitter.
+        """
+        out = _emit(_described(text))
+
+        assert out == _emit(_described(text))
+        assert ast.dump(ast.parse(out)) == ast.dump(ast.parse(out))
+
+    @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
+    def test_no_carriage_return_reaches_generated_output(self, text: str, why: str) -> None:
+        """Byte stability across platforms (Hard Rule #9)."""
+        assert '\r' not in _emit(_described(text))
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            # \u26a0 Exact bytes, not "each line appears somewhere". A `\r\n` folded by
+            # `.replace('\r', '\n')` alone yields TWO newlines, which a containment
+            # assertion happily accepts and which silently doubles the paragraph.
+            ('Line one.\r\nLine two.\r\n', '    """Users Base Schema.\n\n    Line one.\n    Line two.\n    """'),
+            ('Line one.\rLine two.', '    """Users Base Schema.\n\n    Line one.\n    Line two.\n    """'),
+            ('Line one.\nLine two.', '    """Users Base Schema.\n\n    Line one.\n    Line two.\n    """'),
+            ('a\r\n\r\nb', '    """Users Base Schema.\n\n    a\n\n    b\n    """'),
+            ('\r\na\r\n', '    """Users Base Schema.\n\n    a\n    """'),
+        ],
+        ids=['crlf', 'lone-cr', 'lf', 'crlf-blank-line', 'crlf-wrapped'],
+    )
+    def test_line_endings_normalize_to_exact_bytes(self, text: str, expected: str) -> None:
+        """Every CR spelling must collapse to the *same* bytes as the LF spelling."""
+        assert expected in _emit(_described(text))
+
+    def test_all_three_line_ending_spellings_emit_identically(self) -> None:
+        crlf = _emit(_described('Line one.\r\nLine two.'))
+        cr = _emit(_described('Line one.\rLine two.'))
+        lf = _emit(_described('Line one.\nLine two.'))
+
+        assert crlf == lf
+        assert cr == lf
+
+    @pytest.mark.parametrize(
+        'char',
+        ['\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'],
+    )
+    def test_only_lf_is_treated_as_a_line_break(self, char: str) -> None:
+        """⚠ ``str.splitlines()`` also breaks on every one of these.
+
+        Using it would silently re-indent a legal Postgres comment at that point.
+        Enumerated, not sampled (CI-072).
+        """
+        out = _emit(_described(f'a{char}b'))
+
+        assert f'    a{char}b\n' in out
+
+    def test_a_triple_quote_cannot_terminate_the_docstring_early(self) -> None:
+        """The injection case, asserted on the bytes rather than only via compile()."""
+        out = _emit(_described('Ends a docstring: """ oops'))
+
+        assert '    Ends a docstring: \\"\\"\\" oops\n' in out
+        namespace: dict[str, object] = {}
+        exec(out, namespace)  # noqa: S102
+        assert 'Ends a docstring: """ oops' in namespace['UsersBaseSchema'].__doc__  # type: ignore[union-attr,operator]
+
+    def test_a_trailing_backslash_cannot_escape_the_closing_delimiter(self) -> None:
+        out = _emit(_described('ends with a backslash \\'))
+
+        assert '    ends with a backslash \\\\\n    """' in out
+        namespace: dict[str, object] = {}
+        exec(out, namespace)  # noqa: S102
+        # The docstring's own closing indent follows, so this is containment, not a suffix:
+        # what matters is that ONE literal backslash survived and did not eat the delimiter.
+        doc = namespace['UsersBaseSchema'].__doc__  # type: ignore[union-attr]
+        assert 'ends with a backslash \\\n' in doc
+
+
+@pytest.mark.unit
+class TestCi009BackwardCompatibility:
+    def test_a_description_less_schema_emits_byte_identically_after_ci_009(self, representative_schema: Schema) -> None:
+        """CI-009 backward-compat guard: adding ``TableInfo.description`` changed no output.
+
+        ``representative_schema`` is the CI-004 golden anchor and deliberately carries **no**
+        table description — it is the unchanged control. An unchanged CI-004 golden is the
+        proof that this row is additive.
+        """
+        assert all(t.description is None for t in representative_schema.tables)
+        assert _emit(representative_schema) == GOLDEN.read_text(encoding='utf-8')
+
+
+@pytest.mark.unit
+class TestDocstringTextHelper:
+    """Direct contract tests for ``_docstring_text``.
+
+    Its documented return for "nothing to render" is ``None``, not ``''``. Only
+    ``_class_docstring`` calls it today, and that caller filters on truthiness — so an
+    implementation returning ``''`` is invisible end to end. Pinning the helper directly
+    keeps the stated contract real rather than incidental, and stops a future second caller
+    from inheriting an undocumented empty string.
+    """
+
+    @pytest.mark.parametrize('blank', [None, '', '   ', '\n\t\n', '\r\n', '  \r\n  \t '])
+    def test_nothing_to_render_returns_none(self, blank: str | None) -> None:
+        from castiron.emitters.pydantic.emitter import _docstring_text
+
+        assert _docstring_text(blank) is None
+
+    @pytest.mark.parametrize(
+        ('raw', 'expected'),
+        [
+            ('Application users.', '    Application users.'),
+            ('  Application users.  ', '    Application users.'),
+            ('a\r\nb', '    a\n    b'),
+            ('a\rb', '    a\n    b'),
+            ('a\nb', '    a\n    b'),
+            ('a\n\nb', '    a\n\n    b'),
+            ('a\n  indented', '    a\n      indented'),
+            ('trailing   \nspace', '    trailing\n    space'),
+            ('"quoted"', '    \\"quoted\\"'),
+            ('back\\slash', '    back\\\\slash'),
+        ],
+    )
+    def test_exact_rendering(self, raw: str, expected: str) -> None:
+        from castiron.emitters.pydantic.emitter import _docstring_text
+
+        assert _docstring_text(raw) == expected
+
+
+@pytest.mark.unit
+class TestClassDocstringHelper:
+    """Direct contract tests for ``_class_docstring`` (assembly, not escaping)."""
+
+    def test_summary_only(self) -> None:
+        from castiron.emitters.pydantic.emitter import _class_docstring
+
+        assert _class_docstring('X Base Schema.', None) == '    """X Base Schema."""'
+
+    def test_summary_and_description(self) -> None:
+        from castiron.emitters.pydantic.emitter import _class_docstring
+
+        assert _class_docstring('X Base Schema.', 'Users.') == '    """X Base Schema.\n\n    Users.\n    """'
+
+    def test_summary_and_trailer_only(self) -> None:
+        from castiron.emitters.pydantic.emitter import _class_docstring
+
+        result = _class_docstring('X Schema for Pydantic.', None, '    Inherits from Y.')
+        assert result == '    """X Schema for Pydantic.\n\n    Inherits from Y.\n    """'
+
+    def test_description_precedes_the_trailer(self) -> None:
+        from castiron.emitters.pydantic.emitter import _class_docstring
+
+        result = _class_docstring('X Schema for Pydantic.', 'Users.', '    Inherits from Y.')
+        assert result == '    """X Schema for Pydantic.\n\n    Users.\n\n    Inherits from Y.\n    """'
+
+    @pytest.mark.parametrize('blank', ['', '   ', '\n\t\n'])
+    def test_a_blank_description_is_indistinguishable_from_none(self, blank: str) -> None:
+        from castiron.emitters.pydantic.emitter import _class_docstring
+
+        assert _class_docstring('X Base Schema.', blank) == _class_docstring('X Base Schema.', None)
+
+
+@pytest.mark.unit
+class TestNulByte:
+    """``U+0000`` is the one code point no escaping saves (reviewer finding, fix round 2).
+
+    A raw NUL anywhere in a module makes CPython raise
+    ``SyntaxError: source code string cannot contain null bytes`` at import -- so castiron
+    would *write* schema.py successfully and the user's import would fail. That is the exact
+    failure shape the ``_py_string`` fix exists to prevent, and before this fix the PR only
+    half-closed it: the **column**-comment path went from broken to safe while the **new**
+    table-docstring path became the one place a NUL still broke.
+
+    Postgres text cannot contain NUL, but that is a property of one source, not of the input:
+    the OpenAPI source accepts any JSON document via ``--from``, and ``\x00`` is a
+    perfectly ordinary JSON escape.
+    """
+
+    NUL = '\x00'
+
+    def test_a_nul_is_removed_from_the_docstring(self) -> None:
+        out = _emit(_described(f'a{self.NUL}b'))
+
+        assert self.NUL not in out
+        assert '    ab\n' in out
+
+    def test_the_emitted_module_compiles_and_has_no_nul_byte(self) -> None:
+        out = _emit(_described(f'before{self.NUL}after'))
+
+        assert self.NUL not in out
+        assert out.encode('utf-8').count(b'\x00') == 0
+        compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('text', ['\x00', '\x00\x00', '  \x00  ', '\n\x00\t'])
+    def test_a_nul_only_comment_is_indistinguishable_from_absent(self, text: str) -> None:
+        """Decision D6 -- and the reason NUL is *stripped* rather than escaped.
+
+        Rendering it as a visible ``\\x00`` or as a real NUL escape would both make these
+        emit a docstring body of invisible characters.
+        """
+        assert _emit(_described(text)) == _emit(_described(None))
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('\x00  a', '    a'),
+            ('  a\x00', '    a'),
+            ('\x00 a \x00', '    a'),
+            ('\x00' + chr(10) + '  a', '    a'),
+        ],
+        ids=['nul-before-leading-ws', 'nul-after-trailing-ws', 'nul-both-sides', 'nul-before-newline'],
+    )
+    def test_nul_is_removed_before_stripping_not_after(self, text: str, expected: str) -> None:
+        """Order matters: removing NUL *after* ``.strip()`` leaves stray indentation.
+
+        ``.strip()`` does not treat NUL as whitespace, so for ``"\x00  a"`` a
+        strip-then-remove implementation yields ``"  a"`` -- rendered as six spaces of
+        indent instead of four. Found by mutant N3, which the symmetric NUL cases could not
+        kill.
+        """
+        from castiron.emitters.pydantic.emitter import _docstring_text
+
+        assert _docstring_text(text.replace('NUL', self.NUL)) == expected
+
+    def test_the_ir_still_carries_the_nul(self) -> None:
+        """Nothing is lost from the system of record -- only the rendered docstring drops it.
+
+        The builder deliberately does **not** strip NUL, so drift detection still sees it.
+        """
+        table = TableInfo(name='users', description=f'a{self.NUL}b')
+
+        assert table.description == f'a{self.NUL}b'
+        assert Schema(tables=[table]).as_dict()['tables'][0]['description'] == f'a{self.NUL}b'
+
+    def test_end_to_end_from_an_openapi_document(self) -> None:
+        """The realistic path: any JSON document via ``--from``, not only PostgREST output."""
+        from castiron.sources import build_schema_from_document
+
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'users': {
+                    'type': 'object',
+                    'description': f'a{self.NUL}b',
+                    'properties': {'id': {'type': 'integer', 'format': 'int32'}},
+                }
+            },
+            'paths': {'/users': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        assert schema.tables[0].description == f'a{self.NUL}b'
+
+        out = _emit(schema)
+        assert out.encode('utf-8').count(b'\x00') == 0
+        compile(out, '<generated>', 'exec')
+
+    def test_the_column_comment_path_is_also_nul_safe(self) -> None:
+        """The sibling path, fixed by commit 1 -- pinned so the two cannot diverge again."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        rendered = _py_string(f'a{self.NUL}b')
+        assert self.NUL not in rendered
+        assert ast.literal_eval(rendered) == f'a{self.NUL}b'

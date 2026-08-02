@@ -455,8 +455,12 @@ class TestFidelityFloor:
         assert users_id.is_generated is False
         assert users_id.has_default is False
         # ...and the visible consequence: it is a *required* field on the Insert model.
+        # The docstring here carries the table's SQL comment as a body paragraph (CI-009);
+        # the subject of this assertion is still `id: int` under `# Primary Keys`.
         insert_block = (
-            'class UsersInsert(CustomModelInsert):\n    """Users Insert Schema."""\n\n    # Primary Keys\n    id: int\n'
+            'class UsersInsert(CustomModelInsert):\n'
+            '    """Users Insert Schema.\n\n    Application users.\n    """\n\n'
+            '    # Primary Keys\n    id: int\n'
         )
         assert insert_block in emit(schema)
 
@@ -467,7 +471,9 @@ class TestFidelityFloor:
         assert users_id.is_generated is True
         # Identity columns are omitted from Insert/Update entirely.
         emitted = emit(schema)
-        assert '    """Users Insert Schema."""\n\n    # Required fields\n    email: str' in emitted
+        assert (
+            '    """Users Insert Schema.\n\n    Application users.\n    """\n\n    # Required fields\n    email: str'
+        ) in emitted
 
     def test_no_check_or_exclude_constraints_exist_anywhere(self, document: dict[str, Any]) -> None:
         # The document carries no constraint information at all. The only UNIQUE rows that
@@ -696,3 +702,78 @@ class TestModuleHygiene:
                         assert alias.name.split('.')[0] in stdlib_or_castiron, path
                 elif isinstance(node, ast.ImportFrom) and node.module:
                     assert node.module.split('.')[0] in stdlib_or_castiron, path
+
+
+# ---------------------------------------------------------------------------
+# Table-level SQL comments (CI-009), end to end.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTableDescriptions:
+    """``definitions.<t>.description`` reaching ``TableInfo.description``."""
+
+    def test_a_base_table_carries_its_comment(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+
+        assert table(schema, 'users').description == 'Application users.'
+        assert table(schema, 'orders').description == 'Customer orders.'
+
+    def test_a_view_carries_its_comment_too(self, document: dict[str, Any]) -> None:
+        """A VIEW is a table for this purpose; ``COMMENT ON VIEW`` populates the same field."""
+        view = table(build_schema_from_document(document), 'active_users_view')
+
+        assert view.table_type == 'VIEW'
+        assert view.description == 'Users with a recent login.'
+
+    def test_an_uncommented_table_is_none(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+
+        assert table(schema, 'products').description is None
+        assert table(schema, 'order_items').description is None
+        assert table(schema, 'restricted_table').description is None
+
+    def test_every_table_description_matches_the_document(self, document: dict[str, Any]) -> None:
+        """CI6-Q7: enumerate the tables rather than sampling two of them."""
+        schema = build_schema_from_document(document)
+
+        for name, definition in document['definitions'].items():
+            expected = definition.get('description')
+            assert table(schema, name).description == expected, name
+
+    def test_the_comment_reaches_as_dict(self, document: dict[str, Any]) -> None:
+        as_dict = build_schema_from_document(document).as_dict()
+        by_name = {t['name']: t for t in as_dict['tables']}
+
+        assert by_name['users']['description'] == 'Application users.'
+        assert by_name['products']['description'] is None
+        assert json.dumps(as_dict) == json.dumps(build_schema_from_document(document).as_dict())
+
+    def test_building_twice_yields_the_same_descriptions(self, document: dict[str, Any]) -> None:
+        first = build_schema_from_document(document)
+        second = build_schema_from_document(document)
+
+        assert [t.description for t in first.tables] == [t.description for t in second.tables]
+
+    def test_a_reordered_document_yields_the_same_descriptions(self, document: dict[str, Any]) -> None:
+        import copy
+
+        reordered = copy.deepcopy(document)
+        reordered['definitions'] = dict(reversed(list(reordered['definitions'].items())))
+
+        assert {t.name: t.description for t in build_schema_from_document(reordered).tables} == {
+            t.name: t.description for t in build_schema_from_document(document).tables
+        }
+
+    def test_the_comment_reaches_the_emitted_docstring(self, document: dict[str, Any]) -> None:
+        out = emit(build_schema_from_document(document))
+
+        assert (
+            'class UsersBaseSchema(CustomModel):\n    """Users Base Schema.\n\n    Application users.\n    """' in out
+        )
+
+    def test_an_uncommented_table_emits_a_one_line_docstring(self, document: dict[str, Any]) -> None:
+        out = emit(build_schema_from_document(document))
+
+        assert '    """Products Base Schema."""' in out
+        assert '    """OrderItems Base Schema."""' in out

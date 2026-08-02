@@ -772,3 +772,133 @@ class TestDeterminism:
         rows = parse_openapi_document(document)
         users = [row[2] for row in rows.column_details if row[1] == 'users']
         assert users == list(document['definitions']['users']['properties'])
+
+
+# ---------------------------------------------------------------------------
+# Table-level SQL comments (CI-009).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTableDescriptions:
+    """``definitions.<t>.description`` -> the ``table_details`` 3-tuple contract."""
+
+    def test_fixture_yields_one_row_per_parsed_table(self, document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(document)
+        table_names = sorted({row[1] for row in rows.column_details})
+
+        assert [row[1] for row in rows.table_details] == table_names
+
+    def test_fixture_descriptions_match_the_document_verbatim(self, document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(document)
+        parsed = {name: description for _, name, description in rows.table_details}
+
+        assert parsed['users'] == document['definitions']['users']['description']
+        assert parsed['orders'] == document['definitions']['orders']['description']
+        assert parsed['active_users_view'] == document['definitions']['active_users_view']['description']
+        assert parsed == {
+            'active_users_view': 'Users with a recent login.',
+            'order_items': None,
+            'orders': 'Customer orders.',
+            'products': None,
+            'restricted_table': None,
+            'users': 'Application users.',
+        }
+
+    def test_exactly_three_tables_carry_a_comment(self, document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(document)
+
+        assert sum(1 for _, _, description in rows.table_details if description is not None) == 3
+
+    def test_rows_are_in_sorted_table_name_order(self, document: dict[str, Any]) -> None:
+        """Determinism (Hard Rule #9): ``definitions`` is a Haskell hash map upstream."""
+        rows = parse_openapi_document(document)
+        names = [name for _, name, _ in rows.table_details]
+
+        assert names == sorted(names)
+
+    def test_a_key_reordered_document_yields_identical_table_rows(self, document: dict[str, Any]) -> None:
+        assert parse_openapi_document(reorder_keys(document)).table_details == (
+            parse_openapi_document(document).table_details
+        )
+
+    def test_every_row_carries_the_schema(self, document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(document, schema='audit')
+
+        assert {row[0] for row in rows.table_details} == {'audit'}
+
+    def test_rows_are_three_tuples(self, document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(document)
+
+        assert all(len(row) == 3 for row in rows.table_details)
+
+    def test_a_definition_without_a_description_still_produces_a_row(self) -> None:
+        """One row per parsed table keeps the contract uniform."""
+        rows = parse_openapi_document(minimal_document({'id': {'type': 'integer', 'format': 'int32'}}))
+
+        assert rows.table_details == (('public', 't', None),)
+
+    def test_a_description_is_carried_verbatim(self) -> None:
+        """The parser normalizes nothing -- the builder owns that rule."""
+        document = minimal_document(
+            {'id': {'type': 'integer', 'format': 'int32'}},
+            description='  Windows.\r\nSecond line.  ',
+        )
+        rows = parse_openapi_document(document)
+
+        assert rows.table_details == (('public', 't', '  Windows.\r\nSecond line.  '),)
+
+    @pytest.mark.parametrize('value', [42, 0, True, ['a'], {'a': 1}, None])
+    def test_a_non_string_description_is_not_mistaken_for_one(self, value: object) -> None:
+        document = minimal_document({'id': {'type': 'integer', 'format': 'int32'}}, description=value)
+        rows = parse_openapi_document(document)
+
+        assert rows.table_details == (('public', 't', None),)
+
+    def test_a_definition_with_no_properties_produces_no_table_row(self) -> None:
+        """A skipped definition contributes no table, so it must contribute no row either."""
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'real': {'type': 'object', 'properties': {'id': {'format': 'int32'}}, 'description': 'Kept.'},
+                'empty': {'type': 'object', 'properties': {}, 'description': 'Dropped.'},
+            },
+            'paths': {},
+        }
+        rows = parse_openapi_document(document)
+
+        assert rows.table_details == (('public', 'real', 'Kept.'),)
+
+    def test_a_non_object_definition_produces_no_table_row(self) -> None:
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'real': {'type': 'object', 'properties': {'id': {'format': 'int32'}}, 'description': 'Kept.'},
+                'bogus': 'not an object',
+            },
+            'paths': {},
+        }
+        rows = parse_openapi_document(document)
+
+        assert rows.table_details == (('public', 'real', 'Kept.'),)
+
+    def test_the_other_row_contracts_are_unchanged(self, document: dict[str, Any]) -> None:
+        """CI-074: prove the additive row did not disturb what it was not meant to touch.
+
+        The six pre-CI-009 tuples are compared against the values the existing CI-005 tests
+        already assert for this fixture, so a change to any of them fails here too.
+        """
+        rows = parse_openapi_document(document)
+
+        assert len(rows.column_details) == 27
+        assert len(rows.fk_details) == 5
+        assert len(rows.constraints) == 11
+        assert len(rows.enum_types) == 1
+        assert len(rows.enum_type_mapping) == 2
+        assert len(rows.function_details) == 4
+
+    def test_table_details_defaults_to_empty(self) -> None:
+        """``OpenApiRows`` gained a defaulted field, so existing construction still works."""
+        from castiron.sources.openapi.parse import OpenApiRows
+
+        assert OpenApiRows().table_details == ()

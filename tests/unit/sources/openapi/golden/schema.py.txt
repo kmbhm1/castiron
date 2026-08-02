@@ -39,7 +39,10 @@ class CustomModelUpdate(CustomModel):
 
 
 class ActiveUsersViewBaseSchema(CustomModel):
-    """ActiveUsersView Base Schema."""
+    """ActiveUsersView Base Schema.
+
+    Users with a recent login.
+    """
 
     # Columns
     email: str | None = Field(default=None)
@@ -60,7 +63,10 @@ class OrderItemsBaseSchema(CustomModel):
 
 
 class OrdersBaseSchema(CustomModel):
-    """Orders Base Schema."""
+    """Orders Base Schema.
+
+    Customer orders.
+    """
 
     # Primary Keys
     id: int
@@ -94,7 +100,10 @@ class RestrictedTableBaseSchema(CustomModel):
 
 
 class UsersBaseSchema(CustomModel):
-    """Users Base Schema."""
+    """Users Base Schema.
+
+    Application users.
+    """
 
     # Primary Keys
     id: int
@@ -116,7 +125,10 @@ class UsersBaseSchema(CustomModel):
 
 
 class ActiveUsersViewInsert(CustomModelInsert):
-    """ActiveUsersView Insert Schema."""
+    """ActiveUsersView Insert Schema.
+
+    Users with a recent login.
+    """
 
     # Optional fields
     email: str | None = Field(default=None)
@@ -139,7 +151,10 @@ class OrderItemsInsert(CustomModelInsert):
 
 
 class OrdersInsert(CustomModelInsert):
-    """Orders Insert Schema."""
+    """Orders Insert Schema.
+
+    Customer orders.
+    """
 
     # Primary Keys
     id: int
@@ -175,7 +190,10 @@ class RestrictedTableInsert(CustomModelInsert):
 
 
 class UsersInsert(CustomModelInsert):
-    """Users Insert Schema."""
+    """Users Insert Schema.
+
+    Application users.
+    """
 
     # Primary Keys
     id: int
@@ -199,7 +217,10 @@ class UsersInsert(CustomModelInsert):
 
 
 class ActiveUsersViewUpdate(CustomModelUpdate):
-    """ActiveUsersView Update Schema."""
+    """ActiveUsersView Update Schema.
+
+    Users with a recent login.
+    """
 
     # Columns
     email: str | None = Field(default=None)
@@ -220,7 +241,10 @@ class OrderItemsUpdate(CustomModelUpdate):
 
 
 class OrdersUpdate(CustomModelUpdate):
-    """Orders Update Schema."""
+    """Orders Update Schema.
+
+    Customer orders.
+    """
 
     # Primary Keys
     id: int | None = Field(default=None)
@@ -254,7 +278,10 @@ class RestrictedTableUpdate(CustomModelUpdate):
 
 
 class UsersUpdate(CustomModelUpdate):
-    """Users Update Schema."""
+    """Users Update Schema.
+
+    Application users.
+    """
 
     # Primary Keys
     id: int | None = Field(default=None)
@@ -278,6 +305,8 @@ class UsersUpdate(CustomModelUpdate):
 class ActiveUsersView(ActiveUsersViewBaseSchema):
     """ActiveUsersView Schema for Pydantic.
 
+    Users with a recent login.
+
     Inherits from ActiveUsersViewBaseSchema. Add any customization here.
     """
 
@@ -299,6 +328,8 @@ class OrderItems(OrderItemsBaseSchema):
 
 class Orders(OrdersBaseSchema):
     """Orders Schema for Pydantic.
+
+    Customer orders.
 
     Inherits from OrdersBaseSchema. Add any customization here.
     """
@@ -331,6 +362,8 @@ class RestrictedTable(RestrictedTableBaseSchema):
 
 class Users(UsersBaseSchema):
     """Users Schema for Pydantic.
+
+    Application users.
 
     Inherits from UsersBaseSchema. Add any customization here.
     """

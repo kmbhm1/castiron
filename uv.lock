@@ -67,7 +67,7 @@ wheels = [
 ]
 
 [[package]]
-name = "castiron"
+name = "cast-iron"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [

@@ -9,7 +9,8 @@
 #   2. Create a GitHub App with contents:write and set repo variables/secrets
 #      VERSION_BUMPER_APPID / VERSION_BUMPER_SECRET (used to push the version
 #      bump past branch protection).
-#   3. Configure PyPI Trusted Publishing for the `castiron` project pointing at
+#   3. Configure PyPI Trusted Publishing for the `cast-iron` project (the PyPI
+#      distribution name; the import package and this repo stay `castiron`) pointing at
 #      this workflow (no API token needed — uses OIDC id-token below).
 #
 # Until then, run it by hand from the Actions tab to cut the first release.

@@ -1,5 +1,10 @@
 [project]
-name = "castiron"
+# ⚠ The DISTRIBUTION name only. The import package, the console script and the repository stay
+# `castiron` -- PyPI carries an admin `ProhibitedProjectName` row for the unhyphenated spelling,
+# and its normalization never inserts or removes a separator, so `cast-iron` is a different
+# blocklist key. A hyphenated dist over an unhyphenated import is thoroughly idiomatic
+# (python-dateutil/dateutil, scikit-learn/sklearn). See NAME-D1.
+name = "cast-iron"
 version = "0.0.0"
 description = "A schema→typed-code compiler for Python — typed models and a typed client from your schema, with drift-check in CI."
 authors = [{ name = "Kevin Boehm", email = "kmbhm1@gmail.com" }]
@@ -81,6 +86,10 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
+# ⚠ LOAD-BEARING, do not remove. Without this pin hatchling infers the package directory from
+# [project].name -- which is `cast-iron` -- looks for `src/cast_iron`, finds nothing, and builds
+# an EMPTY wheel that passes every other gate in this repo and only surfaces on a user's
+# `pip install`.
 packages = ["src/castiron"]
 
 # ----------------------------------------------------------------------------

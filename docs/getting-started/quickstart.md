@@ -13,7 +13,7 @@ firewall.
 ## Install
 
 ```bash
-uv add castiron        # or: pip install castiron
+uv add cast-iron       # or: pip install cast-iron
 ```
 
 castiron supports Python 3.10–3.13 and pulls in three runtime dependencies (`click`,

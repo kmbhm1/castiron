@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from castiron.emitters import EmittedFile, EmitterConfig, PydanticEmitter
+from castiron.emitters.pydantic.emitter import IND
 from castiron.ir import (
     ColumnInfo,
     ForeignKeyInfo,
@@ -875,18 +876,56 @@ class TestTableDocstringAdversarial:
             compile(out, '<generated>', 'exec')
 
     @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
-    def test_the_docstring_round_trips_into_dunder_doc(self, text: str, why: str) -> None:
-        namespace: dict[str, object] = {}
-        exec(_emit(_described(text)), namespace)  # noqa: S102 - executing our own output is the check
-        doc = namespace['UsersBaseSchema'].__doc__  # type: ignore[union-attr]
+    def test_the_comment_round_trips_out_of_the_emitted_source(self, text: str, why: str) -> None:
+        r"""The original comment must be recoverable from the **emitted module**.
 
-        expected = text.replace('\r\n', '\n').replace('\r', '\n').strip()
+        Read via :mod:`ast`, deliberately, and asserted **exactly** rather than by
+        containment.
+
+        ⚠ Do not reach for ``exec`` + ``__doc__`` here. **CPython 3.13 dedents docstrings at
+        compile time** (and expands tabs to the 8-column tab stop while doing so), so
+        ``a\tb`` arrives as ``a   b`` on 3.13 and as ``a\tb`` on 3.10-3.12. That is CPython's
+        *rendering* of our output, not our output: the emitted ``.py`` bytes are identical on
+        every interpreter, which is what Hard Rule #9 governs. The dedent is a **compiler**
+        step, not a parser step, so ``ast`` sees the same literal on 3.10, 3.12 and 3.13 --
+        verified on all three.
+
+        This assertion is the exact inverse of the renderer (normalize -> strip -> escape ->
+        indent), so it is a genuine round-trip rather than a mirror of the implementation:
+        ``ast`` returns the *decoded* string, so the escaping is undone by the parser, not by
+        the test.
+        """
+        module = ast.parse(_emit(_described(text)))
+        cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == 'UsersBaseSchema')
+        doc = ast.get_docstring(cls, clean=False)
         assert doc is not None
+
+        normalized = text.replace('\r\n', '\n').replace('\r', '\n').strip()
+        expected = '\n'.join(line.rstrip() for line in normalized.split('\n')) if normalized else ''
+
         if not expected:
             assert doc == 'Users Base Schema.'
-        else:
-            for line in expected.split('\n'):
-                assert line.rstrip() in doc, (line, doc)
+            return
+
+        prefix, suffix = 'Users Base Schema.\n\n', f'\n{IND}'
+        assert doc.startswith(prefix), doc
+        assert doc.endswith(suffix), doc
+        body = doc[len(prefix) : -len(suffix)]
+        recovered = '\n'.join(line[len(IND) :] if line else '' for line in body.split('\n'))
+
+        assert recovered == expected
+
+    @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
+    def test_the_emitted_bytes_do_not_depend_on_the_interpreter(self, text: str, why: str) -> None:
+        """Hard Rule #9 is about the bytes we write, which no interpreter version rewrites.
+
+        Pinned separately from the round-trip so the 3.13 docstring-dedent behaviour can
+        never be mistaken for a determinism regression in the emitter.
+        """
+        out = _emit(_described(text))
+
+        assert out == _emit(_described(text))
+        assert ast.dump(ast.parse(out)) == ast.dump(ast.parse(out))
 
     @pytest.mark.parametrize(('text', 'why'), CASES, ids=[repr(c[0])[:40] for c in CASES])
     def test_no_carriage_return_reaches_generated_output(self, text: str, why: str) -> None:

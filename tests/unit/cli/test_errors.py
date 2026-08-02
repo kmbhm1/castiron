@@ -389,6 +389,78 @@ class TestRedactSecretParameters:
         assert SERVICE_ROLE_KEY not in masked
         assert 'OTHERSECRET1' not in masked
 
+    # ⚠ Fix round. One assertion per alternative in `_SECRET_WORD`, enumerated rather than
+    # sampled. Eight of the sixteen (auth, credentials, credential, passwd, pwd, signature, sig,
+    # bearer) could each be deleted with the whole 880-test suite green -- a typo in any of them
+    # was invisible. That is the CI-061 failure mode in new code: a harness only proves the
+    # mutants you chose to write, so when a construct has N alternatives you enumerate all N.
+    #
+    # Each name below exercises exactly ONE alternative. `auth` is spelled `x-auth` and not
+    # `auth` alone so it cannot be satisfied by `authorization`; `credential`/`credentials` and
+    # `sig`/`signature` and `pwd`/`passwd` are likewise separated by a delimiter, since the
+    # alternation is ordered longest-first and a bare `credentials` would also match `credential`
+    # + a boundary lookahead failure.
+    @pytest.mark.parametrize(
+        ('name', 'alternative'),
+        [
+            ('apikey', 'api[-_]?key'),
+            ('authorization', 'authorization'),
+            ('x-auth', 'auth'),
+            ('user-credentials', 'credentials'),
+            ('user-credential', 'credential'),
+            ('password', 'password'),
+            ('db-passwd', 'passwd'),
+            ('db-pwd', 'pwd'),
+            ('request-signature', 'signature'),
+            ('request-sig', 'sig'),
+            ('client_secret', 'secret'),
+            ('session_id', 'session'),
+            ('access_token', 'token'),
+            ('bearer', 'bearer'),
+            ('jwt', 'jwt'),
+            ('service_role_key', 'key'),
+        ],
+    )
+    def test_every_credential_word_is_pinned(self, name: str, alternative: str) -> None:
+        masked = redact(f'https://x.supabase.co/rest/v1/?{name}={SERVICE_ROLE_KEY}')
+        assert SERVICE_ROLE_KEY not in masked, f'the {alternative!r} alternative masks nothing'
+        assert f'?{name}={REDACTED}' in masked
+
+    # ⚠ Fix round. Every member of both delimiter classes, and both camelCase boundaries, one
+    # assertion each -- the same "enumerate, do not sample" rule the word list needed. Dropping
+    # `.` from either class, `-` from the trailing class, or `[A-Z]` from the trailing lookahead
+    # each survived the whole suite before these.
+    @pytest.mark.parametrize(
+        ('name', 'boundary'),
+        [
+            ('api.key', 'leading `.`'),
+            ('key.id', 'trailing `.`'),
+            ('x-api-key', 'leading `-`'),
+            ('key-id', 'trailing `-`'),
+            ('anon_key', 'leading `_`'),
+            ('key_id', 'trailing `_`'),
+            ('serviceRoleKey', 'leading camelCase hump'),
+            # ⚠ `keyMaterial`, not `authToken`: in `authToken` the trailing `[A-Z]` is redundant,
+            # because `Token` also matches via the *leading* hump, so it does not discriminate.
+            # Here `Material` matches no credential word, so the trailing `[A-Z]` is the only
+            # thing that can match `key`. Measured against the pattern with and without it.
+            ('keyMaterial', 'trailing camelCase hump'),
+        ],
+    )
+    def test_every_word_boundary_is_pinned(self, name: str, boundary: str) -> None:
+        masked = redact(f'https://x.supabase.co/rest/v1/?{name}={SERVICE_ROLE_KEY}')
+        assert SERVICE_ROLE_KEY not in masked, f'the {boundary} boundary matches nothing'
+        assert f'?{name}={REDACTED}' in masked
+
+    def test_a_base64_value_with_padding_is_masked_whole(self) -> None:
+        # ⚠ Fix round. The `=` in the value class was unpinned: narrowing `[^&\s#]*` to
+        # `[^&\s#=]*` survived, because no test had a value containing `=` -- which is the common
+        # real shape (base64 padding, and a JWT's own `=`-padded segments).
+        value = 'YWJjZGVmZ2hpamtsbW5vcA=='
+        masked = redact(f'https://x.supabase.co/rest/v1/?apikey={value}')
+        assert masked == 'https://x.supabase.co/rest/v1/?apikey=***'
+        assert 'YWJjZGVmZ2hpamtsbW5vcA' not in masked
+
     @pytest.mark.parametrize('name', ['monkey', 'keyword', 'keys', 'tokens', 'turnkey', 'select', 'order', 'limit'])
     def test_it_leaves_a_diagnostic_parameter_alone(self, name: str) -> None:
         # A guard against over-masking, not a regression test: a credential word that is merely a

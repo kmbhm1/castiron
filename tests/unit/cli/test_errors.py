@@ -214,6 +214,72 @@ class TestRedactUrlCredentials:
         assert 'pw12' not in masked
         assert masked.count(REDACTED) == 2
 
+    def test_a_password_containing_a_colon_is_masked_where_http_client_repeats_it(self) -> None:
+        # ⚠ Fix round. `_get_hostport` slices the netloc at `host.rfind(':')`, so the fragment it
+        # quotes back is the password's SUFFIX AFTER ITS LAST COLON, not the password. A mop-up
+        # keyed on the whole password matched nothing and the JWT printed in full. Note the
+        # urlsplit oracle cannot catch this: urlsplit().password is '1:eyJ...', which is absent
+        # from the message, so `password not in redact(...)` passes while the secret prints.
+        jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+        text = f"Could not reach https://user:1:{jwt}@x.supabase.co/rest/v1/: nonnumeric port: '{jwt}@x.supabase.co'"
+        assert jwt in text  # not vacuous
+        masked = redact(text)
+        assert jwt not in masked
+        assert "nonnumeric port: '***@x.supabase.co'" in masked
+
+    def test_the_mop_up_is_anchored_on_the_host_not_on_the_secret(self) -> None:
+        # The generalization of the test above: whatever a renderer chooses as its split point,
+        # the fragment always ends in `@<host>`, so that is what the mop-up anchors on.
+        text = "https://user:a:b:SECRETTAIL@h.example.com/x -- rejected 'b:SECRETTAIL@h.example.com'"
+        masked = redact(text)
+        assert 'SECRETTAIL' not in masked
+        assert masked.count(REDACTED) == 2
+
+    def test_a_userinfo_password_is_masked_where_it_recurs_bare(self) -> None:
+        # ⚠ Fix round. Pins the VARIADIC WIRING: `redact` must feed what `_mask_url_userinfo`
+        # found into `_key_spellings`. Mutating `_key_spellings(key, *url_secrets)` to
+        # `_key_spellings(key)` passed 880/880 before this test -- the function was tested,
+        # the call was not. The bare recurrence is deliberately NOT adjacent to `@host`, so the
+        # mop-up cannot reach it and only the spelling pass can.
+        text = f'Could not reach https://user:{PASSWORD}@x.supabase.co/ -- the value {PASSWORD} was also logged bare'
+        assert text.count(PASSWORD) == 2  # not vacuous
+        masked = redact(text)
+        assert PASSWORD not in masked
+        assert 'was also logged bare' in masked
+
+    def test_a_colonless_userinfo_is_masked_where_it_recurs_bare(self) -> None:
+        # ⚠ Fix round. Pins that the colonless branch REGISTERS its host for the mop-up.
+        # Deliberately a SHORT token (under _MIN_REDACTABLE_KEY) so the spelling pass cannot
+        # mask it and only the mop-up can -- otherwise the two mechanisms mask each other's
+        # mutants and neither is pinned.
+        text = 'https://ghp_x@github.com/o/r rejected: ghp_x@github.com'
+        masked = redact(text)
+        assert 'ghp_x' not in masked
+        assert masked == 'https://***@github.com/o/r rejected: ***@github.com'
+
+    def test_the_host_anchor_keeps_the_port(self) -> None:
+        # ⚠ Fix round. Narrowing the host group to stop at `:` survived every other test, because
+        # `_URL_USERINFO.sub` reconstructs exactly the span it matched, so the URL renders the
+        # same either way. The discriminator is the mop-up's anchor: with a port-only authority
+        # the truncated group comes out EMPTY, the empty-host guard then skips the mop-up
+        # entirely, and the bare recurrence prints. Measured -- it is the one input out of eight
+        # where the two variants differ, and the mutant is the one that leaks.
+        #
+        # The password is four characters on purpose: over _MIN_REDACTABLE_KEY the spelling pass
+        # would mask the recurrence too and the mop-up would not be under test.
+        assert redact('https://u:pw12@:5432/x -- repeated pw12@:5432') == (
+            'https://u:***@:5432/x -- repeated ***@:5432'
+        )
+
+    def test_an_unrelated_address_at_another_host_is_left_alone(self) -> None:
+        # ⚠ Fix round. The mop-up is NOT "exact and cannot mis-fire" -- it is an anchored
+        # positional rewrite, and the anchor is the host. A URL whose host group came out empty
+        # registers nothing, so an ordinary email address in the same message survives. Against
+        # the pre-fix substring replace this printed `bo***@example.com`.
+        assert redact('Could not reach https://a:b@ ; contact bob@example.com') == (
+            'Could not reach https://a:***@ ; contact bob@example.com'
+        )
+
     def test_a_colonless_userinfo_is_masked_whole(self) -> None:
         # A colon-less userinfo castiron prints is far more often a bearer token than a username.
         masked = redact('https://ghp_abcdefghijklmnop@github.com/o/r')
@@ -354,8 +420,9 @@ class TestRedactSecretParameters:
 @pytest.mark.unit
 class TestRejectUrlUserinfo:
     # The boundary half of the two-layer defence (CI-063's shape, CI066-Q1's ruling): castiron
-    # cannot successfully fetch from a userinfo URL under any circumstance, so refusing it costs
-    # nothing a user could have wanted and removes the trigger rather than masking the symptom.
+    # cannot successfully fetch from an http(s) userinfo URL under any circumstance, so refusing
+    # it costs nothing a user could have wanted and removes the trigger rather than masking the
+    # symptom.
     def test_no_source_stays_none(self) -> None:
         assert reject_url_userinfo(None) is None
 

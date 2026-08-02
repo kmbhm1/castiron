@@ -144,6 +144,48 @@ def _key_spellings(*secrets: str | None) -> list[str]:
     return sorted((s for s in spellings if len(s) >= _MIN_REDACTABLE_KEY), key=lambda s: (-len(s), s))
 
 
+def _mop_up_bare_userinfo(text: str, host: str) -> str:
+    """Mask any bare ``<something>@host`` left over after the URL itself was masked.
+
+    The URL is not the only place a password appears. ``http.client._get_hostport`` slices the
+    netloc at ``host.rfind(':')`` and reports the remainder as ``nonnumeric port: '<rest>@<host>'``
+    — with **no** ``scheme://`` in front, so :data:`_URL_USERINFO` cannot see it.
+
+    ⚠ Anchored on the **host**, deliberately, rather than on the password we extracted. That
+    slice point is the *last* colon, so for ``https://user:1:<jwt>@host`` the exposed fragment is
+    ``<jwt>@host`` — a suffix of the password, not the password — and a search for the whole
+    password finds nothing while the JWT prints in full. Anchoring on the host subsumes every
+    possible split point, and any other renderer's choice of one.
+
+    The real guarantee, stated exactly (it is *not* "cannot mis-fire"): every non-whitespace,
+    non-quote run ending in ``@host`` is replaced, for each ``host`` that carried userinfo in
+    **this same text**. So an unrelated ``bob@x.supabase.co`` in a message that also carried
+    ``https://user:pw@x.supabase.co`` is over-masked. That is the safe direction, and it is why
+    the rewrite is positional rather than a substring replace: :data:`_MIN_REDACTABLE_KEY` exists
+    to stop a *short substring* from mangling unrelated text, and a positional rewrite anchored on
+    a host has no such failure mode. A short password is therefore masked here, which is the whole
+    point — it is below the length the spelling pass will touch.
+
+    Args:
+        text: The partly-masked message.
+        host: The host of a URL that carried userinfo. Never empty (the caller guards), or the
+            pattern would degrade to "every ``x@y`` in the text".
+
+    Returns:
+        ``text`` with every bare ``<something>@host`` masked.
+    """
+
+    def mask(match: re.Match[str]) -> str:
+        # The URL occurrence was already rewritten to `scheme://user:***@host`; leave it alone so
+        # the scheme and the (diagnostic, non-secret) username survive.
+        if match.group(0).endswith(f'{REDACTED}@{host}'):
+            return match.group(0)
+        return f'{REDACTED}@{host}'
+
+    # Quotes are excluded from the run so `nonnumeric port: '<jwt>@host'` keeps its quoting.
+    return re.sub(rf'[^\s\'"]*@{re.escape(host)}', mask, text)
+
+
 def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
     """Mask the credentials in every ``scheme://userinfo@host`` and report what was found.
 
@@ -152,7 +194,7 @@ def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
 
     Returns:
         The masked text, and the secrets that were masked out of it — so :func:`redact` can
-        also mask them wherever *else* they occur.
+        also mask them wherever *else* they occur, through :func:`_key_spellings`.
     """
     found: list[tuple[str, str]] = []
 
@@ -165,18 +207,16 @@ def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
             found.append((password, host))
             return f'{scheme}{user}:{REDACTED}@{host}'
         # A colon-less userinfo in a URL castiron prints is far more often a bearer token
-        # (https://ghp_.../) than a username, so mask the whole of it.
+        # (https://ghp_.../) than a username, so mask the whole of it. The two mechanisms are
+        # NOT redundant: this return decides that the *scheme* survives (`https://***@host`),
+        # while registering the host below is what masks a bare re-occurrence elsewhere.
         found.append((user, host))
         return f'{scheme}{REDACTED}@{host}'
 
     masked = _URL_USERINFO.sub(mask, text)
-    # ⚠ The URL is not the only place the password appears. `http.client._get_hostport` reports a
-    # bad port as `nonnumeric port: '<password>@<host>'` -- no scheme, so the pattern above misses
-    # that second occurrence entirely. Both halves are known here, so this mop-up is exact, cannot
-    # mis-fire, and (unlike the spelling pass) is not gated on _MIN_REDACTABLE_KEY.
-    for secret, host in found:
-        if secret:
-            masked = masked.replace(f'{secret}@{host}', f'{REDACTED}@{host}')
+    for _, host in found:
+        if host:
+            masked = _mop_up_bare_userinfo(masked, host)
     return masked, [secret for secret, _ in found if secret]
 
 

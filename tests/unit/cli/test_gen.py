@@ -521,6 +521,62 @@ class TestSecrets:
         assert SECRET not in result.output
         assert f'{name}=***' in result.output
 
+    # ⚠ CI-068, folded in by captain ruling. The sibling of the test above: the same echo, but
+    # with the secret in a schemeless `user:password@host` rather than a query parameter.
+    # `redact` cannot anchor on that shape (a bare `a:b@c` is ordinary prose), so `gen` sends
+    # this one surface through `redact_source` instead. Note PR #8 created an asymmetry this
+    # closes: `postgresql://user:pw@host` is safely refused while the schemeless
+    # `postgres:user:pw@host` -- the shape psql connection strings circulate in -- printed
+    # in full.
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'postgres:{SECRET}@db.x.supabase.co:5432/postgres',
+            f'user:{SECRET}@x.supabase.co',
+        ],
+    )
+    def test_a_schemeless_userinfo_source_is_redacted_out_of_the_usage_error(
+        self, runner: CliRunner, project: Path, source: str
+    ) -> None:
+        result = run(runner, '--from', source)
+        assert result.exit_code == 2
+        assert 'neither a URL nor an existing file' in result.output  # not vacuous
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
+    def test_a_schemeless_userinfo_source_from_the_environment_is_redacted_too(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The secret does NOT have to be on the command line, so "it was in the shell history
+        # anyway" does not hold: CASTIRON_FROM, SUPABASE_URL and a `from = "..."` in
+        # pyproject.toml all reach the same echo.
+        monkeypatch.setenv('SUPABASE_URL', f'postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        result = run(runner)
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    def test_a_schemeless_userinfo_source_from_the_config_file_is_redacted_too(
+        self, runner: CliRunner, project: Path
+    ) -> None:
+        (project / 'pyproject.toml').write_text(
+            f'[tool.castiron]\nfrom = "postgres:{SECRET}@db.x.supabase.co:5432/postgres"\n', encoding='utf-8'
+        )
+        result = run(runner, '--output', 'out')
+        assert result.exit_code == 2
+        assert SECRET not in result.output
+
+    def test_a_postgres_dsn_is_not_refused_at_the_boundary(
+        self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ⚠ Fix round. The boundary refusal is scoped to the schemes castiron fetches over HTTP.
+        # A postgresql:// DSN is the canonical libpq connection string that CI-010's live-database
+        # source will consume, so it must reach the source layer -- where it fails as an unknown
+        # source, not as a usage error -- with its password still masked out of the message.
+        result = run(runner, '--from', f'postgresql://postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        assert 'userinfo' not in result.output  # the boundary did NOT refuse it
+        assert SECRET not in result.output
+        assert SECRET not in result.stderr
+
     def test_the_internal_error_message_is_redacted(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

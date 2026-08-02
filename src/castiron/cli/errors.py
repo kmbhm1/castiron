@@ -289,6 +289,51 @@ def redact(text: str, key: str | None = None) -> str:
     return masked
 
 
+def redact_source(source: str) -> str:
+    """Redact a ``--from`` value that is about to be echoed back to the user (CI-068).
+
+    :func:`redact` masks userinfo only in a ``scheme://user:password@host`` — matching on
+    *shape*, because it scans arbitrary prose where a bare ``a:b@c`` is far more often ordinary
+    text than a credential. That anchor leaves a real leak on the one surface that echoes the
+    raw ``--from`` value back:
+
+    .. code-block:: console
+
+        $ SUPABASE_URL='postgres:SECRET@db.x.supabase.co:5432/postgres' castiron gen --dry-run
+        Error: --from 'postgres:SECRET@db.x.supabase.co:5432/postgres' is neither a URL nor an
+        existing file. ...
+
+    ``urlsplit`` reads ``postgres:`` as the scheme, so there is no ``//`` for :data:`_URL_USERINFO`
+    to anchor on — and this is exactly the shape ``psql`` connection strings circulate in. The
+    secret does **not** have to be on the command line: ``CASTIRON_FROM``, ``SUPABASE_URL`` and a
+    ``from = "..."`` in ``pyproject.toml`` all reach the same echo, so "it was in the shell
+    history anyway" does not hold. Note the asymmetry this closes: ``postgresql://user:pw@host``
+    is masked while the schemeless ``postgres:user:pw@host`` was not.
+
+    This is a **single-option-value** transform, not a prose scan, which is the whole reason it
+    can be more aggressive than :func:`redact`: there is no surrounding text for a false positive
+    to land in. Everything up to the value's **last** ``@`` is masked (``rpartition``, matching
+    how ``urlsplit`` derives userinfo from a netloc).
+
+    Accepted cost, stated rather than discovered later: a *nonexistent* path containing an ``@``
+    is over-masked in this one error message (``./my@dir/x.json`` → ``***@dir/x.json``). Only the
+    "neither a URL nor an existing file" path prints this, so a path that resolves is never
+    affected, and over-masking a filename the user just typed is far cheaper than printing a DSN
+    password.
+
+    Args:
+        source: The raw ``--from`` value about to be quoted back into an error message.
+
+    Returns:
+        ``source`` with any scheme-less userinfo masked, then passed through :func:`redact` so
+        the query-parameter and ``scheme://`` rules still apply.
+    """
+    if '@' in source and '://' not in source:
+        _, separator, host = source.rpartition('@')
+        source = f'{REDACTED}{separator}{host}'
+    return redact(source)
+
+
 def sanitize_key(key: str | None) -> str | None:
     """Trim a key's surrounding control characters; refuse one that hides them inside.
 

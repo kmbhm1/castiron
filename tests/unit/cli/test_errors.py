@@ -26,6 +26,7 @@ from castiron.cli.errors import (
     key_option_callback,
     key_provenance,
     redact,
+    redact_source,
     reject_url_userinfo,
     sanitize_key,
     schema_hint,
@@ -566,6 +567,48 @@ class TestRejectUrlUserinfo:
             reject_url_userinfo(f'https://user:{PASSWORD}@x.supabase.co')
         assert '--key' in excinfo.value.message
         assert 'CASTIRON_KEY' in excinfo.value.message
+
+
+@pytest.mark.unit
+class TestRedactSource:
+    # ⚠ CI-068, folded in by captain ruling. `redact` anchors userinfo on `scheme://` because it
+    # scans arbitrary prose, where a bare `a:b@c` is far more often ordinary text than a
+    # credential. That leaves the one surface which echoes the raw --from value back exposed to
+    # the schemeless shape psql connection strings actually circulate in. `redact_source` is a
+    # single-option-value transform, so the "occurs in prose" objection does not apply to it.
+    @pytest.mark.parametrize(
+        'source',
+        [
+            f'postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+            f'postgres://postgres:{PASSWORD}@db.x.supabase.co:5432/postgres',
+            f'user:{PASSWORD}@x.supabase.co',
+            f'{PASSWORD}@x.supabase.co',
+            f'postgresql://u:{PASSWORD}@h/db',
+        ],
+    )
+    def test_a_schemeless_userinfo_value_is_masked(self, source: str) -> None:
+        assert PASSWORD in source  # not vacuous
+        assert PASSWORD not in redact_source(source)
+
+    def test_it_masks_up_to_the_last_at_sign(self) -> None:
+        # `rpartition`, matching how urlsplit derives userinfo from a netloc.
+        assert redact_source(f'a@b:{PASSWORD}@db.example.com:5432/x') == '***@db.example.com:5432/x'
+
+    def test_it_still_applies_the_ordinary_rules(self) -> None:
+        # It composes with `redact` rather than replacing it: query parameters and scheme-bearing
+        # userinfo keep working exactly as before.
+        assert redact_source(f'x.supabase.co/rest/v1/?apikey={PASSWORD}') == 'x.supabase.co/rest/v1/?apikey=***'
+        assert redact_source(f'https://user:{PASSWORD}@x.supabase.co') == 'https://user:***@x.supabase.co'
+
+    @pytest.mark.parametrize('source', ['nope.json', './dump.json', 'x.supabase.co/rest/v1/', ''])
+    def test_a_value_without_an_at_sign_is_untouched(self, source: str) -> None:
+        assert redact_source(source) == source
+
+    def test_a_nonexistent_path_containing_an_at_sign_is_over_masked(self) -> None:
+        # The accepted cost, asserted rather than left to be discovered. Only the "neither a URL
+        # nor an existing file" message prints this, so a path that resolves is never affected,
+        # and over-masking a filename the user just typed is cheaper than printing a password.
+        assert redact_source('./my@dir/openapi.json') == '***@dir/openapi.json'
 
 
 @pytest.mark.unit

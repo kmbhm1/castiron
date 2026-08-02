@@ -24,6 +24,7 @@ from castiron.cli.errors import (
     cli_error_handling,
     key_option_callback,
     redact,
+    redact_source,
     source_error_hint,
     source_option_callback,
 )
@@ -325,7 +326,10 @@ def load_schema(
     path = Path(source)
     if not path.is_file():
         raise click.UsageError(
-            f"--from '{redact(source, key)}' is neither a URL nor an existing file. Pass a "
+            # `redact_source`, not `redact`: this echoes the raw --from value back, and a
+            # scheme-less `postgres:user:password@host` (the shape psql connection strings
+            # circulate in) has no `://` for redact's userinfo anchor to see. CI-068.
+            f"--from '{redact_source(source)}' is neither a URL nor an existing file. Pass a "
             'Supabase/PostgREST URL (https://...) or a path to an OpenAPI JSON document.'
         )
     logger.debug(f'Reading the schema from {path}')

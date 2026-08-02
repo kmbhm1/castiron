@@ -26,6 +26,7 @@ sorted set, ``from __future__ import annotations`` when relationship fields need
 references. castiron owns this output shape; it is not byte-identical to supabase-pydantic.
 """
 
+import json
 import re
 from enum import Enum
 
@@ -85,8 +86,21 @@ def _parse_length_constraint(constraint_def: str | None) -> dict[str, int] | Non
 
 
 def _py_string(value: str) -> str:
-    """Render ``value`` as a double-quoted Python string literal (embedded quotes escaped)."""
-    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    r"""Render ``value`` as a double-quoted, single-line Python string literal.
+
+    JSON's escape alphabet is a strict subset of Python's, so ``json.dumps`` produces a
+    literal Python accepts verbatim -- including for newlines, carriage returns, tabs and
+    C0 control characters. The previous hand-rolled escaping covered only ``\`` and ``"``
+    and emitted the rest raw, so a multi-line ``COMMENT ON COLUMN`` reached
+    ``Field(description=...)`` as an unterminated string literal and the generated module
+    did not parse. ``ensure_ascii=False`` keeps non-ASCII text readable; the CLI writes the
+    file as UTF-8 with LF endings (``cli/output.py``).
+
+    Note this is not a strict no-op against the old helper: a TAB now renders as ``\\t``
+    where it used to be emitted raw (both parse; the escaped form is the correct one). No
+    committed golden contains a tab, a newline or a control character, so no golden moves.
+    """
+    return json.dumps(value, ensure_ascii=False)
 
 
 class PydanticEmitter(Emitter):

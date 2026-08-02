@@ -1,3 +1,5 @@
+import ast
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -509,3 +511,160 @@ class TestDefaultedColumnInsert:
         insert_block = out.split('class TInsert(')[1].split('\n\n\n')[0]
         assert 'active: bool | None = Field(default=None)' in insert_block
         assert '# Optional fields' in insert_block
+
+
+# --------------------------------------------------------------------------- string literals
+
+
+#: The adversarial alphabet every generated string literal must survive. A SQL comment is
+#: arbitrary user text landing inside a Python source file, so these are the encodings the
+#: input actually arrives in (CI-063), not a sample.
+ADVERSARIAL_TEXT = [
+    'line one\nline two',
+    'para one\n\npara two',
+    'a\r\nb',
+    'a\rb',
+    'The "app" users.',
+    'Ends a docstring: """ oops',
+    '""""',
+    'ends with a quote "',
+    'Windows path C:\\temp\\new and a regex \\d+',
+    'ends with a backslash \\',
+    'Ünïcødé — 表 — 🚀',
+    'a\tb',
+    'a\x0cb',
+    'a\u2028b',
+    'a\x1bb',
+    '\n\n  Indented?\n\n',
+    'Summary here.\n  - bullet one\n  - bullet two',
+    'Note:\nThis is a Primary Key.<pk/>',
+    '   ',
+    '',
+    'x' * 400,
+]
+
+
+@pytest.mark.unit
+class TestPyStringLiteral:
+    """``_py_string`` must round-trip any text a SQL comment can carry.
+
+    Regression guard for a live bug on ``main`` @ ``026af0f`` (CI9-Q1): the helper escaped
+    only ``\\`` and ``"``, so a newline emitted an unterminated string literal and the
+    generated module raised ``SyntaxError`` at import. A multi-line ``COMMENT ON COLUMN``
+    is ordinary SQL and PostgREST carries it verbatim in
+    ``properties.<c>.description``.
+    """
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_round_trips_through_literal_eval(self, text: str) -> None:
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert ast.literal_eval(_py_string(text)) == text
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_literal_is_single_line(self, text: str) -> None:
+        """No raw newline may survive into the literal -- that is the actual defect."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        rendered = _py_string(text)
+        assert '\n' not in rendered
+        assert '\r' not in rendered
+
+    def test_a_tab_is_escaped_not_raw(self) -> None:
+        """Deliberate behaviour change vs. the old helper (the one input whose bytes move).
+
+        The previous escaping emitted a raw TAB inside the literal -- legal Python, but
+        unescaped. ``json.dumps`` emits ``\\t``. Both parse; the escaped form is correct.
+        Pinned so the difference stays deliberate rather than incidental. No committed
+        golden contains a tab, which is why no golden moves.
+        """
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string('a\tb') == '"a\\tb"'
+        assert '\t' not in _py_string('a\tb')
+
+    def test_non_ascii_is_not_escaped(self) -> None:
+        """``ensure_ascii=False`` keeps generated text readable (the file is written UTF-8)."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string('Ünïcødé 🚀') == '"Ünïcødé 🚀"'
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('A short profile blurb.', '"A short profile blurb."'),
+            ('The customer who placed the order.', '"The customer who placed the order."'),
+            ('User email', '"User email"'),
+            ('class', '"class"'),
+            ('active', '"active"'),
+            ('quote "q"', '"quote \\"q\\""'),
+            ('back\\slash', '"back\\\\slash"'),
+        ],
+    )
+    def test_golden_literals_are_unchanged(self, text: str, expected: str) -> None:
+        """Every literal shape present in a committed golden renders exactly as before."""
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        assert _py_string(text) == expected
+
+    def test_multiline_column_comment_emits_parseable_python(self, build_columns: Callable[..., Row]) -> None:
+        """End-to-end: on ``main`` this module raised ``SyntaxError`` at ``compile()``."""
+        columns = [
+            build_columns('t', 'id', 'integer', identity=True),
+            build_columns('t', 'note', 'text', nullable=True, description='line one\nline two'),
+        ]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        out = _emit(build_schema(columns, [], constraints, [], []))
+
+        compile(out, '<generated>', 'exec')
+        assert 'description="line one\\nline two"' in out
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_column_comment_emits_parseable_python(self, text: str, build_columns: Callable[..., Row]) -> None:
+        """Every adversarial shape survives the ``Field(description=...)`` path."""
+        columns = [
+            build_columns('t', 'id', 'integer', identity=True),
+            build_columns('t', 'note', 'text', nullable=True, description=text),
+        ]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        out = _emit(build_schema(columns, [], constraints, [], []))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_enum_label_renders_a_valid_value_literal(self, text: str, build_columns: Callable[..., Row]) -> None:
+        """The other reachable ``_py_string`` call site: an enum member's *value*.
+
+        ⚠ This asserts only the right-hand side of the member line. It deliberately does
+        **not** assert that the module compiles, because the member *name* is derived
+        separately by ``python_member_name`` (``value.lower()``), which is not
+        identifier-safe: ``CREATE TYPE mood AS ENUM ('in progress')`` emits
+        ``IN PROGRESS = "in progress"``. That is a pre-existing defect on ``main`` @
+        ``026af0f``, independent of this helper and out of scope for CI-009 -- filed, not
+        fixed, and deliberately not pinned here as if it were correct.
+        """
+        from castiron.emitters.pydantic.emitter import _py_string
+
+        columns = [build_columns('t', 'status', 'USER-DEFINED', udt_name='mood')]
+        enum_types = [('mood', 'public', 'owner', 'E', True, 'e', [text, 'other'])]
+        enum_mapping = [('status', 't', 'public', 'mood', 'E', '')]
+        out = _emit(build_schema(columns, [], [], enum_types, enum_mapping))
+
+        literal = _py_string(text)
+        assert f'= {literal}\n' in out
+        assert ast.literal_eval(literal) == text
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_column_alias_emits_parseable_python(self, text: str) -> None:
+        """The third call site: ``Field(alias=...)``, set for a reserved column name."""
+        table = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='field_class', raw_type='text', is_nullable=False, alias=text)],
+        )
+        out = _emit(Schema(tables=[table]))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')

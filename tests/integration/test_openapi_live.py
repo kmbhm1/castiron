@@ -635,9 +635,9 @@ class TestPrivilegeFloor:
         ]
 
     def test_a_dangling_fk_marker_leaves_an_inconsistent_column(self, live_public_schema: Schema) -> None:
-        # SEED-F2, characterized rather than xfailed because the RIGHT behaviour is undecided: is a
-        # marker naming a table the role cannot see evidence of a foreign key, or noise? castiron
-        # currently keeps the flag and drops the edge, so `ledger_id` reports is_foreign_key=True
+        # CI-084 (SEED-F2), characterized rather than xfailed because the RIGHT behaviour is
+        # undecided: is a marker naming a table the role cannot see evidence of an FK, or noise?
+        # castiron currently keeps the flag and drops the edge, so `ledger_id` is_foreign_key=True
         # with no ForeignKeyInfo to go with it. Harmless for the Pydantic emitter (it iterates
         # foreign_keys) and latent for CI-012 and the SQLAlchemy emitter, which read the flag.
         # Whichever way a future row resolves it, this assertion fails and forces the choice.
@@ -922,7 +922,7 @@ class TestEdgeQuarantine:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            'Identifier sanitization gap (CI-008 spec §12 F-4, no WORKPLAN row yet). '
+            'CI-085: the identifier sanitization gap (CI-008 spec §12 F-4). '
             'standardize_column_name() handles Python keywords and the model_ prefix, but nothing '
             'rewrites a space, a leading digit or a non-ASCII character, so edge.identifier_torture '
             'emits a module that does not parse. Quarantined in `edge`, so no golden touches it.'

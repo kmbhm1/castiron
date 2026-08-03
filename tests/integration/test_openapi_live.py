@@ -986,6 +986,9 @@ class TestEmitterEndToEnd:
         # bodies, so a pydantic field clashing with a BaseModel attribute (PydanticUserError) or an
         # annotation naming an un-emitted enum (NameError) both compile clean and fail at exec.
         # The exec-and-instantiate proof is the separate test above.
+        #
+        # CI-007 makes the same "it parses" claim OFFLINE, from the committed `testbed-public`
+        # capture, so it is no longer only assertable where the apparatus is running.
         compile(_emit(live_public_schema), 'schema.py', 'exec')
 
 
@@ -1023,8 +1026,108 @@ class TestEdgeQuarantine:
             'CI-085: the identifier sanitization gap (CI-008 spec §12 F-4). '
             'standardize_column_name() handles Python keywords and the model_ prefix, but nothing '
             'rewrites a space, a leading digit or a non-ASCII character, so edge.identifier_torture '
-            'emits a module that does not parse. Quarantined in `edge`, so no golden touches it.'
+            'emits a module that does not parse. No golden is built from `edge` (its document form '
+            'is not contractual); CI-007 characterizes the same defect offline instead, from the '
+            'hand-authored tests/unit/corpus/inputs/synthetic-torture.openapi.json.'
         ),
     )
     def test_the_edge_schema_emits_a_module_that_parses(self, live_edge_schema: Schema) -> None:
         compile(_emit(live_edge_schema), 'schema.py', 'exec')
+
+
+class TestCommittedCaptureIsStillFaithful:
+    """Does the corpus's committed capture still match the apparatus it was taken from?
+
+    This is the standing check that keeps a committed capture from silently going stale. The
+    corpus (``tests/unit/corpus/``) is a set of goldens derived from two documents captured at
+    testbed revision ``3150132`` / PostgREST ``14.14``. Those goldens are only *falsifiable*
+    while the capture still represents something real — SEED-D2's whole premise is that an
+    unreproducible seed makes every golden derived from it unfalsifiable, because you can no
+    longer tell "castiron changed" from "the schema changed".
+
+    ⚠ **It cannot be part of the static gate** — it needs the live apparatus, so it is
+    ``integration``-marked and skips when ``CASTIRON_TEST_POSTGREST_URL`` is unset. No corpus
+    golden is integration-gated; every one of them runs offline.
+
+    **Compared as decoded objects with key order preserved, not as raw bytes.** ``capture.sh``
+    pretty-prints with ``indent=2`` while the live fetch does not, so a byte comparison would
+    fail on formatting alone. Key *order* is still compared, because the testbed README is
+    explicit that ``properties`` order is real information (pg ``attnum``, function argument
+    order) and castiron depends on it.
+    """
+
+    @pytest.mark.parametrize('family_id', ['testbed-public', 'testbed-inventory'])
+    def test_the_committed_capture_matches_the_live_document(
+        self, family_id: str, live_document: DocumentLoader
+    ) -> None:
+        import json
+
+        from tests.unit.corpus.cases import FAMILIES
+
+        family = next(f for f in FAMILIES if f.family_id == family_id)
+        committed = json.loads(family.input_path.read_text(encoding='utf-8'))
+        live = live_document(family.schema)
+
+        if json.dumps(committed, sort_keys=False) == json.dumps(live, sort_keys=False):
+            return
+        pytest.fail(_classify_capture_drift(committed, dict(live), family_id), pytrace=False)
+
+
+def _classify_capture_drift(committed: Mapping[str, Any], live: Mapping[str, Any], family_id: str) -> str:
+    """Say WHICH kind of drift this is, so the reader is not left diffing 4 000 lines.
+
+    Three causes need three different responses, and only one of them is a castiron concern:
+    a PostgREST upgrade, a seed change, or a content change under an unchanged key set.
+
+    Args:
+        committed: The committed capture.
+        live: The freshly fetched document.
+        family_id: The corpus input family, for the message.
+
+    Returns:
+        The classified failure message.
+    """
+    import json
+
+    header = [
+        f'The committed capture {family_id!r} no longer matches the live apparatus.',
+        '',
+        'Every golden in tests/unit/corpus/ derived from this document is now measuring a schema',
+        'that no longer exists. Classify the cause before regenerating anything:',
+        '',
+    ]
+
+    committed_version = committed.get('info', {}).get('version')
+    live_version = live.get('info', {}).get('version')
+    if committed_version != live_version:
+        header += [
+            f'  CAUSE: THE POSTGREST VERSION CHANGED -- {committed_version!r} -> {live_version!r}.',
+            '  The apparatus was rebuilt on a different PostgREST. Re-capture, and update BOTH the',
+            "  provenance record's postgrest_version and the seed_revision, then regenerate.",
+        ]
+        return '\n'.join(header)
+
+    for section in ('definitions', 'paths'):
+        before, after = set(committed.get(section, {})), set(live.get(section, {}))
+        if before != after:
+            header += [
+                f'  CAUSE: THE SEED SCHEMA CHANGED -- the {section!r} key set differs.',
+                f'    added:   {sorted(after - before)}',
+                f'    removed: {sorted(before - after)}',
+                '  This is a castiron-testbed change, not a castiron change. Re-capture, bump the',
+                '  provenance seed_revision, and expect every golden from this input to move.',
+            ]
+            return '\n'.join(header)
+
+    for section in ('definitions', 'paths'):
+        for key in committed.get(section, {}):
+            if json.dumps(committed[section][key], sort_keys=False) != json.dumps(live[section][key], sort_keys=False):
+                header += [
+                    f'  CAUSE: CONTENT CHANGED under an unchanged key set -- first at /{section}/{key}.',
+                    '  Same objects, different details (a column, a comment, a marker, or their ORDER --',
+                    '  properties order is pg attnum and IS compared). Diff that one object first.',
+                ]
+                return '\n'.join(header)
+
+    header += ['  CAUSE: the documents differ outside definitions/paths (envelope, host or info).']
+    return '\n'.join(header)

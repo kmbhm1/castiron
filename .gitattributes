@@ -1,0 +1,23 @@
+# castiron — path attributes
+#
+# WHY THIS FILE EXISTS (CI-007, spec §3.8 / CI7-D6)
+#
+# The test suite compares golden artifacts BYTE FOR BYTE. Git's `text` attribute, when it
+# is on, normalizes line endings on checkout — so a Windows clone with `core.autocrlf=true`
+# would rewrite every `.py.txt`, `.json` and `.manifest.txt` golden to CRLF and fail the
+# whole corpus for a reason having nothing to do with castiron. `-text` turns that
+# conversion OFF: these paths round-trip verbatim on every platform.
+#
+# This is latent on CI today (the matrix is `ubuntu-latest` only) and would surface on the
+# first contributor who clones on Windows. Same latent class as CI-067 — a file that was
+# green only because nobody had run it on the platform where it breaks.
+#
+# ⚠ Adding a new golden/corpus directory? Add it here too, or its bytes are not protected.
+# `tests/unit/corpus/test_goldens.py` asserts the *content* rule (no `\r`, one trailing
+# `\n`); this file is what stops git from violating it behind the suite's back.
+
+tests/unit/corpus/inputs/**     -text
+tests/unit/corpus/golden/**     -text
+tests/unit/corpus/manifest/**   -text
+tests/unit/**/golden/**         -text
+tests/unit/**/fixtures/**       -text

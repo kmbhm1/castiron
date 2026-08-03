@@ -179,9 +179,15 @@ class TestTheToolingActuallyProtectsTheseBytes:
 
     Both guards are **path-based**, so renaming an artifact directory silently unprotects it while
     every other test stays green. That is not hypothetical: this corpus's fingerprint directory
-    was renamed mid-row (``manifest/`` collides with ``.gitignore``'s ``MANIFEST`` on a
-    case-insensitive filesystem), and for one commit the exclusions still pointed at the old name.
-    These two tests are what turn "remember to update the config" into a red test.
+    was renamed mid-row (``manifest/`` collided with the ``MANIFEST`` line ``.gitignore`` carried
+    at the time, on a case-insensitive filesystem), and for one commit the exclusions still
+    pointed at the old name. These two tests are what turn "remember to update the config" into a
+    red test.
+
+    That ``.gitignore`` line has since been deleted (CI-093), so the collision is gone and
+    ``fingerprints/`` keeps its name only because it is accurate and nothing depends on the old
+    one. The rename's *lesson* is unaffected -- it is about path-based config, not about
+    ``MANIFEST``.
     """
 
     def test_pre_commit_excludes_every_artifact_directory_from_the_rewriting_hooks(self) -> None:

@@ -669,6 +669,20 @@ ADVERSARIAL_TEXT = [
 EXECUTED_ENUM_LABELS = list(dict.fromkeys([*ADVERSARIAL_TEXT, *ENUM_LABEL_CORPUS]))
 
 
+def _parametrized_argvalues(func: object, argname: str) -> list[object]:
+    """Return the values a ``@pytest.mark.parametrize`` decorator actually feeds ``argname``.
+
+    ⚠ Reads the decorator rather than the constant the decorator is *supposed* to name. A guard
+    that asserts a relationship between two module-level constants cannot see a test being
+    re-pointed at a third one, which is exactly how round 0's defect would have been re-committed
+    invisibly.
+    """
+    for mark in getattr(func, 'pytestmark', []):
+        if mark.name == 'parametrize' and mark.args[0] == argname:
+            return list(mark.args[1])
+    raise AssertionError(f'{func!r} has no @parametrize over {argname!r} -- the guard is blind')
+
+
 @pytest.mark.unit
 class TestPyStringLiteral:
     """``_py_string`` must round-trip any text a SQL comment can carry.
@@ -854,10 +868,25 @@ class TestPyStringLiteral:
             assert enum_class(label).value == label  # type: ignore[operator]
 
     def test_the_emitter_executes_the_naming_corpus_too(self) -> None:
-        # The structural guard for the mistake this round fixed: the executing test must never
-        # again run over a corpus that excludes the naming corpus's shapes.
-        assert set(ENUM_LABEL_CORPUS) <= set(EXECUTED_ENUM_LABELS)
-        assert set(ADVERSARIAL_TEXT) <= set(EXECUTED_ENUM_LABELS)
+        """The executing test must never again run over a corpus missing the naming shapes.
+
+        ⚠ **This reads the ``@parametrize`` decorator, not the constant it is supposed to use.**
+        The first version asserted ``set(ENUM_LABEL_CORPUS) <= set(EXECUTED_ENUM_LABELS)`` -- true
+        *by construction*, since ``EXECUTED_ENUM_LABELS`` is defined as that union. It never
+        looked at what the executing test is actually parametrized over, so it fired on a spelling
+        of the mistake that never happened and stayed green on the one that did: re-pointing the
+        decorator at ``ADVERSARIAL_TEXT`` (round 0's exact defect) left the whole suite passing.
+        Mutation-tested both ways this time.
+        """
+        parametrized = _parametrized_argvalues(
+            TestPyStringLiteral.test_any_enum_label_yields_an_addressable_member, 'text'
+        )
+        assert set(ENUM_LABEL_CORPUS) <= set(parametrized), (
+            'the executing enum test is parametrized over a corpus that omits '
+            f'{sorted(set(ENUM_LABEL_CORPUS) - set(parametrized))!r}. That is the round-0 defect: '
+            'the assertion executes the module, but over labels that cannot produce the shape.'
+        )
+        assert set(ADVERSARIAL_TEXT) <= set(parametrized), 'CI-009 coverage was dropped'
 
     @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
     def test_any_column_alias_emits_parseable_python(self, text: str) -> None:

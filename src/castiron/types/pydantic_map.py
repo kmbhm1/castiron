@@ -3,7 +3,9 @@
 A faithful port of supabase-pydantic's ``PYDANTIC_TYPE_MAP`` (only the Pydantic map;
 the two SQLAlchemy maps land with the SQLAlchemy emitter in CI-012). Each entry's
 newline-joined import blob is split into a tuple of single import lines so an emitter
-can build one flat, sorted import set.
+can collect one flat, deduplicated import set. *Rendering* that set is the emitter's
+job and is no longer a plain sort -- ``emitters.base.render_import_block`` groups it into
+isort's sections and merges same-module lines (CI-094).
 
 The keys span **both** Postgres vocabularies -- the internal forms (``int4``,
 ``timestamptz``, ``varchar``) and the ``information_schema`` / ``format_type`` forms

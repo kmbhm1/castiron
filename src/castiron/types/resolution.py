@@ -9,8 +9,9 @@ with newline-joined import blobs.
 Two deliberate design choices (per the CI-004 spec):
 
 - Imports are carried as a tuple of **single import lines**, so an emitter can
-  assemble one flat, deterministically-sorted import set (Hard Rule #9) rather than
-  sorting multi-line blobs.
+  assemble one flat, deduplicated import set rather than splicing multi-line blobs.
+  Single lines are also what lets ``emitters.base.render_import_block`` regroup and
+  merge them deterministically (Hard Rule #9, CI-094); a blob could not be re-sectioned.
 - Array-element resolution keys off :attr:`castiron.ir.ColumnInfo.array_element_type`
   (the IR field) rather than the dropped ``udt_name``. The Postgres type map carries
   both vocabularies (``int4`` and ``integer``, ``timestamptz`` and ``timestamp with

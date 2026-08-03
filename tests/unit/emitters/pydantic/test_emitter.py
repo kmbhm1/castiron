@@ -25,6 +25,36 @@ def _emit(schema: Schema, config: EmitterConfig | None = None) -> str:
     return PydanticEmitter(config).emit(schema)[0].content
 
 
+def _imported(text: str) -> set[str]:
+    """Every symbol the emitted module imports, as ``module.Name`` (or the bare module).
+
+    ⚠ Assert against **this**, never against a whole ``'from pydantic import ConfigDict'`` line.
+    CI-094 merges same-module imports onto one line, so a line-literal assertion is really an
+    assertion about which *other* symbols happen to be imported alongside -- it breaks (or, worse,
+    silently passes for the wrong reason) the next time the vocabulary moves.
+    """
+    symbols: set[str] = set()
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.ImportFrom):
+            symbols.update(f'{node.module}.{alias.name}' for alias in node.names)
+        elif isinstance(node, ast.Import):
+            symbols.update(alias.name for alias in node.names)
+    return symbols
+
+
+def _import_block(text: str) -> str:
+    """The module's import block: every line above the first ``#`` section comment.
+
+    The emitted body always opens with ``section_comment(...)``, and no import line starts with
+    ``#`` -- so the split point is exact rather than heuristic.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('#'):
+            return '\n'.join(lines[:index]).rstrip('\n')
+    raise AssertionError('the emitted module has no section comment, so it has no body')
+
+
 # --------------------------------------------------------------------------- basics
 
 
@@ -85,9 +115,37 @@ class TestDeterminism:
         second = build_schema(columns, [], constraints, [], [])
         assert _emit(first) == _emit(second)
 
-    def test_import_block_is_sorted(self, representative_schema: Schema) -> None:
-        import_lines = _emit(representative_schema).split('\n\n\n')[0].splitlines()
-        assert import_lines == sorted(import_lines)
+    def test_import_block_is_grouped_the_way_isort_groups_it(self, representative_schema: Schema) -> None:
+        # ⚠ This REPLACES `test_import_block_is_sorted`, which asserted `lines == sorted(lines)`
+        # -- the flat contract CI-094 abolished, and the contract that put I001 in every emitted
+        # module (`import datetime` sorts after every `from ...` line as a raw string).
+        sections = _import_block(_emit(representative_schema)).split('\n\n')
+        assert sections[0] == 'from __future__ import annotations'
+        for section in sections[1:]:
+            lines = section.splitlines()
+            kinds = [0 if line.startswith('import ') else 1 for line in lines]
+            assert kinds == sorted(kinds), f'a plain import follows a from-import in {lines}'
+            # ⚠ Per KIND, not across the whole section. A section deliberately puts every
+            # `import X` before every `from X import ...`, so the concatenated module list is NOT
+            # sorted in general -- `import zoneinfo` + `from datetime import date` is correct
+            # isort output that a whole-section check would reject. It passed here only because
+            # 'datetime' < 'enum' happens to hold.
+            for kind in (0, 1):
+                modules = [line.split()[1] for line, k in zip(lines, kinds) if k == kind]
+                assert modules == sorted(modules, key=str.lower), f'{modules} out of order in {lines}'
+        stdlib, third_party = sections[1].splitlines(), sections[2].splitlines()
+        assert [line.split()[1] for line in stdlib] == ['datetime', 'enum', 'typing']
+        assert third_party == ['from pydantic import UUID4, BaseModel, Field, Json, StringConstraints']
+
+    def test_exactly_one_blank_line_separates_the_imports_from_the_body(self, representative_schema: Schema) -> None:
+        # Measured, both directions: ruff accepts exactly ONE blank line before a comment and
+        # exactly TWO before code, and the section after the imports always opens with a
+        # `# SECTION` comment. castiron emitted two for its whole life, which alone made every
+        # module I001-dirty. `ruff format` agrees with the one-blank form.
+        out = _emit(representative_schema)
+        block = _import_block(out)
+        assert out.startswith(f'{block}\n\n#')
+        assert not out.startswith(f'{block}\n\n\n')
 
     def test_future_annotations_is_first_line(self, representative_schema: Schema) -> None:
         assert _emit(representative_schema).startswith('from __future__ import annotations\n')
@@ -136,12 +194,12 @@ class TestFidelity:
     def test_uuid(self, representative_schema: Schema) -> None:
         out = _emit(representative_schema)
         assert 'company_id: UUID4' in out
-        assert 'from pydantic import UUID4' in out
+        assert 'pydantic.UUID4' in _imported(out)
 
     def test_timestamptz(self, representative_schema: Schema) -> None:
         out = _emit(representative_schema)
         assert 'created_at: datetime.datetime' in out
-        assert 'import datetime' in out
+        assert 'datetime' in _imported(out)
 
     def test_text_array(self, representative_schema: Schema) -> None:
         assert 'roles: list[str] | None' in _emit(representative_schema)
@@ -150,7 +208,7 @@ class TestFidelity:
         out = _emit(representative_schema)
         assert 'class PublicUserStatusEnum(str, Enum):' in out
         assert 'status: PublicUserStatusEnum' in out
-        assert 'from enum import Enum' in out
+        assert 'enum.Enum' in _imported(out)
 
     def test_enum_array_field(self, representative_schema: Schema) -> None:
         assert 'flags: list[PublicUserStatusEnum] | None' in _emit(representative_schema)
@@ -164,8 +222,7 @@ class TestFidelity:
         out = _emit(representative_schema)
         assert "sku: Annotated[str, StringConstraints(**{'min_length': 10, 'max_length': 10})]" in out
         assert "bio: Annotated[str, StringConstraints(**{'max_length': 500})] | None" in out
-        assert 'from typing import Annotated' in out
-        assert 'from pydantic import StringConstraints' in out
+        assert {'typing.Annotated', 'pydantic.StringConstraints'} <= _imported(out)
 
     def test_description_field(self, representative_schema: Schema) -> None:
         assert 'email: str | None = Field(default=None, description="User email")' in _emit(representative_schema)
@@ -201,12 +258,64 @@ class TestImports:
         columns = [build_columns('t', 'title', 'text')]
         constraints = [('t_title', 't', ['title'], 'c', "CHECK (title <> '')")]
         out = _emit(build_schema(columns, [], constraints, [], []))
-        assert 'from typing import Annotated' not in out
+        assert 'typing.Annotated' not in _imported(out)
 
     def test_no_future_annotations_without_relationships(self, build_columns: Callable[..., Row]) -> None:
         columns = [build_columns('t', 'id', 'integer', identity=True)]
         constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
-        assert 'from __future__ import annotations' not in _emit(build_schema(columns, [], constraints, [], []))
+        assert '__future__.annotations' not in _imported(_emit(build_schema(columns, [], constraints, [], [])))
+
+
+@pytest.mark.unit
+class TestFieldIsImportedOnlyWhenUsed:
+    """``from pydantic import Field`` was unconditional, and that was a live ``F401``.
+
+    Measured across the full 4-input × 128-config sweep: **32 of 512** reachable emissions
+    imported ``Field`` and never called it. The trigger is a schema whose columns are all NOT
+    NULL with no comments and no foreign keys, emitted with ``--no-crud-models
+    --no-null-parent-classes`` -- an ordinary invocation, not a corner.
+
+    ``_imports`` decides by searching the **already-rendered body** for ``'= Field('``
+    (``CI94-D9``) rather than by re-deriving ``_render_column``'s conditions, so the two can
+    never drift apart.
+    """
+
+    def _all_not_null(self, build_columns: Callable[..., Row]) -> Schema:
+        columns = [build_columns('t', 'a', 'text'), build_columns('t', 'b', 'integer')]
+        return build_schema(columns, [], [], [], [])
+
+    def test_it_is_absent_when_nothing_calls_it(self, build_columns: Callable[..., Row]) -> None:
+        config = EmitterConfig(generate_crud_models=False, add_null_parent_classes=False)
+        out = _emit(self._all_not_null(build_columns), config)
+        assert '= Field(' not in out
+        assert 'pydantic.Field' not in _imported(out)
+
+    def test_it_is_present_whenever_something_calls_it(self, build_columns: Callable[..., Row]) -> None:
+        out = _emit(self._all_not_null(build_columns), EmitterConfig(generate_crud_models=True))
+        assert '= Field(' in out
+        assert 'pydantic.Field' in _imported(out)
+
+    def test_the_field_import_tracks_the_field_call_in_both_directions(self, representative_schema: Schema) -> None:
+        # ⚠ Named for what it checks. It asserts the Field import iff the Field call, over the
+        # config axis that drives it -- NOT the general "no undefined name" property, which is
+        # the corpus ruff sweep's job (`test_lint.py`, F821 over all 384 lintable emissions).
+        # The direction that matters more is the second: a body calling Field without importing
+        # it is a NameError at import time, not a lint finding.
+        for config in (EmitterConfig(), EmitterConfig(generate_crud_models=False, generate_enums=False)):
+            out = _emit(representative_schema, config)
+            assert ('= Field(' in out) == ('pydantic.Field' in _imported(out))
+
+    def test_a_column_comment_containing_the_sentinel_fails_conservatively(self) -> None:
+        # The documented failure mode of reading the rendered body: a description carrying the
+        # literal `= Field(` imports Field unnecessarily. That costs a lint finding and never a
+        # broken module -- pinned here so the trade-off is a decision rather than a surprise.
+        table = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='note', raw_type='text', is_nullable=False, description='see x = Field(1)')],
+        )
+        out = _emit(Schema(tables=[table]), EmitterConfig(generate_crud_models=False))
+        assert 'pydantic.Field' in _imported(out)
+        compile(out, '<generated>', 'exec')
 
 
 # --------------------------------------------------------------------------- config matrix
@@ -226,7 +335,7 @@ class TestConfigMatrix:
         assert 'class PublicUserStatusEnum' not in out
         assert 'status: str' in out
         assert 'flags: list[str] | None' in out
-        assert 'from enum import Enum' not in out
+        assert 'enum.Enum' not in _imported(out)
 
     def test_singular_names(self, build_columns: Callable[..., Row]) -> None:
         columns = [build_columns('users', 'id', 'integer', identity=True)]
@@ -264,12 +373,12 @@ class TestModelPrefixProtection:
     def test_configdict_absent_by_default(self) -> None:
         out = _emit(Schema(tables=[self._table()]))
         assert 'ConfigDict(protected_namespaces=())' not in out
-        assert 'from pydantic import ConfigDict' not in out
+        assert 'pydantic.ConfigDict' not in _imported(out)
 
     def test_configdict_added_when_disabled(self) -> None:
         out = _emit(Schema(tables=[self._table()]), EmitterConfig(disable_model_prefix_protection=True))
         assert 'model_config = ConfigDict(protected_namespaces=())' in out
-        assert 'from pydantic import ConfigDict' in out
+        assert 'pydantic.ConfigDict' in _imported(out)
 
     def test_configdict_not_added_without_model_columns(self) -> None:
         table = TableInfo(

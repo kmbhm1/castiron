@@ -1,12 +1,11 @@
 from __future__ import annotations
+
+import datetime
 from decimal import Decimal
 from enum import Enum
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import Json
 from typing import Any
-import datetime
 
+from pydantic import BaseModel, Field, Json
 
 # ENUM TYPES
 # These are generated from Postgres user-defined enum types.

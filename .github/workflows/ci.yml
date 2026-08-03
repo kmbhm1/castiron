@@ -38,5 +38,14 @@ jobs:
       - name: Type check (mypy strict)
         run: uv run mypy src
 
-      - name: Test (pytest, 90% floor)
-        run: uv run pytest --cov=src/castiron --cov-report=term-missing --cov-fail-under=90
+      # `-m "not integration"` is load-bearing, not decoration. The live-source suite under
+      # tests/integration/ needs the external castiron-testbed apparatus and skips itself when
+      # CASTIRON_TEST_POSTGREST_URL is unset, so this step was already offline -- but only by
+      # ABSENCE OF CONFIGURATION. With the marker it is offline by construction, and exporting
+      # that variable here cannot silently turn the suite network-dependent (CI-086).
+      #
+      # Deliberately open-coded rather than `run: make test`: this workflow should state the
+      # contract it enforces, and `make test` carries developer-iteration flags (-vv) that must
+      # not reach CI by inheritance. tests/unit/test_repo_tooling.py holds the two in sync.
+      - name: Test (pytest, offline suite, 90% floor)
+        run: uv run pytest -m "not integration" --cov=src/castiron --cov-report=term-missing --cov-fail-under=90

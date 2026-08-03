@@ -21,9 +21,11 @@ fields (CI4-D-scope). Fidelity ported from supabase-pydantic's
 The emitter treats the ``Schema`` as read-only (it never mutates ``fk.relation_type`` --
 the self-ref effective type is computed in a local; supabase-pydantic mutates it) and its
 output is deterministic (Hard Rule #9): tables in ``Schema.tables`` order, enums from the
-IR's sorted ``schema.enums``, fields via ``sort_and_separate_columns``, imports a single
-sorted set, ``from __future__ import annotations`` when relationship fields need forward
-references. castiron owns this output shape; it is not byte-identical to supabase-pydantic.
+IR's sorted ``schema.enums``, fields via ``sort_and_separate_columns``, imports grouped and
+ordered exactly as ruff's isort would under default settings
+(:func:`castiron.emitters.base.render_import_block`), ``from __future__ import annotations``
+when relationship fields need forward references. castiron owns this output shape; it is not
+byte-identical to supabase-pydantic.
 """
 
 import json
@@ -43,6 +45,9 @@ IND = '    '
 CUSTOM_MODEL_NAME = 'CustomModel'
 #: Length-constraint pattern: ``length(col) <op> N`` inside a CHECK definition.
 _LENGTH_PATTERN = r'length\((\w+)\)\s*([=<>]+)\s*(\d+)'
+#: The one spelling of a ``Field`` call this emitter produces. :meth:`PydanticEmitter._imports`
+#: searches the rendered body for it to decide whether ``Field`` is imported at all (``CI94-D9``).
+_FIELD_CALL = '= Field('
 
 
 class _ClassVariant(Enum):
@@ -225,8 +230,20 @@ class PydanticEmitter(Emitter):
     # ------------------------------------------------------------------ file assembly
 
     def _write(self, schema: Schema) -> str:
-        """Assemble the full module text from its sections."""
-        sections = [self._imports(schema)]
+        """Assemble the full module text from its sections.
+
+        The **body is rendered first** and the import block is computed from it (``CI94-D9``), so
+        a conditional import is exact rather than re-derived by a predicate that would drift from
+        the renderer that made it necessary.
+
+        ⚠ The import block is joined to the body with **one** blank line, while body sections are
+        joined with two. That asymmetry is not a typo: the section after the imports always begins
+        with a ``#`` comment, and ruff's isort accepts exactly one blank line before a comment and
+        exactly two before code. Emitting two here put ``I001`` in every module castiron has ever
+        written. ``ruff format`` agrees with the one-blank form, so there is no check-vs-format
+        conflict to trade off.
+        """
+        sections = []
         enum_section = self._enum_section(schema)
         if enum_section:
             sections.append(enum_section)
@@ -237,11 +254,31 @@ class PydanticEmitter(Emitter):
         operational_section = self._operational_section(schema)
         if operational_section:
             sections.append(operational_section)
-        return '\n\n\n'.join(sections) + '\n'
+        body = '\n\n\n'.join(sections)
+        return f'{self._imports(schema, body)}\n\n{body}\n'
 
-    def _imports(self, schema: Schema) -> str:
-        """Build the sorted, deduplicated import block for the module."""
-        imports = {'from pydantic import BaseModel', 'from pydantic import Field'}
+    def _imports(self, schema: Schema, body: str) -> str:
+        """Build the grouped, deduplicated import block for the module.
+
+        Args:
+            schema: The schema being emitted.
+            body: The already-rendered module body. ``Field`` is imported iff the body actually
+                calls it, which is what keeps ``castiron gen --no-crud-models
+                --no-null-parent-classes`` on an all-NOT-NULL schema from shipping an ``F401``
+                (measured: 32 of the 512 reachable emissions). Reading the rendered text rather
+                than re-deriving ``_render_column``'s conditions is deliberate (``CI94-D9``): one
+                source of truth, and it generalizes to any future conditional import. Its single
+                failure mode is **conservative** -- a column comment containing the literal
+                ``= Field(`` imports ``Field`` unnecessarily, which costs a lint finding and
+                never a broken module.
+
+        Returns:
+            The rendered import block.
+        """
+        imports = {'from pydantic import BaseModel'}
+
+        if _FIELD_CALL in body:
+            imports.add('from pydantic import Field')
 
         if self.config.include_foreign_keys and any(t.foreign_keys or t.relationships for t in schema.tables):
             imports.add('from __future__ import annotations')

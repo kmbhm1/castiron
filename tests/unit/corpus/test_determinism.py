@@ -136,6 +136,40 @@ class TestBuilderAndEmitterAreStateless:
         second = build_ir(document, case.family, case.source_options)
         assert render_ir_golden(first) == render_ir_golden(second)
 
+    def test_the_sweep_memo_is_honest(self, corpus_emissions: dict[str, dict[str, str]]) -> None:
+        # `pipeline`'s two memos exist purely for speed: the 128-point sweep and the manifest
+        # render are each needed by two callers in one pytest process (the session fixtures and
+        # `regenerate.intended_artifacts()`), and computing them twice cost ~1 s per interpreter
+        # leg. A memo is exactly where a determinism suite can start proving that a dict equals
+        # itself, so this clears both and recomputes from scratch.
+        #
+        # Deliberately self-contained: it does not assume some earlier test already populated the
+        # caches. A version that did was order-dependent, and passed or failed on `-k` selection.
+        from tests.unit.corpus import pipeline
+
+        family = TESTBED_INVENTORY
+        saved_emissions = pipeline._EMISSION_CACHE.pop(family.family_id, None)
+        saved_manifest = pipeline._MANIFEST_CACHE.pop(family.family_id, None)
+        try:
+            recomputed = pipeline.emissions_for_family(load_document(family), family)
+            assert pipeline._EMISSION_CACHE[family.family_id] is recomputed, 'the emission memo did not populate'
+
+            first_render = pipeline.render_manifest(family, recomputed)
+            second_render = pipeline.render_manifest(family, recomputed)
+        finally:
+            pipeline._EMISSION_CACHE.pop(family.family_id, None)
+            pipeline._MANIFEST_CACHE.pop(family.family_id, None)
+            if saved_emissions is not None:
+                pipeline._EMISSION_CACHE[family.family_id] = saved_emissions
+            if saved_manifest is not None:
+                pipeline._MANIFEST_CACHE[family.family_id] = saved_manifest
+
+        # A1/A2 over all 128 configs at once: a cold recomputation matches the session's answer.
+        assert recomputed == corpus_emissions[family.family_id]
+        assert len(recomputed) == 128
+        assert first_render == second_render
+        assert first_render == pipeline.render_manifest(family, recomputed)
+
     @pytest.mark.parametrize('case', iter_cases(), ids=case_ids())
     def test_a1_emitting_twice_from_one_ir_gives_identical_bytes(
         self, case: CorpusCase, corpus_irs: dict[tuple[str, Any], Schema]

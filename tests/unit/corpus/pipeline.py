@@ -179,6 +179,19 @@ def render_ir_golden(schema: Schema) -> str:
     return json.dumps(schema.as_dict(), indent=2, sort_keys=False, ensure_ascii=False) + '\n'
 
 
+#: Per-process memo for :func:`emissions_for_family`, keyed by ``family_id``.
+#:
+#: The 128-point sweep is the corpus's dominant cost, and two independent callers need it in one
+#: pytest process: the ``corpus_emissions`` fixture and ``regenerate.intended_artifacts()``.
+#: Measured under coverage, computing it twice cost ~1.0 s **per interpreter leg**, i.e. ~4 s on
+#: the four-leg gate, for two identical results.
+#:
+#: Safe because the function is pure over committed bytes: a family's document is a fixed file on
+#: disk, so the emissions are a function of ``family_id`` alone within one process. It caches
+#: nothing across processes, so ``regenerate.py`` run standalone is unaffected.
+_EMISSION_CACHE: dict[str, dict[str, str]] = {}
+
+
 def emissions_for_family(document: dict[str, Any], family: InputFamily) -> dict[str, str]:
     """Emit every one of the 128 config points for one input, reusing the 4 distinct IRs.
 
@@ -193,12 +206,17 @@ def emissions_for_family(document: dict[str, Any], family: InputFamily) -> dict[
     Returns:
         ``config_key`` → emitted module text, for all 128 points.
     """
+    cached = _EMISSION_CACHE.get(family.family_id)
+    if cached is not None:
+        return cached
+
     irs: dict[SourceOptions, Schema] = {}
     emissions: dict[str, str] = {}
     for emitter_config, source_options in all_config_points():
         if source_options not in irs:
             irs[source_options] = build_ir(document, family, source_options)
         emissions[config_key(emitter_config, source_options)] = emit_module(irs[source_options], emitter_config)
+    _EMISSION_CACHE[family.family_id] = emissions
     return emissions
 
 
@@ -218,6 +236,13 @@ def module_compiles(text: str) -> bool:
     return True
 
 
+#: Per-process memo for :func:`render_manifest`, keyed by ``family_id``. Same purity argument as
+#: :data:`_EMISSION_CACHE`, and the same two callers. Rendering a manifest runs ``compile()`` over
+#: all 128 emitted modules, so doing it twice per family meant 512 redundant parses of modules up
+#: to 46 KB on every interpreter leg.
+_MANIFEST_CACHE: dict[str, str] = {}
+
+
 def render_manifest(family: InputFamily, emissions: dict[str, str]) -> str:
     """Render the committed fingerprint manifest for one input family.
 
@@ -231,6 +256,10 @@ def render_manifest(family: InputFamily, emissions: dict[str, str]) -> str:
     Returns:
         The manifest text, ending in exactly one newline.
     """
+    cached = _MANIFEST_CACHE.get(family.family_id)
+    if cached is not None:
+        return cached
+
     provenance = _provenance_line(family)
     header = [
         '# castiron corpus fingerprint manifest - GENERATED. DO NOT EDIT BY HAND.',
@@ -244,7 +273,9 @@ def render_manifest(family: InputFamily, emissions: dict[str, str]) -> str:
         f'{key}  {sha256_text(text)}  {count_structure(text).as_row()}  {"yes" if module_compiles(text) else "no"}'
         for key, text in sorted(emissions.items())
     ]
-    return '\n'.join([*header, *rows]) + '\n'
+    manifest = '\n'.join([*header, *rows]) + '\n'
+    _MANIFEST_CACHE[family.family_id] = manifest
+    return manifest
 
 
 def _provenance_line(family: InputFamily) -> str:

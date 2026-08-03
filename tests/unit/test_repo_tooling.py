@@ -1,7 +1,7 @@
-"""Guards for two repository-configuration traps whose failure mode is silence.
+"""Guards for three repository-configuration traps whose failure mode is silence.
 
-Neither trap breaks a build. Both change what a machine *sees* without telling anyone, which is
-why they are asserted here rather than trusted to review:
+None of them breaks a build. All three change what a machine *sees* without telling anyone, which
+is why they are asserted here rather than trusted to review:
 
 1. **CI-093** -- a bare ``MANIFEST`` line in ``.gitignore`` also matched a ``manifest/``
    **directory**, because git compares ignore patterns case-insensitively when
@@ -26,6 +26,31 @@ why they are asserted here rather than trusted to review:
    configuration** rather than by construction. Exporting that variable in the workflow would
    have quietly made the suite network-dependent, with every check still green.
 
+3. **CI-105** -- ``.pre-commit-config.yaml`` pinned ``ruff-pre-commit`` at ``v0.6.9`` while
+   ``uv.lock`` resolved ``ruff 0.16.0``. ``make lint`` / ``make format`` / ``make validate`` run
+   the **locked** ruff; the pre-push hooks run the **pinned** one. A green ``make validate``
+   therefore did not imply a green ``git push`` -- the CI-081 shape (a gate covering something
+   different from the check after it) on the lint/format axis. It cost real time twice: PR #13
+   (``2d590a9``), where the two versions wrapped a long boolean ``assert`` differently and the
+   push failed with "files were modified by this hook", and PR #15, where
+   ``isinstance(x, (A, B))`` passed all four ``make validate`` legs and was rejected at push
+   because 0.6.9 still carried ``UP038`` and 0.16.0 removed it.
+
+   ⚠ The drift was **invisible at rest**: pre-commit hands a hook only the *changed* paths, so
+   the two ``UP038`` sites already in ``src/`` (``cli/config.py``, ``ir/models.py``) sat armed for
+   whichever PR next touched those files. Nothing goes red until someone's unrelated push does.
+   Note ``pre-commit autoupdate`` re-opens this gap by design -- it moves ``rev`` and knows
+   nothing about ``uv.lock`` -- which is precisely why the equality is asserted rather than
+   remembered.
+
+   The **mypy** hook carried the same defect and was armed for the very next dispatch: pinned at
+   ``v1.11.2`` against a locked mypy of ``2.3.0``, it rejected
+   ``src/castiron/sources/openapi/parse.py`` -- a file the next planned PR must touch -- while
+   ``make typecheck`` reported ``Success``. It could not be fixed by matching a version, because
+   it diverges along two independent axes at once; see
+   ``TestTheMypyHookAndTheMypyGateCannotDisagree``. It now runs the project's own toolchain
+   through the same Make target ``make validate`` runs, so there is no version to match at all.
+
 These follow the precedent of
 ``tests/unit/corpus/test_goldens.py::TestTheToolingActuallyProtectsTheseBytes``: repository
 configuration that some other file depends on is asserted, because "remember to update the
@@ -35,19 +60,58 @@ config" is not a mechanism.
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# ``tomllib`` is stdlib from 3.11; the 3.10 leg uses the dev-group ``tomli``, mirroring the gate
+# in ``src/castiron/cli/config.py``. Unlike PyYAML (see ``workflow_pytest_commands``), ``tomli``
+# is a *direct* dev dependency on every interpreter, so depending on it here is not a hidden
+# transitive bet. ``uv.lock`` is parsed rather than scanned because ``name = "ruff"`` appears in
+# it three times -- once as the package, twice inside dependency lists -- and only one of those
+# occurrences carries the resolved version.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 #: ``tests/unit`` -> ``tests`` -> the repository root.
 REPO_ROOT = Path(__file__).parents[2]
 
 CI_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'ci.yml'
 MAKEFILE = REPO_ROOT / 'Makefile'
+PRE_COMMIT_CONFIG = REPO_ROOT / '.pre-commit-config.yaml'
+UV_LOCK = REPO_ROOT / 'uv.lock'
 
 #: Repo-relative names, for failure messages that a reader can act on without decoding a path.
 CI_NAME = '.github/workflows/ci.yml'
 MAKE_NAME = 'Makefile'
+PRE_COMMIT_NAME = '.pre-commit-config.yaml'
+LOCK_NAME = 'uv.lock'
+
+#: The pre-commit repo whose pin must equal the locked ``ruff``. ruff is coupled this tightly
+#: because it needs no environment at all: it reads ``[tool.ruff]`` and the source and nothing
+#: else, so hook and gate differ ONLY by version, and equal versions means identical verdicts.
+#:
+#: ⚠ This guard deliberately covers ruff **only**. ``mirrors-mypy`` is pinned at ``v1.11.2`` while
+#: ``uv.lock`` resolves mypy ``2.3.0`` -- the same drift, a full major wide -- but its fix is not
+#: the same fix: that hook runs mypy in an isolated env with no project dependencies, so it
+#: reports errors ``make typecheck`` cannot (``click`` degrades to ``Any``, and ``--strict`` then
+#: calls every decorated CLI function untyped). Bumping its ``rev`` alone would not align it.
+#: Tracked as CI-105's sibling; asserting it here before it is fixed would only add a red test.
+RUFF_HOOK_REPO = 'https://github.com/astral-sh/ruff-pre-commit'
+
+#: The hosted mypy hook CI-105 replaced with a ``repo: local`` one. Asserted **absent**: it is
+#: the shape of the bug, not a specific bad version. Re-adding it at any ``rev`` re-creates a
+#: second mypy with a second dependency set, which is what diverged from ``make typecheck`` in
+#: two independent ways at once (version *and* missing project dependencies).
+MYPY_MIRROR_REPO = 'https://github.com/pre-commit/mirrors-mypy'
+
+#: The Make target the pre-push mypy hook must invoke. Not compared as a literal string: the
+#: assertion is that whatever target the hook runs is one ``make validate`` *also* runs, which is
+#: what makes "the gate and the hook cannot disagree" structural rather than remembered.
+VALIDATE_TARGET = 'validate'
 
 #: Paths that must stay trackable. The first is the first mate's minimal reproduction; the second
 #: is the real one -- what the CI-007 corpus dispatch tried to commit before renaming the
@@ -177,6 +241,110 @@ def workflow_pytest_commands(text: str) -> list[str]:
         if invokes_pytest(remainder):
             commands.append(remainder.strip())
     return commands
+
+
+def pinned_hook_rev(text: str, repo: str) -> str | None:
+    """Return the ``rev:`` pinned for one pre-commit repo, with any leading ``v`` stripped.
+
+    Parsed textually rather than with PyYAML, for the reason given in
+    ``workflow_pytest_commands``: pyyaml reaches this repo only transitively (through pre-commit
+    itself), and a test that silently depends on someone else's requirement is one ``uv sync``
+    away from an unexplained collection error.
+
+    Comment lines are skipped explicitly. That is load-bearing, not tidiness -- the ruff stanza
+    carries a comment block that mentions other version numbers, and a parser that read the first
+    line *containing* ``rev:`` would happily return one of those.
+
+    Args:
+        text: The whole ``.pre-commit-config.yaml``.
+        repo: The repo URL, exactly as it appears after ``- repo:``.
+
+    Returns:
+        The pinned revision without its ``v`` prefix (``'0.16.0'``), or None if the repo has no
+        stanza or its stanza has no ``rev:``.
+    """
+    inside = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith('- repo:'):
+            inside = stripped.partition('- repo:')[2].strip() == repo
+            continue
+        if inside and stripped.startswith('rev:'):
+            return stripped.partition('rev:')[2].strip().strip('\'"').lstrip('v')
+    return None
+
+
+def local_hook_entry(text: str, hook_id: str) -> str | None:
+    """Return the ``entry:`` command of one hook defined under ``repo: local``.
+
+    Comment lines are skipped, which is load-bearing for the same reason as in
+    ``pinned_hook_rev``: the local mypy stanza is preceded by a comment block that contains the
+    literal text ``make typecheck-matrix``, so a parser that matched the first line *containing*
+    ``entry:`` or a bare ``make`` would read documentation as configuration.
+
+    Args:
+        text: The whole ``.pre-commit-config.yaml``.
+        hook_id: The hook's ``id:``, e.g. ``'mypy'``.
+
+    Returns:
+        The entry command, or None if no local hook with that id exists.
+    """
+    in_local_repo = False
+    in_target_hook = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith('- repo:'):
+            in_local_repo = stripped.partition('- repo:')[2].strip() == 'local'
+            in_target_hook = False
+            continue
+        if stripped.startswith('- id:'):
+            in_target_hook = in_local_repo and stripped.partition('- id:')[2].strip() == hook_id
+            continue
+        if in_target_hook and stripped.startswith('entry:'):
+            return stripped.partition('entry:')[2].strip()
+    return None
+
+
+def make_prerequisites(text: str, target: str) -> list[str]:
+    """Return the prerequisite targets on one Make target's rule line.
+
+    Args:
+        text: The whole ``Makefile``.
+        target: The target name, e.g. ``'validate'``.
+
+    Returns:
+        The prerequisites, e.g. ``['lint', 'typecheck-matrix', 'test-matrix']``. Empty when the
+        target does not exist or has no prerequisites. A trailing ``## help text`` comment -- the
+        convention every target in this Makefile uses -- is stripped first, so its words are
+        never mistaken for prerequisites.
+    """
+    for line in text.splitlines():
+        if not re.match(rf'^{re.escape(target)}:', line):
+            continue
+        return line.partition(':')[2].partition('##')[0].split()
+    return []
+
+
+def locked_version(text: str, package: str) -> str | None:
+    """Return the version ``uv.lock`` resolves for one package.
+
+    Args:
+        text: The whole ``uv.lock``.
+        package: The distribution name, e.g. ``'ruff'``.
+
+    Returns:
+        The resolved version, or None if the lock has no entry for that package.
+    """
+    document = tomllib.loads(text)
+    for entry in document.get('package', []):
+        if entry.get('name') == package:
+            version: str | None = entry.get('version')
+            return version
+    return None
 
 
 def ci_pytest_commands() -> list[str]:
@@ -383,3 +551,317 @@ class TestTheOfflineSuiteIsOfflineByConstruction:
                 f'all sell. Targets that deliberately select one half of the suite '
                 f'(`test-unit`, `test-integration`) are not listed in WHOLE_SUITE_TARGETS.'
             )
+
+
+@pytest.mark.unit
+class TestTheRevParserReadsPinsNotProse:
+    """The parser is the load-bearing half of the CI-105 guard, so it is tested on its own.
+
+    Each case is a way the real file could make a naive parser lie. The ruff stanza in particular
+    carries a long comment block that names other versions -- the exact hazard that a
+    ``'rev:' in line`` check walks straight into.
+    """
+
+    def test_a_pin_is_read_without_its_v_prefix(self) -> None:
+        document = '\n'.join(['repos:', f'  - repo: {RUFF_HOOK_REPO}', '    rev: v0.16.0', '    hooks: []'])
+        assert pinned_hook_rev(document, RUFF_HOOK_REPO) == '0.16.0'
+
+    def test_a_comment_naming_a_version_is_not_a_pin(self) -> None:
+        document = '\n'.join(
+            [
+                'repos:',
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    # was rev: v0.6.9 -- do not go back',
+                '    # autoupdate would move this to rev: v0.16.1',
+                '    rev: v0.16.0',
+            ]
+        )
+        assert pinned_hook_rev(document, RUFF_HOOK_REPO) == '0.16.0'
+
+    def test_another_repos_pin_is_never_returned(self) -> None:
+        document = '\n'.join(
+            [
+                'repos:',
+                '  - repo: https://github.com/pre-commit/mirrors-mypy',
+                '    rev: v1.11.2',
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    rev: v0.16.0',
+            ]
+        )
+        assert pinned_hook_rev(document, RUFF_HOOK_REPO) == '0.16.0'
+
+    def test_a_repo_that_ends_before_its_rev_yields_nothing(self) -> None:
+        # A stanza with no `rev:` must return None rather than leaking the NEXT repo's pin --
+        # otherwise a mangled config could compare the wrong two numbers and pass.
+        document = '\n'.join(
+            [
+                'repos:',
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    hooks: []',
+                '  - repo: https://github.com/pre-commit/mirrors-mypy',
+                '    rev: v1.11.2',
+            ]
+        )
+        assert pinned_hook_rev(document, RUFF_HOOK_REPO) is None
+
+    def test_an_absent_repo_yields_nothing(self) -> None:
+        assert pinned_hook_rev('repos: []\n', RUFF_HOOK_REPO) is None
+
+    def test_a_dependency_reference_is_not_the_resolved_version(self) -> None:
+        # `name = "ruff"` appears in uv.lock three times: once as the package table, and twice
+        # inside dependency lists that carry no version. A textual scan returns whichever came
+        # first; only the package table is the answer.
+        document = '\n'.join(
+            [
+                '[[package]]',
+                'name = "castiron"',
+                'version = "0.0.0"',
+                '',
+                '[package.metadata]',
+                'requires-dist = [{ name = "ruff", specifier = ">=0.6.0" }]',
+                '',
+                '[[package]]',
+                'name = "ruff"',
+                'version = "9.9.9"',
+            ]
+        )
+        assert locked_version(document, 'ruff') == '9.9.9'
+
+    def test_an_unlocked_package_yields_nothing(self) -> None:
+        assert locked_version('[[package]]\nname = "ruff"\nversion = "1.0.0"\n', 'black') is None
+
+    def test_a_comment_naming_a_make_target_is_not_an_entry(self) -> None:
+        # The real local-mypy stanza is preceded by a comment block containing the literal
+        # `make typecheck-matrix`, so this is the file's actual shape, not a hypothetical.
+        document = '\n'.join(
+            [
+                'repos:',
+                '  # Invoking `make typecheck-matrix` removes the sync surface.',
+                '  #   entry: make something-else',
+                '  - repo: local',
+                '    hooks:',
+                '      - id: mypy',
+                '        entry: make typecheck-matrix',
+            ]
+        )
+        assert local_hook_entry(document, 'mypy') == 'make typecheck-matrix'
+
+    def test_a_hosted_hooks_entry_is_never_read_as_local(self) -> None:
+        document = '\n'.join(
+            [
+                'repos:',
+                f'  - repo: {MYPY_MIRROR_REPO}',
+                '    rev: v1.11.2',
+                '    hooks:',
+                '      - id: mypy',
+                '        entry: not-a-local-hook',
+            ]
+        )
+        assert local_hook_entry(document, 'mypy') is None
+
+    def test_another_local_hooks_entry_is_never_returned(self) -> None:
+        document = '\n'.join(
+            [
+                'repos:',
+                '  - repo: local',
+                '    hooks:',
+                '      - id: pytest',
+                '        entry: make test',
+                '      - id: mypy',
+                '        entry: make typecheck-matrix',
+            ]
+        )
+        assert local_hook_entry(document, 'mypy') == 'make typecheck-matrix'
+        assert local_hook_entry(document, 'pytest') == 'make test'
+
+    def test_a_help_comment_is_not_a_prerequisite(self) -> None:
+        # Every target in the real Makefile carries a `## help text` comment, whose words would
+        # otherwise be read as targets -- `make validate` would appear to run `The`, `pre-push`...
+        makefile = 'validate: lint typecheck-matrix test-matrix ## The pre-push gate: lint + typecheck\n'
+        assert make_prerequisites(makefile, 'validate') == ['lint', 'typecheck-matrix', 'test-matrix']
+
+    def test_an_absent_target_has_no_prerequisites(self) -> None:
+        assert make_prerequisites('validate: lint\n', 'nonexistent') == []
+
+
+@pytest.mark.unit
+class TestTheRuffHookAndTheRuffGateAreTheSameRuff:
+    """CI-105 -- the pre-push hook's ruff and ``make lint``'s ruff must be one version.
+
+    ``uv.lock`` is the anchor rather than ``ruff --version`` off ``PATH``: the lock is the
+    checked-in, reviewable declaration that ``uv run`` materializes, so it is what a PR diff
+    shows and what CI resolves. Comparing against an installed binary would make the guard's
+    verdict depend on the freshness of whatever ``.venv`` happened to be active.
+    """
+
+    def test_the_pinned_hook_rev_equals_the_locked_ruff_version(self) -> None:
+        pinned = pinned_hook_rev(PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), RUFF_HOOK_REPO)
+        locked = locked_version(UV_LOCK.read_text(encoding='utf-8'), 'ruff')
+        # Anti-vacuity (CI-083): `None == None` would pass this loudly-named test while asserting
+        # nothing at all -- which is exactly what a renamed repo URL or a restructured lock would
+        # produce.
+        assert pinned is not None, (
+            f'{PRE_COMMIT_NAME} has no `rev:` for {RUFF_HOOK_REPO}. Either the stanza was removed '
+            f'-- in which case nothing lints at pre-push and this guard is moot -- or the repo URL '
+            f'changed and RUFF_HOOK_REPO here needs to change with it.'
+        )
+        assert locked is not None, f'{LOCK_NAME} has no resolved version for `ruff`; is it still a dev dependency?'
+        assert pinned == locked, (
+            f'the pre-push ruff hook runs ruff {pinned} but `make lint` / `make format` / '
+            f'`make validate` run the locked ruff {locked}.\n'
+            f'That gap is the CI-105 trap: `make validate` can go green on code the push then '
+            f'rejects, for a rule or a formatting decision that only one of the two versions has. '
+            f'It is invisible until it fires, because pre-commit hands hooks only the CHANGED '
+            f'paths -- so the failure lands on an unrelated PR.\n'
+            f'Fix: set `rev: v{locked}` in {PRE_COMMIT_NAME}, or move both together with\n'
+            f'  uv lock --upgrade-package ruff && uv sync   # then match `rev:` to the new version\n'
+            f'Do NOT resolve this by pinning `ruff` in pyproject.toml down to the hook -- that '
+            f'freezes the project on an old linter to satisfy a config line.'
+        )
+
+    def test_this_guard_can_still_see_a_drifted_pin(self, tmp_path: Path) -> None:
+        """Positive control: prove the assertion above can go red (CI-072).
+
+        Without this, ``test_the_pinned_hook_rev_equals_the_locked_ruff_version`` asserts one
+        thing -- "equal" -- which is also what it would report if ``pinned_hook_rev`` quietly
+        started returning the locked version, or None on both sides of a comparison that had lost
+        its anti-vacuity guards. The config is mutated back to the exact rev CI-105 removed, and
+        the comparison is re-run through the same function, so a guard that cannot detect the
+        original bug fails here instead of passing forever.
+        """
+        locked = locked_version(UV_LOCK.read_text(encoding='utf-8'), 'ruff')
+        assert locked is not None and locked != '0.6.9', (
+            f'this control re-arms the original CI-105 trap by pinning the hook to v0.6.9, which '
+            f'requires the locked ruff to be something else; uv.lock says {locked!r}.'
+        )
+        drifted = PRE_COMMIT_CONFIG.read_text(encoding='utf-8').replace(f'rev: v{locked}', 'rev: v0.6.9')
+        # The replacement must have bitten. A no-op edit would leave the file aligned and the
+        # assertion below would "detect drift" that is not there -- a control proving nothing.
+        assert drifted != PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), (
+            f'could not re-arm the trap: no `rev: v{locked}` line found to mutate in '
+            f'{PRE_COMMIT_NAME}. The pin is probably written in a form pinned_hook_rev reads but '
+            f'this control does not (a quoted rev, a commit sha). Update the mutation.'
+        )
+        (tmp_path / 'config.yaml').write_text(drifted, encoding='utf-8')
+        remutated = pinned_hook_rev((tmp_path / 'config.yaml').read_text(encoding='utf-8'), RUFF_HOOK_REPO)
+        assert remutated == '0.6.9', (
+            f'pinned_hook_rev read {remutated!r} from a config pinned at v0.6.9. It is no longer '
+            f'reporting what the file says, so the guard above is not testing anything.'
+        )
+        assert remutated != locked, (
+            f'a hook pinned at v0.6.9 compared EQUAL to the locked ruff {locked}. The comparison '
+            f'in test_the_pinned_hook_rev_equals_the_locked_ruff_version cannot fail, which makes '
+            f'it theatre (CI-072). Fix the comparison before trusting it.'
+        )
+
+
+@pytest.mark.unit
+class TestTheMypyHookAndTheMypyGateCannotDisagree:
+    """CI-105, second half -- the same defect as the ruff pin, closed a different way.
+
+    The ruff hook could be fixed by matching a version, because ruff needs no environment. mypy
+    cannot: a hosted hook diverges from ``make typecheck`` along **two independent axes**, and
+    each was measured separately on this tree --
+
+    * **version** -- mypy 1.11.2 *with* the project's dependencies installed still reported
+      ``sources/openapi/parse.py:746 no-any-return``, which mypy 2.3.0 does not (2.x narrows
+      ``Any`` through an ``isinstance`` guard). Purely the version.
+    * **dependencies** -- mypy 2.3.0 in an environment *without* the project's dependencies
+      reported 25 ``untyped-decorator`` errors across ``cli/``, because ``click`` degrades to
+      ``Any``. Purely the environment.
+
+    So neither ``rev``-bumping nor ``additional_dependencies`` closes it alone, and doing both
+    would leave two hand-synced declarations to drift later. The hook therefore invokes the
+    project's own toolchain through the *same Make target* ``make validate`` runs, which is what
+    these tests assert: not a version equality, but the absence of anything to keep in sync.
+    """
+
+    def test_the_mypy_hook_invokes_a_make_target_that_validate_also_runs(self) -> None:
+        entry = local_hook_entry(PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), 'mypy')
+        assert entry is not None, (
+            f'{PRE_COMMIT_NAME} has no local `mypy` hook. If the pre-push typecheck was removed, '
+            f'the only ENFORCED typecheck went with it -- `make validate` is a convention, the '
+            f'hooks are what actually runs at push. Restore it or take that to the captain.'
+        )
+        tokens = shlex.split(entry)
+        assert tokens and tokens[0] == 'make', (
+            f'the local mypy hook runs {entry!r}, which does not go through `make`. Invoking mypy '
+            f'directly re-opens CI-105: the hook would then carry its own idea of which mypy, '
+            f'which flags and which interpreters, and could drift from {MAKE_NAME} exactly as the '
+            f'mirrors-mypy pin did.'
+        )
+        prerequisites = make_prerequisites(MAKEFILE.read_text(encoding='utf-8'), VALIDATE_TARGET)
+        # Anti-vacuity (CI-083): an empty prerequisite list would make the membership check below
+        # pass for nothing at all.
+        assert prerequisites, f'the `{VALIDATE_TARGET}` target of {MAKE_NAME} has no prerequisites -- was it renamed?'
+        assert len(tokens) == 2, (
+            f'the local mypy hook runs `{entry}`, which is not a bare `make <target>`. Extra '
+            f'arguments are how the hook starts meaning something {MAKE_NAME} does not, so keep '
+            f'the difference in the target, not on the command line.'
+        )
+        assert tokens[1] in prerequisites, (
+            f'the pre-push mypy hook runs `{entry}`, but `make {VALIDATE_TARGET}` runs '
+            f'{prerequisites}. The hook must invoke a target {VALIDATE_TARGET} also invokes, or '
+            f'the two can reach different verdicts on the same code -- which is the whole of '
+            f'CI-105: a green `make validate` that does not imply a green `git push`.\n'
+            f'Change both together, or point the hook at one of {prerequisites}.'
+        )
+
+    def test_no_hosted_hook_brings_a_second_mypy(self) -> None:
+        pinned = pinned_hook_rev(PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), MYPY_MIRROR_REPO)
+        assert pinned is None, (
+            f'{PRE_COMMIT_NAME} pins {MYPY_MIRROR_REPO} at v{pinned} again. That hook runs its own '
+            f'mypy in an environment pre-commit builds, with NO project dependencies -- so it '
+            f'disagrees with `make typecheck` on both the version axis (measured: 1.11.2 flagged '
+            f'parse.py:746 that 2.3.0 does not) and the dependency axis (measured: 25 '
+            f'`untyped-decorator` errors in cli/ because click becomes Any). `rev` bumping fixes '
+            f'the first and `additional_dependencies` the second; only running the mypy this repo '
+            f'already resolves fixes both without leaving something to hand-sync. See CI-105.'
+        )
+
+    def test_this_guard_can_still_see_a_hook_that_left_the_makefile(self, tmp_path: Path) -> None:
+        """Positive control: prove both assertions above can go red (CI-072).
+
+        ``test_the_mypy_hook_invokes_a_make_target_that_validate_also_runs`` asserts membership in
+        a list, and ``test_no_hosted_hook_brings_a_second_mypy`` asserts a None. Both are shapes
+        that pass loudly when the parser underneath them has quietly stopped working -- a
+        ``local_hook_entry`` that returned the first ``entry:`` in the file, or a
+        ``pinned_hook_rev`` blind to a stanza it should see, would leave both green forever.
+        Each is therefore re-run against a config that IS trapped.
+        """
+        makefile = MAKEFILE.read_text(encoding='utf-8')
+        # 1. A hook that calls mypy directly instead of through make -- the pre-CI-105 shape.
+        direct = '\n'.join(
+            [
+                'repos:',
+                '  - repo: local',
+                '    hooks:',
+                '      - id: mypy',
+                '        entry: uv run mypy --strict src',
+                '        language: system',
+            ]
+        )
+        assert local_hook_entry(direct, 'mypy') == 'uv run mypy --strict src'
+        assert shlex.split(str(local_hook_entry(direct, 'mypy')))[0] != 'make', (
+            'the control could not build a hook that bypasses make, so the assertion it controls '
+            'cannot be shown to fail.'
+        )
+        # 2. A hook pointed at a real target that `make validate` does NOT run. `typecheck` is the
+        #    single-interpreter target -- a plausible, wrong edit, since it typechecks fine and
+        #    would silently stop covering three of the four CI interpreters.
+        prerequisites = make_prerequisites(makefile, VALIDATE_TARGET)
+        assert 'typecheck' not in prerequisites and 'typecheck-matrix' in prerequisites, (
+            f'this control assumes `make {VALIDATE_TARGET}` runs `typecheck-matrix` and not '
+            f'`typecheck`; it runs {prerequisites}. Re-pick the wrong-but-plausible target.'
+        )
+        # 3. A restored mirrors-mypy stanza must still be visible to the absence check.
+        restored = '\n'.join(
+            ['repos:', f'  - repo: {MYPY_MIRROR_REPO}', '    rev: v1.11.2', '    hooks:', '      - id: mypy']
+        )
+        (tmp_path / 'config.yaml').write_text(restored, encoding='utf-8')
+        seen = pinned_hook_rev((tmp_path / 'config.yaml').read_text(encoding='utf-8'), MYPY_MIRROR_REPO)
+        assert seen == '1.11.2', (
+            f'pinned_hook_rev read {seen!r} from a config that plainly re-adds {MYPY_MIRROR_REPO} '
+            f'at v1.11.2. test_no_hosted_hook_brings_a_second_mypy would therefore pass even with '
+            f'the hosted hook restored, which makes it theatre (CI-072).'
+        )

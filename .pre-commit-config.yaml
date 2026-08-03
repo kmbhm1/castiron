@@ -49,7 +49,20 @@ repos:
       - id: commitizen
         stages: [commit-msg]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # ⚠ This rev MUST equal the `ruff` version `uv.lock` resolves — `make lint` / `make format`
+    # / `make validate` run the LOCKED ruff, and these hooks run THIS one. When they differ, a
+    # green `make validate` does not imply a green `git push`, which is the CI-081 shape (a gate
+    # covering something different from the check after it) on the lint/format axis. It has cost
+    # real time twice: PR #13 (`2d590a9`), where the two versions wrapped a long boolean `assert`
+    # differently and the push failed with "files were modified by this hook"; and PR #15, where
+    # `isinstance(x, (A, B))` passed all four `make validate` legs and was rejected at push
+    # because 0.6.9 still carried `UP038` and 0.16.0 removed it.
+    #
+    # `tests/unit/test_repo_tooling.py::TestTheRuffHookAndTheRuffGateAreTheSameRuff` asserts the
+    # equality, so `pre-commit autoupdate` (which would happily move this to v0.16.1) goes red
+    # instead of silently re-opening the gap. To upgrade: bump `ruff` in `uv.lock` and this rev
+    # together, in one commit.
+    rev: v0.16.0
     hooks:
       - id: ruff
         stages: [pre-push]
@@ -57,10 +70,41 @@ repos:
       - id: ruff-format
         stages: [pre-push]
         types_or: [python, pyi]
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+  # ⚠ `repo: local` + `language: system` is deliberate, and it is the SAME fix as the ruff pin
+  # above taken to its conclusion. This hook used to be `pre-commit/mirrors-mypy` at `rev:
+  # v1.11.2`, which ran mypy 1.11.2 in an environment pre-commit built itself — while
+  # `make typecheck` ran the mypy `uv.lock` resolves (2.3.0) with the project's dependencies
+  # installed. Those two disagreed on real code, in BOTH of the independent ways they could:
+  #
+  #   * version    -- mypy 2.x narrows `Any` through an `isinstance` guard where 1.11 did not,
+  #                   so `sources/openapi/parse.py:746` was a `no-any-return` error under the
+  #                   hook and clean under the gate. Measured with the project's dependencies
+  #                   present, so it is purely the version.
+  #   * dependency -- pre-commit's env has no project dependencies, so `click` degraded to `Any`
+  #                   under `ignore_missing_imports` and `--strict` then called all 25 decorated
+  #                   CLI functions untyped. Measured with mypy 2.3.0, so it is purely the deps.
+  #
+  # Because each cause is independent, NEITHER single-axis remedy closes the gap: bumping `rev`
+  # alone leaves the 25 dependency errors, and `additional_dependencies` alone leaves
+  # `parse.py:746`. Doing both would close it today at the cost of TWO new declarations that must
+  # be hand-synced with `uv.lock` forever -- trading one instance of this bug for a slower one.
+  #
+  # Invoking `make typecheck-matrix` removes the sync surface instead of maintaining it: the hook
+  # and `make validate` now run the *same Make target*, so there is no second version, no second
+  # dependency list, and no third place to forget. This STRENGTHENS what is enforced at push --
+  # same `--strict` (from `[tool.mypy]`), but real dependency types instead of `Any`, the whole
+  # `src` package instead of the changed files, and all four CI interpreters instead of one.
+  # Cost: ~1.7s warm.
+  #
+  # `pass_filenames: false` is required, not stylistic -- mypy must see the whole package, and
+  # `[tool.mypy] files = ["src"]` plus the target already say what to check. `files: ^src/` is
+  # unchanged from the mirrors-mypy hook and still decides *whether* to run.
+  - repo: local
     hooks:
       - id: mypy
-        stages: [pre-push]
+        name: mypy --strict on py3.10-3.13 (the project's own mypy, via make)
+        entry: make typecheck-matrix
+        language: system
+        pass_filenames: false
         files: ^src/
-        args: [--strict, --ignore-missing-imports]
+        stages: [pre-push]

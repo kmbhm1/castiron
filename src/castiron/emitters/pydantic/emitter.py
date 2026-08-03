@@ -357,11 +357,23 @@ class PydanticEmitter(Emitter):
         classes = []
         for enum in schema.enums:
             lines = [f'class {python_class_name(enum)}(str, Enum):']
-            for member in python_member_names(enum):
+            members = python_member_names(enum)
+            for member in members:
                 comment = ''
                 if member.note is not None:
                     comment = f'  # original name was {_py_string(member.label)} ({member.note})'
                 lines.append(f'{IND}{member.name} = {_py_string(member.label)}{comment}')
+            if not members:
+                # ⚠ `CREATE TYPE t AS ENUM ()` is legal Postgres and PostgREST reports it as
+                # `"enum": []`, which reached here and emitted a class header with NO BODY --
+                # an `IndentationError`, at exit 0, taking the whole module with it. Same class
+                # of defect as CI-080 and reachable through the real source path.
+                #
+                # `pass` rather than skipping the class: the column that carries the type still
+                # annotates itself with this name, so omitting it would trade an
+                # `IndentationError` for a `NameError`. An empty `Enum` subclass is valid and is
+                # the honest rendering of an empty Postgres enum.
+                lines.append(f'{IND}pass')
             classes.append('\n'.join(lines))
 
         comment = section_comment('Enum Types', ['These are generated from Postgres user-defined enum types.'])

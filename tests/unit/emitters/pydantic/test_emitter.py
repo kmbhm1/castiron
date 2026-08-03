@@ -1497,3 +1497,68 @@ class TestCi080TheCommentIsTotalOverItsInput:
         # already escapes `\r` and `\n`, which are the two that would really end a line.)
         body = out.split('class PublicMoodEnum(str, Enum):\n')[1].split('\n\n\n')[0]
         assert len(body.split('\n')) == len(labels), body
+
+
+@pytest.mark.unit
+class TestAnEmptyEnumStillEmitsAParseableModule:
+    """``CREATE TYPE t AS ENUM ()`` is legal Postgres, and it produced an unparseable module.
+
+    ⚠ **Pre-existing, not a CI-094 regression** -- verified byte-identical on ``origin/main`` @
+    ``0a70513``. Folded into this row because it is the same defect class the row exists to close
+    (unparseable output at exit 0) and this is the last code row before an immutable publish. It
+    is a **separate commit** so it stays severable.
+
+    The emitter wrote ``class PublicJobStateEnum(str, Enum):`` with no body -- an
+    ``IndentationError`` that takes the whole module with it, exactly like CI-080 did.
+    """
+
+    @staticmethod
+    def _document(labels: list[str]) -> dict[str, object]:
+        return {
+            'swagger': '2.0',
+            'info': {'title': 'empty-enum', 'version': '0'},
+            'paths': {'/jobs': {'get': {}, 'post': {}}},
+            'definitions': {
+                'jobs': {
+                    'type': 'object',
+                    'required': ['id'],
+                    'properties': {
+                        'id': {
+                            'description': 'Note:\nThis is a Primary Key.<pk/>',
+                            'format': 'int32',
+                            'type': 'integer',
+                        },
+                        'state': {'enum': labels, 'format': 'public.job_state', 'type': 'string'},
+                    },
+                }
+            },
+        }
+
+    def test_it_is_reachable_through_the_real_source_path(self) -> None:
+        # Not a hand-built Schema: PostgREST's `"enum": []` really does reach `schema.enums`,
+        # which is what makes this a user-facing defect rather than a theoretical one.
+        schema = build_schema_from_document(self._document([]))
+        assert [(e.name, e.values) for e in schema.enums] == [('job_state', [])]
+
+    def test_the_emitted_module_parses(self) -> None:
+        out = _emit(build_schema_from_document(self._document([])))
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+    def test_the_empty_enum_class_exists_and_is_empty(self) -> None:
+        # `pass`, not a skipped class: the column still annotates itself `PublicJobStateEnum`,
+        # so omitting the class would trade an IndentationError for a NameError.
+        out = _emit(build_schema_from_document(self._document([])))
+        assert 'class PublicJobStateEnum(str, Enum):\n    pass' in out
+        assert 'PublicJobStateEnum' in out.split('# BASE CLASSES')[1]
+
+        namespace: dict[str, object] = {}
+        exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+        assert list(namespace['PublicJobStateEnum']) == []  # type: ignore[call-overload]
+
+    def test_a_non_empty_enum_gains_no_pass(self) -> None:
+        # The counter-witness: `pass` must appear only when the body would otherwise be empty.
+        out = _emit(build_schema_from_document(self._document(['ok'])))
+        assert 'class PublicJobStateEnum(str, Enum):\n    OK = "ok"' in out
+        assert 'Enum):\n    pass' not in out

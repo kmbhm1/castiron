@@ -207,9 +207,8 @@ class TestTheRegenerationToolStaysInItsLane:
         self, regeneration_write_set: dict[Path, str]
     ) -> None:
         for path in regeneration_write_set:
-            assert path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(FINGERPRINT_DIR), (
-                f'the regeneration tool would write {path}, which is outside golden/ and fingerprints/'
-            )
+            writable_root = path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(FINGERPRINT_DIR)
+            assert writable_root, f'the regeneration tool would write {path}, outside golden/ and fingerprints/'
 
     def test_it_does_not_offer_to_rewrite_the_ci_005_golden_this_row_does_not_own(
         self, regeneration_write_set: dict[Path, str]

@@ -1,5 +1,6 @@
 import keyword
 import unicodedata
+import warnings
 
 import pytest
 
@@ -26,16 +27,44 @@ def _members(*labels: str) -> list[EnumMember]:
 def _exec_enum(pairs: list[tuple[str, str]]) -> dict[str, object]:
     """Build and **execute** a real ``Enum`` class body from ``(member_name, value)`` pairs.
 
-    ⚠ Execution, not ``compile()``. Both shapes CI-080's fix round 1 closed are invisible to a
-    parse: ``_sunder_`` raises when the class body runs, and ``__dunder__`` is silently swallowed
-    by ``EnumMeta``. A test that only compiles reports green on a module that cannot be imported.
+    ⚠ Execution, not ``compile()``. All three shapes CI-080's fix round 1 closed are invisible to
+    a parse: ``_sunder_`` raises when the class body runs, ``__dunder__`` is silently swallowed by
+    ``EnumMeta``, and a mangled name is rewritten by the compiler. A test that only compiles
+    reports green on a module that cannot be imported.
+
+    ⚠ **Warnings are captured and asserted on, not suppressed** -- see :func:`_exec_enum_clean`.
+    On py3.10 a ``DeprecationWarning`` is the *only* signal that a name was name-mangled, because
+    3.10 still creates the member (under ``_E__X``) rather than dropping it. Muting it would
+    blind the one interpreter that reports the defect at all.
     """
+    return _exec_enum_capturing(pairs)[0]
+
+
+def _exec_enum_capturing(pairs: list[tuple[str, str]]) -> tuple[dict[str, object], list[warnings.WarningMessage]]:
+    """As :func:`_exec_enum`, and also return whatever the class body warned about."""
     import enum as enum_module
 
     body = '\n'.join(f'    {name} = {value!r}' for name, value in pairs)
     source = f'class E(str, enum_module.Enum):\n{body}\n'
     namespace: dict[str, object] = {'enum_module': enum_module}
-    exec(compile(source, '<enum-corpus>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        exec(compile(source, '<enum-corpus>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+    return namespace, list(caught)
+
+
+def _exec_enum_clean(pairs: list[tuple[str, str]]) -> dict[str, object]:
+    """Execute the class body and assert it warned about **nothing**.
+
+    🔴 This is a py3.10-specific detector for the name-mangling defect, and it is the reason the
+    gate runs the whole interpreter matrix. 3.11+ silently drop a mangled member, so the only
+    evidence there is the member count; **3.10 keeps it** under a class-derived name and emits
+    ``DeprecationWarning: private variables, such as '_E__2', will be normal attributes in 3.11``.
+    Asserting silence turns that warning into a failing test on one leg instead of 46 lines of
+    noise in the gate output on all four.
+    """
+    namespace, caught = _exec_enum_capturing(pairs)
+    assert caught == [], [f'{w.category.__name__}: {w.message}' for w in caught]
     return namespace
 
 
@@ -350,7 +379,7 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         # Each label alone, so a failure names the label rather than the corpus.
         for label in ENUM_LABEL_CORPUS:
             (member,) = _members(label)
-            namespace = _exec_enum([(member.name, label)])
+            namespace = _exec_enum_clean([(member.name, label)])
             enum_class = namespace['E']
             assert len(list(enum_class)) == 1, f'{label!r} -> {member.name!r} was dropped by EnumMeta'
             assert enum_class(label).value == label, f'{label!r} does not round-trip'
@@ -359,7 +388,7 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         # And all at once, which is the shape a user actually gets: every label present, every
         # value exact, nothing collapsed. This is the end-to-end statement of CI94-Q1.
         members = _members(*ENUM_LABEL_CORPUS)
-        enum_class = _exec_enum([(m.name, m.label) for m in members])['E']
+        enum_class = _exec_enum_clean([(m.name, m.label) for m in members])['E']
         assert len(list(enum_class)) == len(ENUM_LABEL_CORPUS), 'a label was dropped or two collapsed'
         for label in ENUM_LABEL_CORPUS:
             assert enum_class(label).value == label
@@ -447,7 +476,7 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         assert _repair_enum_shape('__INIT__') == '__INIT___'
 
         # ... and every repaired name really is accepted, under its own name, by a real Enum.
-        enum_class = _exec_enum([(name, f'v{index}') for index, name in enumerate(sorted(set(repaired)))])['E']
+        enum_class = _exec_enum_clean([(name, f'v{index}') for index, name in enumerate(sorted(set(repaired)))])['E']
         assert [m.name for m in enum_class] == sorted(set(repaired))
 
     def test_the_collision_suffix_cannot_smuggle_a_reserved_shape_back_in(self) -> None:
@@ -459,7 +488,7 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
 
         members = _members('', ' ', '\t', '\n', '\x00', '-', '---', '   ')
         assert all(not _is_enum_reserved_shape(m.name) for m in members), [m.name for m in members]
-        enum_class = _exec_enum([(m.name, m.label) for m in members])['E']
+        enum_class = _exec_enum_clean([(m.name, m.label) for m in members])['E']
         assert len(list(enum_class)) == 8, 'a label was mangled away'
         for member in members:
             assert enum_class(member.label).value == member.label

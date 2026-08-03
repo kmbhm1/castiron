@@ -1,0 +1,14 @@
+{
+  "origin": "captured",
+  "source_repo": "github.com/kmbhm1/castiron-testbed",
+  "seed_revision": "3150132",
+  "postgrest_version": "14.14",
+  "captured_with": "./scripts/capture.sh",
+  "captured_on": "2026-08-02",
+  "schema": "inventory",
+  "definition_count": 2,
+  "path_count": 4,
+  "verified_by": "./scripts/verify.sh - clean-slate double rebuild, run-a and run-b byte-identical for all three documents and the pg_dump schema",
+  "sha256": "1ed0b2c2751d84a5e67cdf7799e2e4947d5b71462d5c8577d155ec56485a4385",
+  "notes": "The second exposed schema, reached via Accept-Profile / --schema. It exists in the corpus to prove a second document reaches a different schema, and it is the corpus's only fully-asserted capture - a control with no known-wrong region at all."
+}

@@ -1,0 +1,83 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "description": "Synthetic identifier-hostile document. NOT a capture. See synthetic-torture.provenance.json.",
+    "title": "castiron corpus torture schema",
+    "version": "0.0.0-synthetic"
+  },
+  "host": "0.0.0.0:3000",
+  "basePath": "/",
+  "schemes": ["http"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/hostile_columns": {
+      "get": {
+        "tags": ["hostile_columns"],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "post": {
+        "tags": ["hostile_columns"],
+        "responses": {"201": {"description": "Created"}}
+      }
+    },
+    "/hostile_enum_labels": {
+      "get": {
+        "tags": ["hostile_enum_labels"],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "post": {
+        "tags": ["hostile_enum_labels"],
+        "responses": {"201": {"description": "Created"}}
+      }
+    }
+  },
+  "definitions": {
+    "hostile_columns": {
+      "type": "object",
+      "description": "Columns whose names are legal in Postgres and illegal in Python (CI-085).",
+      "required": ["id", "2fast"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "2fast": {
+          "format": "text",
+          "type": "string"
+        },
+        "space name": {
+          "format": "text",
+          "type": "string"
+        },
+        "kebab-case": {
+          "format": "text",
+          "type": "string"
+        },
+        "ok_column": {
+          "format": "text",
+          "type": "string"
+        }
+      }
+    },
+    "hostile_enum_labels": {
+      "type": "object",
+      "description": "An enum whose LABELS are legal in Postgres and illegal as Python identifiers (CI-080).",
+      "required": ["id", "state"],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "state": {
+          "default": "in progress",
+          "enum": ["in progress", "done", "n/a", "2nd pass"],
+          "format": "task_state",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

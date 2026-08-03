@@ -1,19 +1,27 @@
 import itertools
 import keyword
+import os
+import subprocess
+import sys
 import unicodedata
 import warnings
+from pathlib import Path
 
 import pytest
 
 from castiron.ir import EnumInfo
 from castiron.utils.naming import (
     EnumMember,
+    _is_enum_reserved_shape,
     pluralize,
     python_class_name,
     python_member_names,
     singularize,
     to_pascal_case,
 )
+
+#: The repository root, so the subprocess determinism probe can import `tests.` and `src/`.
+REPO_ROOT = Path(__file__).parents[3]
 
 
 def _names(*labels: str) -> list[str]:
@@ -25,7 +33,7 @@ def _members(*labels: str) -> list[EnumMember]:
     return python_member_names(EnumInfo(name='t', values=list(labels), schema='public'))
 
 
-def _exec_enum(pairs: list[tuple[str, str]]) -> dict[str, object]:
+def _exec_enum(pairs: list[tuple[str, str]], class_name: str = 'E') -> dict[str, object]:
     """Build and **execute** a real ``Enum`` class body from ``(member_name, value)`` pairs.
 
     ⚠ Execution, not ``compile()``. All three shapes CI-080's fix round 1 closed are invisible to
@@ -37,16 +45,25 @@ def _exec_enum(pairs: list[tuple[str, str]]) -> dict[str, object]:
     On py3.10 a ``DeprecationWarning`` is the *only* signal that a name was name-mangled, because
     3.10 still creates the member (under ``_E__X``) rather than dropping it. Muting it would
     blind the one interpreter that reports the defect at all.
+
+    🔴 **``class_name`` is a parameter and not a hard-coded ``E``, and that is the point.**
+    ``EnumMeta`` consults the **enclosing class name** (``_is_private``), so an oracle that always
+    executes under ``class E`` is structurally blind to that axis -- it cannot observe ``CI-113``
+    no matter how many labels it is given. An oracle blind to an axis is the same defect this
+    whole row has been about, so :class:`TestTheOracle` passes the **real** emitted class name
+    from :func:`python_class_name`.
     """
-    return _exec_enum_capturing(pairs)[0]
+    return _exec_enum_capturing(pairs, class_name)[0]
 
 
-def _exec_enum_capturing(pairs: list[tuple[str, str]]) -> tuple[dict[str, object], list[warnings.WarningMessage]]:
+def _exec_enum_capturing(
+    pairs: list[tuple[str, str]], class_name: str = 'E'
+) -> tuple[dict[str, object], list[warnings.WarningMessage]]:
     """As :func:`_exec_enum`, and also return whatever the class body warned about."""
     import enum as enum_module
 
     body = '\n'.join(f'    {name} = {value!r}' for name, value in pairs)
-    source = f'class E(str, enum_module.Enum):\n{body}\n'
+    source = f'class {class_name}(str, enum_module.Enum):\n{body}\n'
     namespace: dict[str, object] = {'enum_module': enum_module}
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
@@ -54,7 +71,7 @@ def _exec_enum_capturing(pairs: list[tuple[str, str]]) -> tuple[dict[str, object
     return namespace, list(caught)
 
 
-def _exec_enum_clean(pairs: list[tuple[str, str]]) -> dict[str, object]:
+def _exec_enum_clean(pairs: list[tuple[str, str]], class_name: str = 'E') -> dict[str, object]:
     """Execute the class body and assert it warned about **nothing**.
 
     🔴 This is a py3.10-specific detector for the name-mangling defect, and it is the reason the
@@ -64,7 +81,7 @@ def _exec_enum_clean(pairs: list[tuple[str, str]]) -> dict[str, object]:
     Asserting silence turns that warning into a failing test on one leg instead of 46 lines of
     noise in the gate output on all four.
     """
-    namespace, caught = _exec_enum_capturing(pairs)
+    namespace, caught = _exec_enum_capturing(pairs, class_name)
     assert caught == [], [f'{w.category.__name__}: {w.message}' for w in caught]
     return namespace
 
@@ -489,7 +506,15 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         from castiron.utils.naming import _is_enum_reserved_shape
 
         names = _generated_names()
+        # ⚠ The SIZE is pinned, not just the presence of an NFKC character. `_generated_names`
+        # takes `max_length` with a default nothing else asserts -- at `max_length=2` the sweep
+        # drops to 10 names containing ZERO reserved shapes, and every assertion below would pass
+        # vacuously. Its sibling `_generated_labels` was already pinned; this one was not. That is
+        # this file's own stated hazard ("a guard that silently narrows is worse than none")
+        # applied to one generator and not the other.
+        assert len(names) == 682, len(names)
         assert any(NFKC_UNDERSCORE in name for name in names), 'the sweep must exercise NFKC folding'
+        assert sum(_is_enum_reserved_shape(name) for name in names) > 0, 'the sweep contains no reserved shape'
         for name in names:
             try:
                 enum_class = _exec_enum([(name, 'v')])['E']
@@ -522,7 +547,9 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         from castiron.utils.naming import _is_enum_reserved_shape, _repair_enum_shape
 
         names = _generated_names()
+        assert len(names) == 682, len(names)  # see the note in the sibling test: pin the size
         reserved = [n for n in names if _is_enum_reserved_shape(n)]
+        assert len(reserved) == 184, len(reserved)
 
         repaired = [_repair_enum_shape(n) for n in reserved]
         assert all(not _is_enum_reserved_shape(r) for r in repaired)
@@ -573,8 +600,17 @@ class TestTheOracle:
     shapes someone thought of. This does not enumerate *shapes* at all: it enumerates the
     **character classes that can produce one** -- ASCII underscore, an NFKC-active underscore, a
     letter, a digit, a space -- takes every string over them, runs the **real** transform, builds
-    a **real** enum, and asserts every label survives. A fourth shape on this axis fails here
-    without anyone naming it first.
+    a **real** enum **under the real emitted class name**, and asserts every label survives. A
+    further shape on the *spelling* axis fails here without anyone naming it first.
+
+    ⚠ **Scope of that claim, because an earlier revision overstated it.** It said "a fourth shape
+    on this axis fails here without anyone naming it first" while
+    :func:`_exec_enum_capturing` hard-coded ``class E`` -- so the oracle was **structurally
+    blind** to the one axis ``EnumMeta`` consults besides the name itself: the enclosing class
+    name. ``CI-113``'s reproducer passed every assertion below. The class name is now threaded
+    through, which makes the axis *observable*; the label alphabet still cannot spell a class
+    name (that needs modifier-letter Unicode), so ``CI-113`` is pinned explicitly by
+    :class:`TestCi113` rather than discovered here.
     """
 
     def test_the_alphabet_covers_the_classes_that_matter(self) -> None:
@@ -587,6 +623,15 @@ class TestTheOracle:
         assert any(c.isalpha() for c in LABEL_ALPHABET)
         assert len(_generated_labels()) == 780
 
+    #: The enum the oracle emits, and the class name it is executed under -- the REAL one the
+    #: Pydantic emitter would write, not a stand-in.
+    ENUM = EnumInfo(name='mood', values=[], schema='public')
+
+    def test_the_oracle_executes_under_the_real_emitted_class_name(self) -> None:
+        # Guards the fix for the oracle's own blindness: if this ever reverts to a stand-in like
+        # `E`, the class-name axis stops being observable and CI-113 becomes undetectable again.
+        assert python_class_name(self.ENUM) == 'PublicMoodEnum'
+
     def test_every_generated_label_survives_as_a_real_enum_member(self) -> None:
         labels = _generated_labels()
         members = python_member_names(EnumInfo(name='mood', values=labels, schema='public'))
@@ -596,7 +641,8 @@ class TestTheOracle:
         assert all(m.name.isidentifier() for m in members)
 
         # ... and nothing dropped, renamed or collapsed on the way out. One class, all 780.
-        enum_class = _exec_enum_clean([(m.name, m.label) for m in members])['E']
+        class_name = python_class_name(self.ENUM)
+        enum_class = _exec_enum_clean([(m.name, m.label) for m in members], class_name)[class_name]
         assert len(list(enum_class)) == len(labels), (
             f'{len(labels) - len(list(enum_class))} label(s) did not become members. A reserved '
             f'shape reached the emitted enum -- find it with `_is_enum_reserved_shape`.'
@@ -618,11 +664,120 @@ class TestTheOracle:
         keys = [unicodedata.normalize('NFKC', m.name) for m in members]
         assert len(set(keys)) == len(keys), 'two members would collapse to one binding at import'
 
-    def test_the_oracle_is_deterministic(self) -> None:
-        # Hard Rule #9 over the generated corpus, not just the hand-written one.
-        labels = _generated_labels()
-        renders = {
-            tuple(m.name for m in python_member_names(EnumInfo(name='mood', values=labels, schema='public')))
-            for _ in range(5)
-        }
-        assert len(renders) == 1
+    def test_the_oracle_is_deterministic_across_hash_seeds(self) -> None:
+        """Hard Rule #9 over the generated corpus, in **subprocesses** under different seeds.
+
+        ⚠ The first version called :func:`python_member_names` five times **in one process**,
+        which cannot observe hash-seed-dependent ordering at all: ``PYTHONHASHSEED`` is fixed for
+        the life of an interpreter. Mutation-verified as worthless -- replacing
+        ``for label in enum.values`` with ``for label in set(enum.values)``, a literal Hard Rule #9
+        violation, left it **green** while 25 other tests went red. A guard that cannot fail on
+        the property it names is the exact thing this row's last three rounds were about, so it
+        was shipped inside the round whose thesis was eliminating them.
+
+        ``CI-065`` is the standing precedent: a non-total sort key really did flip output under
+        ``PYTHONHASHSEED``.
+        """
+        script = (
+            'import sys; sys.path.insert(0, ".");'
+            'from castiron.ir import EnumInfo;'
+            'from castiron.utils.naming import python_member_names;'
+            'from tests.unit.utils.test_naming import _generated_labels;'
+            'labels = _generated_labels();'
+            'print("|".join(m.name for m in '
+            'python_member_names(EnumInfo(name="mood", values=labels, schema="public"))))'
+        )
+        outputs = set()
+        for seed in ('0', '1', '42', '4294967295', 'random', 'random'):
+            result = subprocess.run(
+                [sys.executable, '-c', script],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, 'PYTHONHASHSEED': seed},
+                cwd=REPO_ROOT,
+            )
+            outputs.add(result.stdout)
+        assert len(outputs) == 1, f'{len(outputs)} distinct renderings across hash seeds'
+
+
+@pytest.mark.unit
+class TestCi113TheClassNameAxisIsOpen:
+    """🔴 ``CI-113``, pinned as **present** — not asserted as correct, and not fixed here.
+
+    ``EnumMeta`` consults the **enclosing class name**: ``_is_private(cls_name, name)`` also
+    swallows a member already spelled ``_<ClassName>__x``. :func:`python_member_names` never
+    receives the class name, so it cannot see that shape.
+
+    An earlier revision of ``naming.py`` claimed this was *"unreachable through the Pydantic
+    emitter (verified)"*. **That was false.** The reasoning was that ``str.upper()`` cannot
+    produce the lowercase letters a class name needs — true — and it missed that **NFKC runs
+    after ``.upper()``, in the compiler**. Measured below: 389 codepoints the character map keeps
+    are ``upper()``-invariant *and* NFKC-fold to an ASCII lowercase letter, covering all 26.
+
+    **Left open deliberately.** Closing it means threading the class name into
+    :func:`python_member_names` — a signature change on the last row before an immutable publish,
+    for an input that requires deliberately-crafted modifier-letter Unicode. This follows the
+    repo's established pattern for known-wrong-but-visible: ``CI-085`` ships with
+    ``compiles=False``, ``CI-100`` ships pinned-as-present. **These assertions are written so that
+    FIXING CI-113 turns them red**, which is the signal to delete them.
+    """
+
+    @staticmethod
+    def _fold_map() -> dict[str, str]:
+        """ASCII lowercase -> a codepoint the map keeps that ``.upper()`` ignores and NFKC folds."""
+        folders: dict[str, str] = {}
+        for cp in range(0x110000):
+            char = chr(cp)
+            if ('_' + char).isidentifier() and char.upper() == char:
+                folded = unicodedata.normalize('NFKC', char)
+                if len(folded) == 1 and 'a' <= folded <= 'z':
+                    folders.setdefault(folded, char)
+        return folders
+
+    def test_the_falsifying_codepoints_exist_and_cover_every_letter(self) -> None:
+        # The fact that made the old "unreachable (verified)" claim wrong. If Unicode ever stops
+        # providing these, CI-113 closes itself and this class should go.
+        folders = self._fold_map()
+        assert set(folders) == set('abcdefghijklmnopqrstuvwxyz'), sorted(
+            set('abcdefghijklmnopqrstuvwxyz') - set(folders)
+        )
+        assert unicodedata.normalize('NFKC', 'ª') == 'a'
+        assert 'ª'.upper() == 'ª', 'upper() must NOT undo it -- that is the whole mechanism'
+
+    def test_a_crafted_label_is_still_swallowed_by_the_class_name_clause(self) -> None:
+        enum_info = EnumInfo(name='order_status', values=[], schema='public')
+        class_name = python_class_name(enum_info)
+        assert class_name == 'PublicOrderStatusEnum'
+
+        folders = self._fold_map()
+        label = ''.join(folders.get(ch, ch) for ch in f'_{class_name}__X')
+        members = python_member_names(EnumInfo(name='order_status', values=[label, 'ok'], schema='public'))
+
+        # castiron considers the name clean -- that is the defect, stated as the defect.
+        assert not _is_enum_reserved_shape(members[0].name)
+        assert unicodedata.normalize('NFKC', members[0].name) == f'_{class_name}__X'
+
+        enum_class = _exec_enum([(m.name, m.label) for m in members], class_name)[class_name]
+        surviving = [m.value for m in enum_class]
+        if sys.version_info >= (3, 11):
+            assert surviving == ['ok'], (
+                'CI-113 appears FIXED: the crafted label survived. Delete this class, delete the '
+                'CI-113 caveats in naming.py, and close the WORKPLAN row.'
+            )
+        else:
+            # py3.10 keeps it under the mangled name instead of dropping it -- the same defect
+            # wearing the interpreter-dependent costume that makes it a Hard Rule #9 issue too.
+            assert surviving == [label, 'ok']
+            assert [m.name for m in enum_class] == [f'_{class_name}__X', 'OK']
+
+    def test_ascii_only_labels_cannot_reach_it(self) -> None:
+        # The bound on the exposure, asserted rather than asserted-in-prose: the generated class
+        # name always ends `Enum`, whose lowercase `num` an ASCII label cannot survive `.upper()`.
+        for label in ('_publicorderstatusenum__x', '_PublicOrderStatusEnum__X', '_PUBLICORDERSTATUSENUM__X'):
+            (member,) = python_member_names(EnumInfo(name='order_status', values=[label], schema='public'))
+            assert unicodedata.normalize('NFKC', member.name) != '_PublicOrderStatusEnum__X'
+
+    def test_the_oracles_alphabet_cannot_spell_a_class_name(self) -> None:
+        # Why TestTheOracle does not find this on its own, stated so the two are not confused.
+        assert not (set(LABEL_ALPHABET) & set(self._fold_map().values()))

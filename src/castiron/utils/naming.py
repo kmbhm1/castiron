@@ -76,18 +76,32 @@ class EnumMember:
             :func:`_is_enum_reserved_shape`), and guaranteed unique within one
             :func:`python_member_names` call **after NFKC normalization**.
 
-            ⚠ The ``Enum`` half of that guarantee has one stated limit, because a guarantee
-            without its limits is the sentence ``CI-077`` exists to punish. CPython's
-            ``_is_private`` takes the **enclosing class name** and also swallows a member that is
-            already spelled ``_<ClassName>__x``. This function does not know the class name, so a
-            label that sanitizes to exactly that form for its own enum class would still be
-            dropped. It is **unreachable through the Pydantic emitter** (verified: enum classes
-            are named ``<Schema><Name>Enum``, so the member would have to begin
-            ``_PublicOrderStatusEnum__``, and the character map cannot produce a leading ``_``
-            followed by a capital run that matches the class it is being emitted into), but
-            :func:`python_member_names` is deliberately emitter-agnostic and anticipates reuse by
-            the SQLAlchemy and typed-client emitters. A future emitter that names classes from
-            user input should pass the class name in and widen the predicate.
+            🔴 The ``Enum`` half of that guarantee has **one known exception, filed as CI-113**,
+            and it is stated here because a guarantee without its limits is the sentence
+            ``CI-077`` exists to punish. CPython's ``_is_private`` takes the **enclosing class
+            name** and also swallows a member already spelled ``_<ClassName>__x``. This function
+            does not receive the class name, so it cannot see that shape.
+
+            ⚠ **It is reachable, and an earlier revision of this docstring claimed the opposite
+            "(verified)".** That claim was wrong. It reasoned that ``str.upper()`` cannot produce
+            the lowercase letters a class name needs -- true -- and missed that **NFKC runs
+            after** it, in the compiler. **389** codepoints the character map keeps are
+            ``upper()``-invariant *and* NFKC-fold to an ASCII lowercase letter (``ª``->``a``,
+            ``ᵘ``->``u``, ``ⁿ``->``n``, ...), covering all 26 letters, so any class name is
+            spellable. Driven through the real emitter: the label
+            ``'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'`` normalizes to ``_PublicOrderStatusEnum__X``, and
+            ``castiron gen`` exits **0** while py3.10 keeps the member and py3.11+ **silently drop
+            the label** -- both ``CI94-Q1``'s "never drop a variant" and Hard Rule #9's
+            interpreter-independence, at once.
+
+            **The true condition:** reachable only when a label's NFKC form spells
+            ``_<ClassName>__…`` for the class it is emitted into. **Unreachable from ASCII-only
+            labels**, because the generated suffix ``Enum`` always contributes lowercase ``num``
+            that ``.upper()`` would destroy -- so it takes deliberately-crafted modifier-letter
+            Unicode. Left open rather than closed in code: threading the class name through would
+            be a signature change on the last row before an immutable publish, for an adversarial
+            input. Pinned as present by ``TestCi113`` in ``tests/unit/utils/test_naming.py``, the
+            way ``CI-085`` and ``CI-100`` are pinned, so the gap stays visible.
         note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved by Enum'``,
             ``'reserved keyword'`` or ``'name collision'`` -- or ``None`` when it is. When more
             than one applies (labels ``['import_', 'import']``, where the second is renamed
@@ -159,11 +173,18 @@ def _is_enum_reserved_shape(name: str) -> bool:
     printing the **normalized** name, which is the interpreter telling us plainly which string it
     judged.
 
-    Normalizing first means this predicate sees exactly what the compiler sees, **by
-    construction**, so there is no further shape waiting on this axis. That is the whole reason
+    Normalizing first means this predicate sees the same *string* the compiler sees, **by
+    construction**, so no further shape waits on the **spelling** axis. That is the whole reason
     it is done here rather than by adding a fourth special case: the same mechanism is already
     load-bearing for the uniqueness key in :func:`python_member_names`, and it belongs on both
     consumers or neither.
+
+    ⚠ **"Sees what the compiler sees" is true modulo the ENCLOSING CLASS NAME, which ``Enum``
+    also consults, and this predicate does not receive.** An earlier revision said it
+    unqualified, in this docstring, which is where a maintainer reads it. ``_is_private`` swallows
+    a member already spelled ``_<ClassName>__x``; that shape is **filed as CI-113**, reachable
+    only from deliberately-crafted Unicode, and pinned as present by a test rather than fixed
+    here. So: total over spelling, **not** total over the (name, class name) pair.
 
     Args:
         name: A candidate member name, already known to be a valid identifier.

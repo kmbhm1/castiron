@@ -71,10 +71,23 @@ class EnumMember:
         label: The Postgres enum label, verbatim. This is the ground truth, and it is what the
             emitted value literal carries -- so the transform below is never lossy, however much
             it mangles the name.
-        name: The Python identifier. Guaranteed ``name.isidentifier()``, guaranteed **usable as
-            an ``Enum`` member** (which is a strictly stronger claim -- see
+        name: The Python identifier. Guaranteed ``name.isidentifier()``, guaranteed **usable as a
+            member of a ``str``-mixin ``Enum``** (a strictly stronger claim -- see
             :func:`_is_enum_reserved_shape`), and guaranteed unique within one
             :func:`python_member_names` call **after NFKC normalization**.
+
+            ⚠ The ``Enum`` half of that guarantee has one stated limit, because a guarantee
+            without its limits is the sentence ``CI-077`` exists to punish. CPython's
+            ``_is_private`` takes the **enclosing class name** and also swallows a member that is
+            already spelled ``_<ClassName>__x``. This function does not know the class name, so a
+            label that sanitizes to exactly that form for its own enum class would still be
+            dropped. It is **unreachable through the Pydantic emitter** (verified: enum classes
+            are named ``<Schema><Name>Enum``, so the member would have to begin
+            ``_PublicOrderStatusEnum__``, and the character map cannot produce a leading ``_``
+            followed by a capital run that matches the class it is being emitted into), but
+            :func:`python_member_names` is deliberately emitter-agnostic and anticipates reuse by
+            the SQLAlchemy and typed-client emitters. A future emitter that names classes from
+            user input should pass the class name in and widen the predicate.
         note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved by Enum'``,
             ``'reserved keyword'`` or ``'name collision'`` -- or ``None`` when it is. When more
             than one applies (labels ``['import_', 'import']``, where the second is renamed
@@ -135,12 +148,30 @@ def _is_enum_reserved_shape(name: str) -> bool:
     here so emitted bytes never depend on a CPython internal, and *cross-check it against the
     interpreter in a test* that runs on all four gate legs.
 
+    🔴 **The test is applied to the NFKC-normalized name, and that is what makes it total rather
+    than a list of shapes someone thought of.** CPython normalizes identifiers to NFKC **at
+    compile time**, so the name ``Enum`` actually receives is ``NFKC(name)``, not what castiron
+    wrote. **Seven** identifier-continue codepoints normalize to ``'_'`` and six of them are
+    non-ASCII (``U+FF3F`` FULLWIDTH LOW LINE, ``U+FE33``, ``U+FE34``, ``U+FE4D``, ``U+FE4E``,
+    ``U+FE4F``); ``_identifier_characters`` **keeps** them by ``CI94-D2`` and ``str.upper()``
+    leaves them alone. So ``'_x＿'`` -> ``_X＿``, which is not sunder by inspection and
+    *is* sunder to the compiler -- it raised ``ValueError: _sunder_ names, such as '_X_'``,
+    printing the **normalized** name, which is the interpreter telling us plainly which string it
+    judged.
+
+    Normalizing first means this predicate sees exactly what the compiler sees, **by
+    construction**, so there is no further shape waiting on this axis. That is the whole reason
+    it is done here rather than by adding a fourth special case: the same mechanism is already
+    load-bearing for the uniqueness key in :func:`python_member_names`, and it belongs on both
+    consumers or neither.
+
     Args:
         name: A candidate member name, already known to be a valid identifier.
 
     Returns:
         ``True`` when ``Enum`` would reject, rename or swallow ``name``.
     """
+    name = unicodedata.normalize('NFKC', name)
     sunder = len(name) > 2 and name[0] == name[-1] == '_' and name[1] != '_' and name[-2] != '_'
     dunder = len(name) > 4 and name[:2] == name[-2:] == '__' and name[2] != '_' and name[-3] != '_'
     private = name.startswith('__') and not name.endswith('__')
@@ -151,11 +182,19 @@ def _repair_enum_shape(name: str) -> str:
     """Append ``'_'`` until ``name`` is usable as an ``Enum`` member.
 
     **Terminates in at most three appends, and that bound is a proof rather than an observation.**
-    A name ending in three or more underscores can be none of the three shapes: sunder needs
-    ``name[-2] != '_'``, dunder needs ``name[-3] != '_'``, and private needs the name *not* to end
-    ``'__'``. Every iteration adds one trailing underscore, so the loop cannot run more than three
-    times. (``__2`` is the worst case: ``__2_`` is still private, ``__2__`` is then dunder, and
-    ``__2___`` is finally clean.)
+    A name whose NFKC form ends in three or more underscores can be none of the three shapes:
+    sunder needs ``name[-2] != '_'``, dunder needs ``name[-3] != '_'``, and private needs the name
+    *not* to end ``'__'``. Every iteration adds one trailing underscore, so the loop cannot run
+    more than three times. (``__2`` is the worst case and needs all three: ``__2_`` is still
+    private, ``__2__`` is then dunder, ``__2___`` is finally clean.)
+
+    ⚠ **One append is NOT enough** -- a claim that used to appear on
+    :func:`python_member_names` and was wrong. It holds for sunder and dunder and fails for the
+    private shape, which is exactly the one that arrives via the collision suffix.
+
+    The proof survives NFKC because the appended character is ASCII ``'_'``, which is
+    NFKC-invariant: appending cannot change how the rest of the name normalizes, so each pass
+    adds exactly one underscore to the normalized form too.
 
     Appending rather than prefixing is deliberate: a prefix would create *more* leading
     underscores and walk further into the mangled shape, and it would also break the alignment
@@ -189,19 +228,19 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     4. Leading-digit guard -- ``'2nd pass'`` becomes ``_2ND_PASS``. A leading underscore is not
        name-mangled and is addressable as ``E._2ND_PASS``; whether it is *also* a ``_sunder_``
        name is step 5's problem, not this step's.
-    5. Enum-shape guard (:func:`_is_enum_reserved_shape`) -- append ``'_'`` to a sunder or dunder
-       name. ``str.isidentifier()`` is **necessary but not sufficient**: ``Enum`` raises on the
-       first and silently drops the second.
+    5. Enum-shape guard (:func:`_repair_enum_shape`) -- append ``'_'`` while the name is
+       ``_sunder_``, ``__dunder__`` or **private/name-mangled**. ``str.isidentifier()`` is
+       **necessary but not sufficient**: ``Enum`` raises on the first and silently drops the other
+       two.
     6. Reserved guard, **carried over verbatim from the emitter** (see the note below).
-    7. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate.
+    7. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate -- and
+       every candidate is re-repaired, because the ordinal suffix can itself create shape 3.
 
-    ⚠ **Step 5 runs before step 6 and one append is provably enough.** Appending ``'_'`` sets
-    ``name[-2] == '_'``, which is exactly what both predicates forbid, so the result can be
-    neither shape -- and it cannot turn a sunder name into a dunder one, because a sunder name
-    has ``name[1] != '_'`` and so never starts ``__``. Verified by exhaustive enumeration over an
-    underscore/letter alphabet, and by feeding every repaired name to a real ``Enum`` body, on
-    3.10-3.13. Step 6 can still append after it; that only adds a further trailing underscore,
-    which cannot re-create either shape by the same argument.
+    ⚠ **Steps 5 and 7 both normalize before testing, and step 5 may need up to THREE appends.**
+    An earlier revision of this docstring claimed "one append is provably enough"; that was true
+    of sunder and dunder and **false** of the private shape, which is the one the collision suffix
+    produces. :func:`_repair_enum_shape` loops, and its bound is proved there -- do not replace it
+    with a single ``+ '_'``.
 
     ⚠ **Step 7 must key on the NFKC form, and this is not pedantry** (``CI94-Q1``, ruled). Python
     NFKC-normalizes identifiers at compile time, so two distinct strings can be one binding:

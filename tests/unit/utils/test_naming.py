@@ -1,3 +1,4 @@
+import itertools
 import keyword
 import unicodedata
 import warnings
@@ -131,10 +132,10 @@ class TestPythonMemberNames:
             ('2fast', '_2FAST'),  # step 4: leading digit
             ('2nd pass', '_2ND_PASS'),  # steps 1 + 4
             ('Ünïcödé', 'ÜNÏCÖDÉ'),  # CI94-D2: Unicode is KEPT, not folded to ASCII
-            ('class', 'CLASS_'),  # step 5: a keyword
-            ('import', 'IMPORT_'),  # step 5: a keyword
-            ('None', 'NONE'),  # step 5: `none` is not reserved; `None` is
-            ('sum', 'SUM_'),  # step 5: a builtin (and see the CI-100 note below)
+            ('class', 'CLASS_'),  # step 6: a keyword
+            ('import', 'IMPORT_'),  # step 6: a keyword
+            ('None', 'NONE'),  # step 6: `none` is not reserved; `None` is
+            ('sum', 'SUM_'),  # step 6: a builtin (and see the CI-100 note below)
         ],
     )
     def test_one_label_at_a_time(self, label: str, expected: str) -> None:
@@ -231,6 +232,41 @@ class TestPythonMemberNames:
         assert member.note == 'reserved keyword', 'CI-100 (still open) makes this annotation false'
 
 
+#: The character classes that decide every reserved shape, for the generated name/label sweeps.
+#:
+#: 🔴 **``NFKC_UNDERSCORE`` is the point.** Three review rounds on this row all landed on "the
+#: right assertion pointed at the wrong corpus", and round 2's instance was that the
+#: predicate cross-check enumerated ``itertools.product('_A', ...)`` -- an alphabet that
+#: **cannot contain an NFKC-active character**, while claiming in its own docstring to be the
+#: authority. Six identifier-continue codepoints normalize to ``'_'``; U+FF3F is one, and it is
+#: in every sweep below so that blindness cannot recur.
+NFKC_UNDERSCORE = '\uff3f'  # FULLWIDTH LOW LINE -- NFKC-normalizes to '_'
+
+#: Alphabet for generated **member names**: ASCII underscore, an NFKC-active underscore, a
+#: letter, a digit. Every reserved shape is expressible in it.
+NAME_ALPHABET = ('_', NFKC_UNDERSCORE, 'A', '2')
+
+#: Alphabet for generated **labels** (which are arbitrary text, so whitespace belongs here and
+#: not in ``NAME_ALPHABET``). A space is the character that produced the very first sunder
+#: report -- ``' x '`` -> ``_X_``.
+LABEL_ALPHABET = ('_', NFKC_UNDERSCORE, 'A', '2', ' ')
+
+
+def _generated_names(max_length: int = 5) -> list[str]:
+    """Every identifier over :data:`NAME_ALPHABET` up to ``max_length``."""
+    return [
+        candidate
+        for size in range(1, max_length + 1)
+        for p in itertools.product(NAME_ALPHABET, repeat=size)
+        if (candidate := ''.join(p)).isidentifier()
+    ]
+
+
+def _generated_labels(max_length: int = 4) -> list[str]:
+    """Every string over :data:`LABEL_ALPHABET` up to ``max_length``."""
+    return [''.join(p) for size in range(1, max_length + 1) for p in itertools.product(LABEL_ALPHABET, repeat=size)]
+
+
 #: Shapes a Postgres enum label can legally carry. Postgres allows any text up to
 #: ``NAMEDATALEN``; PostgREST carries it verbatim into ``properties.<c>.enum``.
 #:
@@ -240,7 +276,7 @@ class TestPythonMemberNames:
 #: emitted enum body ran over ``ADVERSARIAL_TEXT``, which is CI-009's docstring/comment corpus
 #: and contains no symmetric-punctuation label. The right corpus and the right assertion both
 #: existed and were pointed at each other's targets. They now share one list, and
-#: ``test_the_executing_emitter_test_uses_this_exact_corpus`` fails if they are separated again.
+#: ``test_the_emitter_executes_the_naming_corpus_too`` fails if they are separated again.
 ENUM_LABEL_CORPUS = [
     '',
     ' ',
@@ -300,6 +336,20 @@ ENUM_LABEL_CORPUS = [
     '-',
     '--',
     '---',
+    # ⚠ Added in fix round 2. Every label above reaches the sunder or dunder shape; NONE of them
+    # reaches the private/mangled one from a single label -- that arrived only via the collision
+    # path, so the per-label tests never saw this round's predecessor's headline shape. `'  x'`
+    # closes that: two spaces map to `__`, giving `__X`, which Python name-mangles.
+    '  x',
+    '  2',
+    # ⚠ And the NFKC-active underscores. Six identifier-continue codepoints normalize to `_`
+    # (U+FF3F, U+FE33, U+FE34, U+FE4D, U+FE4E, U+FE4F); `CI94-D2` keeps them and `.upper()`
+    # leaves them, so a predicate reading the RAW name cannot see the shape the compiler sees.
+    # `'_x\uff3f'` raised ValueError at import; `'\uff3fx'` was silently dropped.
+    '_x\uff3f',
+    '\uff3fx',
+    '\ufe4dx\ufe4d',
+    '\uff3f\uff3fx',
 ]
 
 
@@ -436,16 +486,25 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         A name is "reserved" exactly when the interpreter refuses it, drops it, or gives the
         member a name other than the one written. Runs on all four gate legs.
         """
-        import itertools
-
         from castiron.utils.naming import _is_enum_reserved_shape
 
-        names = [''.join(p) for size in range(1, 8) for p in itertools.product('_A', repeat=size)]
-        assert len(names) == 254
+        names = _generated_names()
+        assert any(NFKC_UNDERSCORE in name for name in names), 'the sweep must exercise NFKC folding'
         for name in names:
             try:
                 enum_class = _exec_enum([(name, 'v')])['E']
-                survived = [m.name for m in enum_class] == [name]
+                members = list(enum_class)
+                # ⚠ "Usable" is judged MODULO NFKC, not byte-for-byte. The compiler normalizes
+                # every identifier, so `_\uff3f` legitimately becomes the member `__` -- the label
+                # is not lost, the value round-trips, and a source-level reference to the name
+                # castiron wrote normalizes to the same binding. Demanding byte equality would
+                # flag benign normalization as a defect and, worse, would let a genuinely
+                # dropped member hide behind the same assertion.
+                survived = (
+                    len(members) == 1
+                    and members[0].name == unicodedata.normalize('NFKC', name)
+                    and enum_class('v').value == 'v'
+                )
             except ValueError:
                 survived = False
             assert _is_enum_reserved_shape(name) is not survived, (
@@ -460,13 +519,10 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         iteration adds exactly one -- so three is the ceiling. ``__2`` is the worst case and it
         needs all three: ``__2_`` is still private, ``__2__`` is then dunder, ``__2___`` is clean.
         """
-        import itertools
-
         from castiron.utils.naming import _is_enum_reserved_shape, _repair_enum_shape
 
-        names = [''.join(p) for size in range(1, 8) for p in itertools.product('_A', repeat=size)]
+        names = _generated_names()
         reserved = [n for n in names if _is_enum_reserved_shape(n)]
-        assert len(reserved) == 66, len(reserved)
 
         repaired = [_repair_enum_shape(n) for n in reserved]
         assert all(not _is_enum_reserved_shape(r) for r in repaired)
@@ -475,9 +531,13 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         assert _repair_enum_shape('_X_') == '_X__'
         assert _repair_enum_shape('__INIT__') == '__INIT___'
 
-        # ... and every repaired name really is accepted, under its own name, by a real Enum.
-        enum_class = _exec_enum_clean([(name, f'v{index}') for index, name in enumerate(sorted(set(repaired)))])['E']
-        assert [m.name for m in enum_class] == sorted(set(repaired))
+        # ... and every repaired name really is accepted by a real Enum, under the name the
+        # compiler gives it. Deduplicated by NFKC KEY, not by raw string: two distinct repaired
+        # names can normalize to one identifier (`\uff3f222__` and `_222__` both -> `_222__`),
+        # and putting both in one class body is a `TypeError`, not a finding about the repair.
+        by_key = {unicodedata.normalize('NFKC', name): name for name in sorted(repaired)}
+        enum_class = _exec_enum_clean([(name, f'v{i}') for i, name in enumerate(by_key.values())])['E']
+        assert [m.name for m in enum_class] == sorted(by_key)
 
     def test_the_collision_suffix_cannot_smuggle_a_reserved_shape_back_in(self) -> None:
         # 🔴 THE regression this round exists for. `''`, `' '`, `'\t'` and `'\n'` all sanitize to
@@ -492,3 +552,77 @@ class TestEveryMemberNameIsUsableAsAnEnumMember:
         assert len(list(enum_class)) == 8, 'a label was mangled away'
         for member in members:
             assert enum_class(member.label).value == member.label
+
+
+@pytest.mark.unit
+class TestTheOracle:
+    """🔴 The generated round-trip oracle. An oracle catches shapes nobody has named yet.
+
+    **Why this class exists, stated plainly.** CI-080 took three review rounds, and all three
+    landed on the same structural mistake: *the right assertion pointed at the wrong corpus.*
+
+    * round 0 -- the executing test ran over ``ADVERSARIAL_TEXT`` (no symmetric punctuation), so
+      ``_sunder_`` and ``__dunder__`` shipped;
+    * round 1 -- writing the executing test over the naming corpus exposed the **private /
+      name-mangled** shape, which the collision rule itself produced;
+    * round 2 -- the predicate cross-check enumerated ``product('_A', ...)``, an alphabet that
+      **cannot contain an NFKC-active character**, so the NFKC shape survived in the one test
+      whose docstring claimed to be the backstop.
+
+    A bigger hand-written corpus is the wrong answer to that, because it only ever contains the
+    shapes someone thought of. This does not enumerate *shapes* at all: it enumerates the
+    **character classes that can produce one** -- ASCII underscore, an NFKC-active underscore, a
+    letter, a digit, a space -- takes every string over them, runs the **real** transform, builds
+    a **real** enum, and asserts every label survives. A fourth shape on this axis fails here
+    without anyone naming it first.
+    """
+
+    def test_the_alphabet_covers_the_classes_that_matter(self) -> None:
+        # A guard that silently narrows is worse than none: if the alphabet loses the NFKC
+        # character, this class quietly stops testing the thing round 2 was about.
+        assert NFKC_UNDERSCORE in LABEL_ALPHABET
+        assert unicodedata.normalize('NFKC', NFKC_UNDERSCORE) == '_'
+        assert ' ' in LABEL_ALPHABET, 'whitespace produced the very first sunder report'
+        assert any(c.isdigit() for c in LABEL_ALPHABET), 'a leading digit needs its own guard'
+        assert any(c.isalpha() for c in LABEL_ALPHABET)
+        assert len(_generated_labels()) == 780
+
+    def test_every_generated_label_survives_as_a_real_enum_member(self) -> None:
+        labels = _generated_labels()
+        members = python_member_names(EnumInfo(name='mood', values=labels, schema='public'))
+
+        # Nothing dropped or merged on the way in ...
+        assert [m.label for m in members] == labels
+        assert all(m.name.isidentifier() for m in members)
+
+        # ... and nothing dropped, renamed or collapsed on the way out. One class, all 780.
+        enum_class = _exec_enum_clean([(m.name, m.label) for m in members])['E']
+        assert len(list(enum_class)) == len(labels), (
+            f'{len(labels) - len(list(enum_class))} label(s) did not become members. A reserved '
+            f'shape reached the emitted enum -- find it with `_is_enum_reserved_shape`.'
+        )
+        for label in labels:
+            assert enum_class(label).value == label, f'{label!r} does not round-trip'
+
+    def test_no_generated_name_is_left_in_a_reserved_shape(self) -> None:
+        # The same property stated against the predicate rather than the interpreter, so a
+        # failure says WHICH shape rather than only "a member vanished".
+        from castiron.utils.naming import _is_enum_reserved_shape
+
+        members = python_member_names(EnumInfo(name='mood', values=_generated_labels(), schema='public'))
+        offenders = [(m.label, m.name) for m in members if _is_enum_reserved_shape(m.name)]
+        assert offenders == [], offenders
+
+    def test_the_generated_names_are_unique_under_nfkc(self) -> None:
+        members = python_member_names(EnumInfo(name='mood', values=_generated_labels(), schema='public'))
+        keys = [unicodedata.normalize('NFKC', m.name) for m in members]
+        assert len(set(keys)) == len(keys), 'two members would collapse to one binding at import'
+
+    def test_the_oracle_is_deterministic(self) -> None:
+        # Hard Rule #9 over the generated corpus, not just the hand-written one.
+        labels = _generated_labels()
+        renders = {
+            tuple(m.name for m in python_member_names(EnumInfo(name='mood', values=labels, schema='public')))
+            for _ in range(5)
+        }
+        assert len(renders) == 1

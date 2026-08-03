@@ -52,6 +52,7 @@ from typing import Any
 
 import pytest
 
+import castiron
 from castiron.emitters import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
 from castiron.ir import Schema
@@ -69,18 +70,53 @@ HASH_SEEDS = tuple(range(10))
 LOCALES = ('C', 'C.UTF-8')
 TIMEZONES = ('UTC', 'Pacific/Kiritimati')
 
-#: The child program: build + emit + print a digest. Deliberately tiny -- it must not import the
-#: test package, or the subprocess would need the repo's pytest config to be importable.
+#: The directory containing the ``castiron`` package **this test process imported**, pushed onto
+#: the child's ``PYTHONPATH``.
+#:
+#: ⚠ Load-bearing, and it was measured necessary. Without it the child resolves ``castiron``
+#: through the editable install, which need not be the code the parent is testing — so a sweep run
+#: against a patched checkout silently measured the *unpatched* installed package and reported a
+#: clean pass. That is the CI-091 failure exactly: a harness exercising a path that could not fail.
+#: :func:`TestProcessEnvironment.test_the_subprocess_runs_the_same_castiron_as_this_process` keeps
+#: it honest by making the child report where it actually imported from.
+_CASTIRON_ROOT = str(Path(castiron.__file__).resolve().parents[1])
+
+#: The child program: build + emit + print ``<castiron path> <digest>``. Deliberately tiny -- it
+#: must not import the test package, or the subprocess would need the repo's pytest config to be
+#: importable. It reports its own ``castiron.__file__`` so the parent can prove which code ran.
 _CHILD = """
 import hashlib, json, sys
+import castiron
 from castiron.sources.openapi import build_schema_from_document
 from castiron.emitters import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
 document = json.loads(open(sys.argv[1], encoding='utf-8').read())
 schema = build_schema_from_document(document, schema=sys.argv[2])
 text = PydanticEmitter(EmitterConfig()).emit(schema)[0].content
+print(castiron.__file__)
 print(hashlib.sha256(text.encode('utf-8')).hexdigest())
 """
+
+
+def _child_env(seed: int, index: int) -> dict[str, str]:
+    """Build one subprocess environment, varying four axes jointly.
+
+    Args:
+        seed: The ``PYTHONHASHSEED`` value.
+        index: The run index, which selects the locale and timezone.
+
+    Returns:
+        The child environment.
+    """
+    return {
+        **os.environ,
+        'PYTHONHASHSEED': str(seed),
+        'LC_ALL': LOCALES[index % len(LOCALES)],
+        'TZ': TIMEZONES[index % len(TIMEZONES)],
+        # CI-061-Q1: a stale .pyc would let a subprocess run code the parent never wrote.
+        'PYTHONDONTWRITEBYTECODE': '1',
+        'PYTHONPATH': os.pathsep.join(filter(None, (_CASTIRON_ROOT, os.environ.get('PYTHONPATH')))),
+    }
 
 
 # --------------------------------------------------------------------------- A1 / A2
@@ -174,14 +210,7 @@ class TestProcessEnvironment:
         document = TESTBED_PUBLIC.input_path
         runs: list[tuple[dict[str, str], str]] = []
         for index, seed in enumerate(HASH_SEEDS):
-            env = {
-                **os.environ,
-                'PYTHONHASHSEED': str(seed),
-                'LC_ALL': LOCALES[index % len(LOCALES)],
-                'TZ': TIMEZONES[index % len(TIMEZONES)],
-                # CI-061-Q1: a stale .pyc would let a subprocess run code the parent never wrote.
-                'PYTHONDONTWRITEBYTECODE': '1',
-            }
+            env = _child_env(seed, index)
             cwd = REPO_ROOT if index % 2 == 0 else tmp_path
             result = subprocess.run(
                 [sys.executable, '-c', _CHILD, str(document), TESTBED_PUBLIC.schema],
@@ -191,12 +220,30 @@ class TestProcessEnvironment:
                 env=env,
                 cwd=cwd,
             )
-            runs.append(
-                ({'seed': str(seed), 'LC_ALL': env['LC_ALL'], 'TZ': env['TZ'], 'cwd': str(cwd)}, result.stdout.strip())
+            loaded_from, digest = result.stdout.strip().splitlines()
+            assert Path(loaded_from).resolve().parents[1] == Path(_CASTIRON_ROOT), (
+                f'The subprocess imported castiron from {loaded_from}, not from {_CASTIRON_ROOT}. '
+                f'The sweep would be measuring different code than the rest of this suite.'
             )
+            runs.append(({'seed': str(seed), 'LC_ALL': env['LC_ALL'], 'TZ': env['TZ'], 'cwd': str(cwd)}, digest))
 
         digests = {digest for _, digest in runs}
         assert len(digests) == 1, _env_failure(runs)
+
+    def test_the_subprocess_runs_the_same_castiron_as_this_process(self) -> None:
+        # CI-091, applied to a subprocess harness: "a harness can be weaker than the thing it
+        # tests." Measured -- with no PYTHONPATH the child resolved `castiron` through the
+        # editable install rather than the checkout under test, so a sweep run against PATCHED
+        # code happily measured the UNPATCHED package and reported a clean pass. The sweep would
+        # have been decorative on every axis at once.
+        result = subprocess.run(
+            [sys.executable, '-c', 'import castiron; print(castiron.__file__)'],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=_child_env(seed=0, index=0),
+        )
+        assert Path(result.stdout.strip()).resolve().parents[1] == Path(_CASTIRON_ROOT)
 
     def test_the_sweep_covers_each_locale_timezone_and_cwd_at_least_five_times(self) -> None:
         # CI6-Q7: the joint sweep is only honest if each folded axis is genuinely exercised.

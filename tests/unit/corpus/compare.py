@@ -66,7 +66,7 @@ def _render_failure(actual: str, expected: str, golden: Path, case: str, what: s
     changed_removed = sum(1 for line in difflib.ndiff(expected_lines, actual_lines) if line.startswith('- '))
 
     report = [
-        f'{case}: the emitted {what} does not match its committed golden.',
+        f'{case}: the {what} does not match its committed golden.',
         '',
         f'  golden:   {_rel(golden)}',
         f'  size:     {len(expected)} chars committed -> {len(actual)} chars produced',

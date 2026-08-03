@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from castiron.ir import Schema
 from tests.unit.corpus.cases import (
     KNOWN_DEFECTS,
     OPENAPI_FIXTURE,
@@ -66,10 +67,41 @@ FIX_ACTION = (
 )
 
 
-def _ir(case_id: str) -> dict[str, Any]:
-    """Read a case's committed IR golden."""
-    decoded: dict[str, Any] = json.loads(case_by_id(case_id).golden_ir.read_text(encoding='utf-8'))
-    return decoded
+def _ir(case_id: str, corpus_irs: dict[tuple[str, Any], Schema]) -> dict[str, Any]:
+    """Return the IR this branch's code PRODUCES for a case.
+
+    ⚠ Deliberately **not** the committed ``ir.json``. A witness that reads the golden file is a
+    witness about bytes somebody already accepted: on the day a defect is fixed it would stay
+    green until the golden was regenerated, so the first thing a developer saw would be a golden
+    mismatch, and the cheapest response to that is "regenerate" -- which is precisely the move
+    this whole mechanism exists to prevent. Reading the live IR makes the witness fire on the
+    behaviour change itself, before anything is regenerated. (Measured: with the golden-file
+    version, a patched ``classify_table_type`` left all six CI-075 witnesses GREEN.)
+
+    Args:
+        case_id: The corpus case.
+        corpus_irs: The session-scoped IR fixture.
+
+    Returns:
+        ``Schema.as_dict()`` for that case.
+    """
+    case = case_by_id(case_id)
+    return corpus_irs[(case.family.family_id, case.source_options)].as_dict()
+
+
+def _module(case_id: str, case_modules: dict[str, str]) -> str:
+    """Return the module this branch's code PRODUCES for a case (not the committed golden).
+
+    Same reasoning as :func:`_ir`.
+
+    Args:
+        case_id: The corpus case.
+        case_modules: The session-scoped emitted-module fixture.
+
+    Returns:
+        The emitted module text.
+    """
+    return case_modules[case_id]
 
 
 def _table(ir: dict[str, Any], name: str) -> dict[str, Any]:
@@ -129,10 +161,10 @@ class TestCi075ViewMisclassification:
     ]
 
     @pytest.mark.parametrize(('case_id', 'emitted_class'), MISCLASSIFIED)
-    def test_a_misclassified_view_still_carries_a_primary_key_block(self, case_id: str, emitted_class: str) -> None:
-        case = case_by_id(case_id)
-        assert case.golden_module is not None
-        body = _class_body(case.golden_module.read_text(encoding='utf-8'), emitted_class)
+    def test_a_misclassified_view_still_carries_a_primary_key_block(
+        self, case_id: str, emitted_class: str, case_modules: dict[str, str]
+    ) -> None:
+        body = _class_body(_module(case_id, case_modules), emitted_class)
         assert '# Primary Keys' in body, witness_failed(
             'CI-075',
             case_id,
@@ -142,20 +174,20 @@ class TestCi075ViewMisclassification:
         )
 
     @pytest.mark.parametrize(('case_id', 'emitted_class'), CORRECT)
-    def test_a_correctly_classified_view_has_no_primary_key_block(self, case_id: str, emitted_class: str) -> None:
+    def test_a_correctly_classified_view_has_no_primary_key_block(
+        self, case_id: str, emitted_class: str, case_modules: dict[str, str]
+    ) -> None:
         # THE COUNTER-WITNESS. Without it, the test above cannot tell "this view is misclassified"
         # from "the emitter puts that block on everything".
-        case = case_by_id(case_id)
-        assert case.golden_module is not None
-        body = _class_body(case.golden_module.read_text(encoding='utf-8'), emitted_class)
+        body = _class_body(_module(case_id, case_modules), emitted_class)
         assert '# Primary Keys' not in body, (
             f'{emitted_class} is a VIEW that castiron classifies CORRECTLY, and it has just grown '
             f'a "# Primary Keys" block. That is a REGRESSION, not a fix: CI-075 has widened from '
             f'3 of 5 views to 4 of 5.'
         )
 
-    def test_the_ir_records_the_misclassification_itself(self) -> None:
-        ir = _ir('testbed-public-default')
+    def test_the_ir_records_the_misclassification_itself(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
+        ir = _ir('testbed-public-default', corpus_irs)
         wrong = {name: _table(ir, name)['table_type'] for name in ('active_customers', 'ledger_summary')}
         assert wrong == {'active_customers': 'BASE TABLE', 'ledger_summary': 'BASE TABLE'}, witness_failed(
             'CI-075',
@@ -176,8 +208,10 @@ class TestCi075ViewMisclassification:
 
 @pytest.mark.unit
 class TestCi084DanglingForeignKey:
-    def test_the_column_is_flagged_a_foreign_key_with_nothing_to_point_at(self) -> None:
-        ir = _ir('testbed-public-default')
+    def test_the_column_is_flagged_a_foreign_key_with_nothing_to_point_at(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        ir = _ir('testbed-public-default', corpus_irs)
         table = _table(ir, 'ledger_refs')
         ledger_id = next(column for column in table['columns'] if column['name'] == 'ledger_id')
         assert (ledger_id['is_foreign_key'], table['foreign_keys']) == (True, []), witness_failed(
@@ -192,8 +226,10 @@ class TestCi084DanglingForeignKey:
             ),
         )
 
-    def test_the_constraint_survives_naming_a_table_that_is_not_in_the_schema(self) -> None:
-        ir = _ir('testbed-public-default')
+    def test_the_constraint_survives_naming_a_table_that_is_not_in_the_schema(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        ir = _ir('testbed-public-default', corpus_irs)
         definitions = [constraint['constraint_definition'] for constraint in _table(ir, 'ledger_refs')['constraints']]
         assert 'FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)' in definitions
         # The other half of the defect: the referenced table is not in the schema at all, because
@@ -219,8 +255,10 @@ class TestCi090SynthesizedConstraintName:
     i.e. a broken build for a user who changed nothing.
     """
 
-    def test_the_fk_name_is_the_postgres_default_and_not_the_real_one(self) -> None:
-        ir = _ir('testbed-public-default')
+    def test_the_fk_name_is_the_postgres_default_and_not_the_real_one(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        ir = _ir('testbed-public-default', corpus_irs)
         names = [fk['constraint_name'] for fk in _table(ir, 'order_lines')['foreign_keys']]
         assert names == ['order_lines_order_id_fkey'], witness_failed(
             'CI-090',
@@ -235,7 +273,9 @@ class TestCi090SynthesizedConstraintName:
             ),
         )
 
-    def test_every_forward_edge_name_follows_the_default_template(self) -> None:
+    def test_every_forward_edge_name_follows_the_default_template(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
         # CI6-Q7: enumerate, do not sample. If ANY foreign key in the real capture carried a name
         # that is not the synthesized template, the synthesis would be partial and CI-090's
         # description would be wrong.
@@ -246,7 +286,7 @@ class TestCi090SynthesizedConstraintName:
         # name (so `customers.id` shows `customer_tags_customer_id_fkey`). That is intended
         # product behaviour, not a second defect -- asserting the template over it would be
         # asserting something castiron never claimed.
-        ir = _ir('testbed-public-default')
+        ir = _ir('testbed-public-default', corpus_irs)
         checked = 0
         for table in ir['tables']:
             for constraint in table['constraints']:
@@ -274,8 +314,8 @@ class TestCi090SynthesizedConstraintName:
 
 @pytest.mark.unit
 class TestCi076FictionalForeignKeyTarget:
-    def test_the_fixture_points_a_foreign_key_at_a_view(self) -> None:
-        ir = _ir('openapi-fixture-default')
+    def test_the_fixture_points_a_foreign_key_at_a_view(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
+        ir = _ir('openapi-fixture-default', corpus_irs)
         targets = [fk['foreign_table_name'] for fk in _table(ir, 'restricted_table')['foreign_keys']]
         assert 'active_users_view' in targets, witness_failed(
             'CI-076',
@@ -317,10 +357,8 @@ class TestCi076FictionalForeignKeyTarget:
 
 @pytest.mark.unit
 class TestCi080EnumLabelsAreNotIdentifierSafe:
-    def test_the_enum_member_names_are_not_valid_python(self) -> None:
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+    def test_the_enum_member_names_are_not_valid_python(self, case_modules: dict[str, str]) -> None:
+        module = _module('synthetic-torture-default', case_modules)
         offenders = [line.strip() for line in module.splitlines() if ' = "' in line and not line.startswith(' ' * 8)]
         illegal = [line for line in offenders if not line.split(' = ')[0].isidentifier()]
         assert illegal, witness_failed(
@@ -333,13 +371,11 @@ class TestCi080EnumLabelsAreNotIdentifierSafe:
         assert 'IN PROGRESS = "in progress"' in module
         assert 'N/A = "n/a"' in module
 
-    def test_the_value_literals_are_correct_even_though_the_names_are_not(self) -> None:
+    def test_the_value_literals_are_correct_even_though_the_names_are_not(self, case_modules: dict[str, str]) -> None:
         # The counter-witness, and it matters: CI9-Q1 fixed the VALUE literal (the right-hand
         # side) and CI-080 is the MEMBER NAME (the left-hand side). Asserting the values are
         # right is what proves this witness is about CI-080 and not a relapse of CI9-Q1.
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+        module = _module('synthetic-torture-default', case_modules)
         for label in ('in progress', 'done', 'n/a', '2nd pass'):
             assert f'= "{label}"' in module, f'the enum VALUE {label!r} is wrong, which would be a CI9-Q1 relapse'
 
@@ -350,10 +386,10 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
     HOSTILE_COLUMNS = ('2fast', 'space name', 'kebab-case')
 
     @pytest.mark.parametrize('column', HOSTILE_COLUMNS)
-    def test_a_hostile_column_name_reaches_the_emitted_module_verbatim(self, column: str) -> None:
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+    def test_a_hostile_column_name_reaches_the_emitted_module_verbatim(
+        self, column: str, case_modules: dict[str, str]
+    ) -> None:
+        module = _module('synthetic-torture-default', case_modules)
         assert f'    {column}: ' in module, witness_failed(
             'CI-085',
             'synthetic-torture/default.py.txt',
@@ -361,10 +397,8 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
             fixed_action=FIX_ACTION,
         )
 
-    def test_the_module_does_not_parse(self) -> None:
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+    def test_the_module_does_not_parse(self, case_modules: dict[str, str]) -> None:
+        module = _module('synthetic-torture-default', case_modules)
         assert not module_compiles(module), witness_failed(
             'CI-085',
             'synthetic-torture/default.py.txt',
@@ -373,20 +407,16 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
             fixed_action=FIX_ACTION,
         )
 
-    def test_the_safe_column_alongside_them_is_emitted_normally(self) -> None:
+    def test_the_safe_column_alongside_them_is_emitted_normally(self, case_modules: dict[str, str]) -> None:
         # Counter-witness: an ordinary column in the SAME table emits fine, so the defect is
         # about the identifier and not about the table, the emitter or the document.
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        assert '    ok_column: str | None = Field(default=None)' in case.golden_module.read_text(encoding='utf-8')
+        assert '    ok_column: str | None = Field(default=None)' in _module('synthetic-torture-default', case_modules)
 
-    def test_ci_080_and_ci_085_are_distinct_defects(self) -> None:
+    def test_ci_080_and_ci_085_are_distinct_defects(self, case_modules: dict[str, str]) -> None:
         # CI-085's WORKPLAN row asks whether it is the same defect as CI-080. Measured here: it is
         # not. The two live at different call sites and are visible independently -- the enum
         # module below has NO hostile column, and the column table has NO enum.
-        case = case_by_id('synthetic-torture-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+        module = _module('synthetic-torture-default', case_modules)
         enum_block = module[module.index('class PublicTaskStateEnum') : module.index('# CUSTOM CLASSES')]
         assert '2fast' not in enum_block, 'the CI-080 witness must be independent of the CI-085 one'
         columns_block = _class_body(module, 'HostileColumnsBaseSchema')
@@ -402,25 +432,27 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
 class TestFidelityWins:
     """Not every notable shape in the corpus is a defect. These two are castiron working."""
 
-    def test_the_same_named_cross_schema_enums_stay_distinct(self) -> None:
+    def test_the_same_named_cross_schema_enums_stay_distinct(
+        self, corpus_irs: dict[tuple[str, Any], Schema], case_modules: dict[str, str]
+    ) -> None:
         # The shape that once handed one enum's members to the other class: `audit.status` and
         # `public.status` share a NAME and share nothing else.
-        ir = _ir('testbed-public-default')
+        ir = _ir('testbed-public-default', corpus_irs)
         by_key = {(enum['schema'], enum['name']): enum['values'] for enum in ir['enums']}
         assert by_key[('audit', 'status')] == ['ok', 'warn', 'error']
         assert by_key[('public', 'status')] == ['active', 'inactive', 'archived']
 
-        case = case_by_id('testbed-public-default')
-        assert case.golden_module is not None
-        module = case.golden_module.read_text(encoding='utf-8')
+        module = _module('testbed-public-default', case_modules)
         assert 'class AuditStatusEnum' in module and 'class PublicStatusEnum' in module
         audit_block = _class_body(module, 'AuditStatusEnum')
         assert 'active' not in audit_block, "AuditStatusEnum has been handed PublicStatusEnum's members"
 
-    def test_the_correctly_classified_views_prove_the_ci5_d14a_downgrade_works(self) -> None:
+    def test_the_correctly_classified_views_prove_the_ci5_d14a_downgrade_works(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
         # The downgrade IS implemented and IS reachable -- CI-075 is a classification bug, not a
         # missing feature. Recording that distinction is what keeps the fix scoped.
-        ir = _ir('testbed-public-default')
+        ir = _ir('testbed-public-default', corpus_irs)
         order_report = _table(ir, 'order_report')
         assert order_report['table_type'] == 'VIEW'
         unique = [c for c in order_report['constraints'] if c['type'] == 'UNIQUE']

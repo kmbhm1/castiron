@@ -1,9 +1,12 @@
+import ast
 import dataclasses
 import random
 import sys
+from pathlib import Path
 
 import pytest
 
+import castiron.emitters
 from castiron.emitters import EmittedFile, Emitter, EmitterConfig
 from castiron.emitters.base import STDLIB_MODULES, render_import_block, section_comment
 from castiron.types import PYDANTIC_TYPE_MAP
@@ -27,9 +30,48 @@ EMITTER_LITERAL_IMPORTS = (
 KNOWN_THIRD_PARTY_MODULES = frozenset({'pydantic'})
 
 
+def is_import_statement(text: str) -> bool:
+    """Whether ``text`` is exactly one ``import``/``from`` statement.
+
+    ⚠ Parsed, not prefix-matched. ``base.py`` carries the bare literals ``'from '`` and
+    ``'import '`` for :meth:`str.removeprefix`, and a ``startswith`` filter collects those too --
+    yielding a module named ``''`` and a guard failure that says nothing useful.
+
+    ⚠ ``ValueError`` is caught alongside ``SyntaxError`` because they are **the same condition on
+    different interpreters**: the emitter carries NUL-bearing literals for CI-009, and
+    ``ast.parse('\\x00')`` raises ``ValueError: source code string cannot contain null bytes`` on
+    **py3.10** where later versions raise ``SyntaxError``. Caught by ``make test-matrix`` on the
+    3.10 leg and nowhere else -- the CI-081/CI-082 shape exactly.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return False
+    return len(tree.body) == 1 and isinstance(tree.body[0], (ast.Import, ast.ImportFrom))
+
+
+def import_literals_in(source: str) -> set[str]:
+    """Return every string constant in ``source`` that is itself a single import statement."""
+    return {
+        node.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and is_import_statement(node.value)
+    }
+
+
 def emittable_import_lines() -> set[str]:
-    """Every import line reachable from the type map plus the emitter's own literals (CI-072)."""
-    lines = set(EMITTER_LITERAL_IMPORTS)
+    """Every import line reachable from the type map plus **every** emitter's own literals.
+
+    ⚠ Enumerated by walking `src/castiron/emitters/`, not from a hand-written list scoped to the
+    Pydantic emitter. `render_import_block` and `STDLIB_MODULES` are shared with CI-012
+    (SQLAlchemy) and CI-030 (the typed client), and a new emitter's `import uuid` or
+    `from collections.abc import Sequence` would land in the third-party block and silently
+    re-open I001 for its users. Deriving from the package means the classification guard covers a
+    new emitter the moment its module exists -- nobody has to remember to widen this (CI-072).
+    """
+    lines: set[str] = set()
+    for path in sorted(Path(castiron.emitters.__file__).parent.rglob('*.py')):
+        lines |= import_literals_in(path.read_text(encoding='utf-8'))
     for resolution in PYDANTIC_TYPE_MAP.values():
         lines.update(resolution.imports)
     return lines
@@ -139,6 +181,69 @@ class TestRenderImportBlock:
         block = render_import_block(['from datetime import timezone', 'import datetime'])
         assert block == 'import datetime\nfrom datetime import timezone'
 
+    def test_a_single_character_name_is_not_a_constant(self) -> None:
+        # `order-by-type` classifies CONSTANT as all-upper AND longer than one character, so `T`
+        # ranks as a variable and sorts LAST. Measured against ruff: `T, Ab, ITEM2` -> `ITEM2, Ab,
+        # T`. `name.isupper()` alone puts `T` first and leaves the line I001-dirty.
+        assert render_import_block(['from typing import T, Ab, IO']) == 'from typing import IO, Ab, T'
+
+    def test_names_are_ordered_naturally_not_lexicographically(self) -> None:
+        # isort compares digit runs numerically: Item2 before Item10, where sorted() gives the
+        # reverse. Measured against ruff, on both the CONSTANT and the CLASS rank.
+        block = render_import_block(['from typing import Item2, Item10, ITEM2, ITEM10'])
+        assert block == 'from typing import ITEM2, ITEM10, Item2, Item10'
+
+    def test_modules_are_ordered_naturally_too(self) -> None:
+        block = render_import_block(['from mod10 import a', 'from mod2 import b', 'import pkg10', 'import pkg2'])
+        assert block.splitlines() == ['import pkg2', 'import pkg10', 'from mod2 import b', 'from mod10 import a']
+
+
+@pytest.mark.unit
+class TestDivergencesFromRealIsort:
+    """The three shapes where this renderer is **not** isort, and the proof they are unreachable.
+
+    ``render_import_block`` is deliberately not a general isort implementation -- it is exact for
+    the import lines castiron's emitters actually produce, which is verified exhaustively over the
+    complete power set of that vocabulary. These tests pin the gap in both directions: what the
+    renderer does today (so the divergence is a recorded decision, not a lurking surprise), and
+    that **nothing castiron can emit reaches it** (so the fidelity claim stays true).
+
+    ⚠ The second half is the load-bearing one. ``render_import_block`` and :data:`STDLIB_MODULES`
+    are shared with CI-012 and CI-030, so the day a new emitter emits ``import uuid`` or a
+    relative import, the unreachability assertions go red *here* rather than as ``I001`` in a
+    user's repository.
+    """
+
+    def test_an_unlisted_stdlib_module_lands_in_third_party(self) -> None:
+        # ruff would group `uuid` with `decimal`; castiron groups it with `pydantic`. The fix is
+        # to extend STDLIB_MODULES, which is what the unreachability test below forces.
+        block = render_import_block(['import uuid', 'from decimal import Decimal'])
+        assert block == 'from decimal import Decimal\n\nimport uuid'
+
+    def test_a_relative_import_gets_no_localfolder_section(self) -> None:
+        # ruff emits a fourth block, after third party. castiron sorts it into third party.
+        block = render_import_block(['from .local import Thing', 'from pydantic import BaseModel'])
+        assert block == 'from .local import Thing\nfrom pydantic import BaseModel'
+
+    def test_an_aliased_name_is_merged_where_ruff_would_split_it(self) -> None:
+        # ruff writes `from m import a as b` on its own statement.
+        block = render_import_block(['from m import a as b', 'from m import c'])
+        assert block == 'from m import a as b, c'
+
+    def test_no_emittable_import_reaches_any_of_those_three_shapes(self) -> None:
+        lines = emittable_import_lines()
+        relative = sorted(line for line in lines if line.startswith('from .'))
+        aliased = sorted(line for line in lines if ' as ' in line)
+        unlisted = sorted(
+            line for line in lines if module_of(line) not in STDLIB_MODULES | KNOWN_THIRD_PARTY_MODULES | {'__future__'}
+        )
+        assert (relative, aliased, unlisted) == ([], [], []), (
+            f'castiron can now emit an import shape where render_import_block is NOT isort: '
+            f'relative={relative}, aliased={aliased}, unclassified={unlisted}. The fidelity claim '
+            f"in render_import_block's docstring no longer holds -- either extend the renderer "
+            f'(LOCALFOLDER section / alias splitting) or STDLIB_MODULES, and narrow the docstring.'
+        )
+
 
 @pytest.mark.unit
 class TestRenderImportBlockIsOrderInsensitive:
@@ -213,20 +318,9 @@ class TestStdlibClassificationTable:
         # EMITTER_LITERAL_IMPORTS is hand-written, and half the vocabulary rides on it. Read the
         # emitter's own source rather than trusting the copy: an import added to `_imports` and
         # not added here would silently leave a whole section of the vocabulary unchecked.
-        import ast
-        from pathlib import Path
-
         import castiron.emitters.pydantic.emitter as emitter_module
 
-        tree = ast.parse(Path(emitter_module.__file__).read_text(encoding='utf-8'))
-        in_source = {
-            node.value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and '\n' not in node.value
-            and node.value.startswith(('from ', 'import '))
-        }
+        in_source = import_literals_in(Path(emitter_module.__file__).read_text(encoding='utf-8'))
         assert in_source == set(EMITTER_LITERAL_IMPORTS), (
             f'the emitter emits {sorted(in_source)} but this module declares '
             f'{sorted(EMITTER_LITERAL_IMPORTS)}. Keep them equal, or the vocabulary guards below '

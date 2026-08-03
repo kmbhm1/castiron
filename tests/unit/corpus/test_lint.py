@@ -54,6 +54,18 @@ PROMISED_RULES = 'F,UP,I'
 #: delete this constant and watch the guard widen.
 EXCLUDED_FAMILY = SYNTHETIC_TORTURE.family_id
 
+#: How ruff spells "this file does not parse". ⚠ **Two spellings, and the skew is live.**
+#: `.pre-commit-config.yaml` pins ruff **v0.6.9**, which prints `path:1:7: SyntaxError: ...`;
+#: `uv.lock` resolves **0.16.0**, which prints `invalid-syntax:`. That divergence is filed as
+#: `CI-105` and is still open, and `pyproject.toml`'s floor is only `ruff>=0.6.0` -- so matching
+#: one spelling would make this guard pass vacuously under the other.
+SYNTAX_ERROR_SPELLINGS = ('invalid-syntax', 'SyntaxError')
+
+#: How long a single ruff invocation may take before the gate fails instead of hanging. A hung
+#: subprocess with no timeout blocks all four legs forever, which is a worse failure than a red
+#: test. Generous by two orders of magnitude: the full 384-module sweep measures ~88 ms.
+RUFF_TIMEOUT_SECONDS = 120
+
 #: Why the exclusion is legitimate, quoted into the skip so nobody has to go looking.
 EXCLUSION_REASON = (
     f'{EXCLUDED_FAMILY} emits deliberately invalid Python (CI-085, open and out of scope for '
@@ -137,6 +149,7 @@ def lint(paths: list[str], select: str = PROMISED_RULES) -> str:
         capture_output=True,
         text=True,
         check=False,
+        timeout=RUFF_TIMEOUT_SECONDS,
     )
     if result.returncode not in (0, 1):
         raise RuntimeError(
@@ -264,7 +277,11 @@ class TestEveryReachableEmissionIsLintClean:
         # The exclusion is only honest if it is still true. If synthetic-torture ever starts
         # parsing, CI-085 has been fixed and this guard must widen to cover it -- which is a red
         # test here rather than a silent 384-instead-of-512 that nobody notices.
-        hits = [line for line in probe_findings if 'torture.py' in line and 'invalid-syntax' in line]
+        hits = [
+            line
+            for line in probe_findings
+            if 'torture.py' in line and any(spelling in line for spelling in SYNTAX_ERROR_SPELLINGS)
+        ]
         assert hits, (
             f'{EXCLUDED_FAMILY} now parses. {EXCLUSION_REASON} If CI-085 has landed, delete '
             f'EXCLUDED_FAMILY so the guard covers all 512 emissions.'
@@ -315,12 +332,21 @@ class TestTheGuardLintsWhatCastironActuallyWrites:
         with pytest.raises(RuntimeError, match='neither "clean"'):
             lint(['whatever.py'])
 
-    def test_the_committed_goldens_are_still_not_named_dot_py(self) -> None:
+    def test_no_committed_golden_anywhere_is_named_dot_py(self) -> None:
         # The other half of CI94-D12, asserted here so the two decisions read as one design:
         # goldens stay `*.py.txt` and out of `ruff format .`'s reach; this module lints a COPY.
-        from tests.unit.corpus.cases import GOLDEN_DIR
+        #
+        # ⚠ Scans EVERY `golden/` directory in the suite, not just the corpus's. Two of the three
+        # live outside it (`emitters/pydantic/golden/`, `sources/openapi/golden/`) and are exactly
+        # the two no tool regenerates -- so a `.py` name there would be silently reformatted by
+        # `ruff format .` with nothing to restore it. `test_goldens.py`'s sibling assertion reads
+        # the CASE TABLE, which cannot see a directory the table does not list.
+        from tests.unit.corpus.cases import REPO_ROOT
 
-        assert sorted(p.name for p in GOLDEN_DIR.rglob('*.py')) == []
+        golden_dirs = sorted((REPO_ROOT / 'tests').rglob('golden'))
+        assert len(golden_dirs) == 3, f'expected 3 golden directories, found {golden_dirs}'
+        offenders = sorted(str(p.relative_to(REPO_ROOT)) for d in golden_dirs for p in d.rglob('*.py'))
+        assert offenders == [], f'{offenders}: a committed golden must end .py.txt so ruff leaves it alone'
 
 
 @pytest.mark.unit

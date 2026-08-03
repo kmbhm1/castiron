@@ -8,6 +8,7 @@ is intentionally not ported): writing to disk is CI-006's job, and byte-stable o
 load-bearing for the ``check`` drift-guard (Hard Rule #9).
 """
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -56,6 +57,16 @@ class Emitter(ABC):
 #: surface only as a one-leg-red mystery. An unlisted module falls back to third-party, which is
 #: the safe direction: a new stdlib import shows up as a wrongly-grouped line in a golden diff,
 #: not as a green test on three legs and a red one on the fourth.
+#:
+#: 🔴 **Adding an emitter? Extend this table.** This module is shared with every emitter (CI-012
+#: SQLAlchemy, CI-030 the typed client, ...), and this list covers only what the **Pydantic**
+#: emitter can currently reach. A new emitter's ``import uuid`` or
+#: ``from collections.abc import Sequence`` would land in the third-party block and **silently
+#: re-open I001** for its users. It is deliberately not pre-widened: an entry no importer reaches
+#: is unfalsifiable, and speculative entries are how a table stops meaning anything.
+#: ``tests/unit/emitters/test_base.py::test_every_emittable_import_names_a_classified_module``
+#: enumerates the literals of **every** module under ``castiron/emitters/`` plus the whole type
+#: map, so a new emitter's unclassified import fails that test rather than a user's linter.
 STDLIB_MODULES = frozenset({'datetime', 'decimal', 'enum', 'ipaddress', 'typing'})
 
 #: Import section ranks, in emission order: ``__future__``, standard library, everything else.
@@ -71,12 +82,35 @@ def _import_section(module: str) -> int:
     return _STDLIB_SECTION if module.partition('.')[0] in STDLIB_MODULES else _THIRD_PARTY_SECTION
 
 
-def _member_sort_key(name: str) -> tuple[int, str, str]:
+def _natural_key(text: str) -> tuple[tuple[int, int, str], ...]:
+    """Split ``text`` into digit and non-digit runs so ``Item2`` sorts before ``Item10``.
+
+    isort compares names *naturally*, not lexicographically -- measured against ruff, which
+    orders ``ITEM2, ITEM10`` where ``sorted()`` gives ``ITEM10, ITEM2``.
+
+    Args:
+        text: The string to key.
+
+    Returns:
+        A tuple of ``(is_text, numeric_value, text_value)`` triples -- **uniformly shaped**, so
+        any two keys are comparable. The obvious ``tuple[int | str, ...]`` spelling of this trick
+        raises ``TypeError`` the moment a digit run is compared against a text run, which is not
+        a total order and would surface as a crash on some ``PYTHONHASHSEED`` values and not
+        others (Hard Rule #9).
+    """
+    return tuple((0, int(run), '') if run.isdigit() else (1, 0, run) for run in re.split(r'(\d+)', text) if run)
+
+
+def _member_sort_key(name: str) -> tuple[int, tuple[tuple[int, int, str], ...], str]:
     """Return isort's ``order-by-type`` sort key for one imported name.
 
-    CONSTANT (all upper-case) sorts before CLASS (leading upper-case) before everything else,
-    then case-insensitively. This is why ``UUID4`` precedes ``BaseModel``; a plain alphabetical
-    sort leaves the line ``I001``-dirty.
+    CONSTANT sorts before CLASS before everything else, then case-insensitively and *naturally*.
+    This is why ``UUID4`` precedes ``BaseModel``; a plain alphabetical sort leaves the line
+    ``I001``-dirty.
+
+    ⚠ CONSTANT requires **more than one character**: ruff ranks a single-character name as a
+    variable, so ``T`` sorts *last*, not first. Measured, not read -- ``from typing import T, Ab,
+    ITEM2`` orders ``ITEM2, Ab, T``.
 
     Args:
         name: The imported symbol.
@@ -85,13 +119,13 @@ def _member_sort_key(name: str) -> tuple[int, str, str]:
         A **total** key -- the final ``name`` component breaks any case-folding tie, so the order
         never depends on the iteration order of the set the names arrived in (Hard Rule #9).
     """
-    if name.isupper():
+    if len(name) > 1 and name.isupper():
         rank = 0
     elif name[:1].isupper():
         rank = 1
     else:
         rank = 2
-    return rank, name.lower(), name
+    return rank, _natural_key(name.lower()), name
 
 
 def _split_import(line: str) -> tuple[str, tuple[str, ...]]:
@@ -105,10 +139,14 @@ def _split_import(line: str) -> tuple[str, tuple[str, ...]]:
 def render_import_block(imports: Iterable[str]) -> str:
     """Render a deduplicated, isort-compatible block of single-line imports.
 
-    The output matches what ``ruff check --select I`` produces under **default** settings, so a
-    generated module does not trip the linter of the project it was just added to (``CI94-Q3``,
-    captain's override). Four rules, each derived by running ruff rather than by reading the isort
-    documentation:
+    🔴 **Scope of the fidelity claim.** For **the import lines castiron's emitters actually
+    produce**, the output is byte-identical to what ``ruff check --select I --fix`` writes under
+    **default** settings, so a generated module does not trip the linter of the project it was
+    just added to (``CI94-Q3``, captain's override). That is verified exhaustively rather than
+    argued: the complete power set of the emittable vocabulary renders ``I001``-clean, under both
+    ruff 0.6.9 (the pre-commit pin) and 0.16.0. It is **not** a general isort implementation, and
+    the difference matters because this module is shared with every future emitter. Four rules,
+    each derived by running ruff rather than by reading the isort documentation:
 
     1. Sections are ``__future__`` -> standard library -> third party, separated by exactly one
        blank line. :data:`STDLIB_MODULES` decides the middle one.
@@ -116,15 +154,28 @@ def render_import_block(imports: Iterable[str]) -> str:
        (isort's ``force-sort-within-sections = false`` default).
     3. Same-module ``from`` imports are merged onto one line, and the names are ordered
        CONSTANT -> CLASS -> rest (``order-by-type``). See :func:`_member_sort_key`.
-    4. Module and name ordering is case-insensitive (``case-sensitive = false``).
+    4. Module and name ordering is case-insensitive and natural (``case-sensitive = false``).
+
+    ⚠ **Three measured divergences from real isort, none reachable today.** Each is a *design*
+    gap rather than a sort-key bug, and each is unreachable because castiron emits no such line
+    -- ``test_base.py::TestDivergencesFromRealIsort`` asserts that unreachability rather than
+    trusting it, so the guarantee fails loudly the day an emitter reaches one:
+
+    - **An unlisted stdlib module lands in third party.** ``import uuid`` groups with ``pydantic``
+      rather than with ``datetime``. See :data:`STDLIB_MODULES` -- extending it is the fix.
+    - **Relative imports get no LOCALFOLDER section.** ``from .x import Y`` sorts into third party
+      instead of a fourth block after it.
+    - **``as`` aliases are merged, where ruff splits them.** ruff writes ``from m import a as b``
+      on its own statement; this renders ``from m import a as b, c``.
 
     **Determinism (Hard Rule #9).** ``imports`` is routinely a ``set``, whose iteration order
     varies with ``PYTHONHASHSEED``. Grouping replaces one total sort over raw strings with three
     nested orderings, so every one of them is total by construction: sections are distinct ints;
-    statements sort on ``(kind, module.lower(), module)``, unique once same-module lines are
-    merged; names sort on :func:`_member_sort_key`, whose last component is the name itself. No
-    ``dict`` or ``set`` is ever iterated straight into the output -- ``CI-065`` is the precedent
-    for what a non-total key costs.
+    statements sort on the 4-tuple ``(kind, natural_key(module.lower()), module, statement)``,
+    whose ``(kind, module)`` prefix is already unique once same-module lines are merged and whose
+    trailing ``str`` components are comparable regardless; names sort on :func:`_member_sort_key`,
+    whose last component is the name itself. No ``dict`` or ``set`` is ever iterated straight into
+    the output -- ``CI-065`` is the precedent for what a non-total key costs.
 
     Args:
         imports: An iterable of single import lines (e.g. ``'import datetime'`` or
@@ -145,11 +196,16 @@ def render_import_block(imports: Iterable[str]) -> str:
 
     blocks: list[str] = []
     for section in (_FUTURE_SECTION, _STDLIB_SECTION, _THIRD_PARTY_SECTION):
-        statements: list[tuple[int, str, str, str]] = [
-            (0, module.lower(), module, f'import {module}') for module in plain.get(section, set())
+        statements: list[tuple[int, tuple[tuple[int, int, str], ...], str, str]] = [
+            (0, _natural_key(module.lower()), module, f'import {module}') for module in plain.get(section, set())
         ]
         statements.extend(
-            (1, module.lower(), module, f'from {module} import {", ".join(sorted(names, key=_member_sort_key))}')
+            (
+                1,
+                _natural_key(module.lower()),
+                module,
+                f'from {module} import {", ".join(sorted(names, key=_member_sort_key))}',
+            )
             for module, names in grouped.get(section, {}).items()
         )
         if statements:

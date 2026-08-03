@@ -125,8 +125,14 @@ class TestDeterminism:
             lines = section.splitlines()
             kinds = [0 if line.startswith('import ') else 1 for line in lines]
             assert kinds == sorted(kinds), f'a plain import follows a from-import in {lines}'
-            modules = [line.split()[1] for line in lines]
-            assert modules == sorted(modules, key=str.lower), f'modules out of order in {lines}'
+            # ⚠ Per KIND, not across the whole section. A section deliberately puts every
+            # `import X` before every `from X import ...`, so the concatenated module list is NOT
+            # sorted in general -- `import zoneinfo` + `from datetime import date` is correct
+            # isort output that a whole-section check would reject. It passed here only because
+            # 'datetime' < 'enum' happens to hold.
+            for kind in (0, 1):
+                modules = [line.split()[1] for line, k in zip(lines, kinds) if k == kind]
+                assert modules == sorted(modules, key=str.lower), f'{modules} out of order in {lines}'
         stdlib, third_party = sections[1].splitlines(), sections[2].splitlines()
         assert [line.split()[1] for line in stdlib] == ['datetime', 'enum', 'typing']
         assert third_party == ['from pydantic import UUID4, BaseModel, Field, Json, StringConstraints']
@@ -289,9 +295,12 @@ class TestFieldIsImportedOnlyWhenUsed:
         assert '= Field(' in out
         assert 'pydantic.Field' in _imported(out)
 
-    def test_the_module_never_uses_a_name_it_did_not_import(self, representative_schema: Schema) -> None:
-        # The other direction, and the one that matters more: a body that calls Field without the
-        # import is a NameError at import time, not a lint finding.
+    def test_the_field_import_tracks_the_field_call_in_both_directions(self, representative_schema: Schema) -> None:
+        # ⚠ Named for what it checks. It asserts the Field import iff the Field call, over the
+        # config axis that drives it -- NOT the general "no undefined name" property, which is
+        # the corpus ruff sweep's job (`test_lint.py`, F821 over all 384 lintable emissions).
+        # The direction that matters more is the second: a body calling Field without importing
+        # it is a NameError at import time, not a lint finding.
         for config in (EmitterConfig(), EmitterConfig(generate_crud_models=False, generate_enums=False)):
             out = _emit(representative_schema, config)
             assert ('= Field(' in out) == ('pydantic.Field' in _imported(out))

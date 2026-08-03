@@ -47,7 +47,25 @@ CUSTOM_MODEL_NAME = 'CustomModel'
 _LENGTH_PATTERN = r'length\((\w+)\)\s*([=<>]+)\s*(\d+)'
 #: The one spelling of a ``Field`` call this emitter produces. :meth:`PydanticEmitter._imports`
 #: searches the rendered body for it to decide whether ``Field`` is imported at all (``CI94-D9``).
+#:
+#: ⚠ **Every site that renders a ``Field`` call goes through :func:`_field_call`, so this literal
+#: and the emitted text cannot drift apart.** They were separate literals in three places; a
+#: refactor touching one and not this one would emit a module that uses ``Field`` without
+#: importing it. The corpus ruff sweep does catch that (as ``F821``), but a constant that is
+#: *structurally* the same string is better than a constant a test happens to notice.
 _FIELD_CALL = '= Field('
+
+
+def _field_call(arguments: str) -> str:
+    """Render a ``= Field(...)`` suffix from its already-formatted argument text.
+
+    Args:
+        arguments: The comma-joined keyword arguments, e.g. ``'default=None'``.
+
+    Returns:
+        The rendered call, always beginning with :data:`_FIELD_CALL`.
+    """
+    return f'{_FIELD_CALL}{arguments})'
 
 
 class _ClassVariant(Enum):
@@ -243,7 +261,7 @@ class PydanticEmitter(Emitter):
         written. ``ruff format`` agrees with the one-blank form, so there is no check-vs-format
         conflict to trade off.
         """
-        sections = []
+        sections: list[str] = []
         enum_section = self._enum_section(schema)
         if enum_section:
             sections.append(enum_section)
@@ -529,7 +547,7 @@ class PydanticEmitter(Emitter):
 
         line = f'{column.name}: {type_str}'
         if field_args:
-            line += ' = Field(' + ', '.join(f'{key}={value}' for key, value in field_args.items()) + ')'
+            line += ' ' + _field_call(', '.join(f'{key}={value}' for key, value in field_args.items()))
         return line
 
     def _base_type(self, column: ColumnInfo) -> str:
@@ -619,7 +637,7 @@ class PydanticEmitter(Emitter):
             if field_name not in used:
                 used.add(field_name)
                 target = self._proper_name(rel.related_table_name)
-                fields.append(f'{field_name}: list[{target}] | None = Field(default=None)')
+                fields.append(f'{field_name}: list[{target}] | None {_field_call("default=None")}')
 
         return fields
 
@@ -660,7 +678,7 @@ class PydanticEmitter(Emitter):
             type_hint = f'list[{target}]'
             field_name = pluralize(base_field_name)
 
-        return f'{field_name}: {type_hint} | None = Field(default=None)'
+        return f'{field_name}: {type_hint} | None {_field_call("default=None")}'
 
     # ------------------------------------------------------------------ naming helpers
 

@@ -513,7 +513,18 @@ FROM_HINT = (
 #: coupling to the source's wording is real; ``tests/unit/cli/test_errors.py`` drives the
 #: actual source code paths rather than hand-written strings, so a reworded engine message
 #: fails the suite instead of silently dropping the hint.
-_UNREACHABLE_MARKERS = ('Could not reach ', 'TLS verification failed for ', 'did not return JSON', 'HTTP 404')
+#:
+#: ``'Could not parse '`` is the malformed-URL case (CI-089) and is deliberately **not** spelled
+#: ``'Could not reach '``: castiron never tried to reach it, and telling a user who typo'd a URL to
+#: check their network is the same class of misdirection as the exit-70 "this is a bug in castiron"
+#: that case used to print.
+_UNREACHABLE_MARKERS = (
+    'Could not reach ',
+    'Could not parse ',
+    'TLS verification failed for ',
+    'did not return JSON',
+    'HTTP 404',
+)
 _AUTH_MARKERS = ('returned HTTP 401', 'returned HTTP 403')
 _EMPTY_SCHEMA_MARKERS = ('exposes no tables or views for schema', 'exposes no readable columns for schema')
 

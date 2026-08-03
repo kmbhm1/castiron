@@ -349,6 +349,14 @@ def source_origin(source: str, key: str | None) -> str:
     Never raises: it is called from the error path, where a failure to describe the source
     must not replace the failure the user actually needs to see.
 
+    ⚠ That claim was **false until CI-089** and this is the load-bearing half of the fix. It
+    catches :class:`SourceError` only, while ``normalize_postgrest_url`` used to let ``urlsplit``'s
+    bare ``ValueError`` through on a malformed URL. Because this runs inside
+    :func:`~castiron.cli.errors.cli_error_handling`'s own ``except SourceError`` block, raising
+    here does not re-enter the boundary -- it escapes the ``try`` statement entirely and prints an
+    unredacted traceback. Narrowing what ``normalize_postgrest_url`` can raise is what makes the
+    sentence above true, rather than widening the ``except`` here.
+
     Args:
         source: The ``--from`` value.
         key: The API key in play, masked out of the result.
@@ -364,7 +372,11 @@ def source_origin(source: str, key: str | None) -> str:
         return redact(str(Path(source)), key)
     try:
         return redact(normalize_postgrest_url(source), key)
-    except SourceError:  # pragma: no cover - normalize only rejects a blank URL, caught earlier
+    except SourceError:
+        # Reachable since CI-089: a malformed URL (`http://[::1`) now raises SourceFetchError out
+        # of `normalize_postgrest_url` instead of a bare ValueError, and this runs from the hint
+        # path *inside* the error boundary's `except SourceError` -- where a raise would escape the
+        # boundary entirely and print an unredacted traceback. Echo the raw value, redacted.
         return redact(source, key)
 
 

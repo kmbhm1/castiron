@@ -6,7 +6,7 @@ can tell "your input was wrong" from "castiron has a bug" without parsing text.
 | Code | Meaning | Typical causes |
 | --- | --- | --- |
 | `0` | Success | Files written, or `--dry-run` completed |
-| `1` | An actionable failure — something you can fix | Unreachable source, bad key, unreadable OpenAPI document, a schema with no visible tables, a bad `[tool.castiron]` table, a target that exists under `--no-overwrite`, an unwritable output path |
+| `1` | An actionable failure — something you can fix | Unreachable source, a `--from` URL castiron cannot parse, bad key, unreadable OpenAPI document, a schema with no visible tables, a bad `[tool.castiron]` table, a target that exists under `--no-overwrite`, an unwritable output path |
 | `2` | Usage error | Unknown option, unknown `--emit` value, `--filename` with two emitters, a `--config` file that does not exist, a `--from` that is missing or is neither a URL nor an existing file, a `--from` URL carrying credentials in its userinfo, a `--key` containing a control character |
 | `3` | **Reserved** — not returned today | Reserved for drift detected by the future `castiron check`; declared now so the code never has to be renumbered |
 | `70` | Internal error — a castiron bug | An unexpected exception. `70` is `EX_SOFTWARE` from BSD `sysexits` |
@@ -22,6 +22,14 @@ failed, and where a next step exists castiron adds a `Hint:` line:
 ```
 Error: https://abcdefgh.supabase.co/rest/v1/ returned HTTP 401: check the API key and the role's privileges (PostgREST hides objects the API role cannot access).
 Hint: the key came from CASTIRON_KEY. Check it is current and that its role can read the schema.
+```
+
+A `--from` URL that is not a URL Python can parse is exit `1` too, not a castiron bug — you
+typo'd it, and the message says so and quotes it back:
+
+```
+Error: Could not parse http://[::1 as a URL: check the scheme, the host, and the [brackets] around an IPv6 address.
+Hint: --from takes a Supabase project URL (https://<ref>.supabase.co), a PostgREST API root, or a path to an OpenAPI JSON document.
 ```
 
 castiron treats an empty schema as a failure rather than writing an empty models file —

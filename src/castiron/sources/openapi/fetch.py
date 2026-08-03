@@ -56,6 +56,22 @@ def normalize_postgrest_url(url: str) -> str:
     trailing slash appended so the document is requested on the API **root** path (a
     non-root path returns 406).
 
+    ⚠ **``urlsplit`` raises a bare** ``ValueError`` **on a malformed URL, and this function is
+    responsible for converting it.** ``urlsplit('http://[::1')`` is ``ValueError: Invalid IPv6
+    URL`` -- not a ``SourceFetchError`` -- and letting it escape falsified two shipped contracts
+    at once: :func:`fetch_openapi_document` documents ``Raises: SourceFetchError`` and called
+    this *outside* its own ``try``, and :func:`castiron.cli.gen.source_origin` documents "never
+    raises" while catching only :class:`~castiron.sources.SourceError`. It also leaked: an
+    escaping ``ValueError`` produces a real traceback, and ``pytest --showlocals`` printed the API
+    key held in the live-suite fixture's closure three times over (CI-089).
+
+    The message names the URL but **never** ``str(exc)``, which is deliberate and measured:
+    ``urlsplit`` -> ``_checknetloc`` raises ``netloc 'user:SECRET@exa℀mple.com' contains
+    invalid characters under NFKC normalization`` -- the netloc, userinfo included, with **no**
+    ``scheme://`` in front, which is exactly the anchor :func:`castiron.cli.errors.redact` needs.
+    Echoing the exception would therefore have opened a leak while closing one. The URL as given
+    keeps its scheme, so the mask does reach it.
+
     Args:
         url: The URL the user supplied.
 
@@ -63,15 +79,22 @@ def normalize_postgrest_url(url: str) -> str:
         The normalized API-root URL.
 
     Raises:
-        SourceFetchError: ``url`` is empty or blank.
+        SourceFetchError: ``url`` is empty or blank, or is not a URL Python can parse.
     """
     trimmed = url.strip()
     if not trimmed:
         raise SourceFetchError('No source URL was given; expected a PostgREST API root or a Supabase project URL.')
 
-    parts = urlsplit(trimmed)
+    try:
+        parts = urlsplit(trimmed)
+        host = parts.hostname or ''
+    except ValueError as exc:
+        raise SourceFetchError(
+            f'Could not parse {trimmed} as a URL: check the scheme, the host, and the [brackets] '
+            f'around an IPv6 address.'
+        ) from exc
+
     path = parts.path
-    host = parts.hostname or ''
     if host.endswith(SUPABASE_HOST_SUFFIXES) and not path.strip('/'):
         path = SUPABASE_REST_PATH
     elif not path.endswith('/'):
@@ -121,7 +144,9 @@ def fetch_openapi_document(
         The decoded document.
 
     Raises:
-        SourceFetchError: The request failed, or the response body was not a JSON object.
+        SourceFetchError: The URL could not be parsed, the request failed, or the response body
+            was not a JSON object. Nothing else -- see :func:`normalize_postgrest_url`, which is
+            called outside the ``try`` below and so has to convert its own ``ValueError``.
     """
     target = normalize_postgrest_url(url)
     logger.debug(f'Fetching the OpenAPI document from {target} (schema {schema!r})')

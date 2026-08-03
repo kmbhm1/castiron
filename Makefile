@@ -40,31 +40,56 @@ test-unit: ## Run only unit tests
 test-integration: ## Run the live-source suite (needs the castiron-testbed apparatus; see tests/integration/README.md)
 	@uv run pytest -vv -m integration tests/integration/
 
-coverage: ## Generate an HTML coverage report
-	@uv run pytest --cov=src/castiron --cov-report=term-missing --cov-report=html
+# `-m "not integration"` here for the same reason as `test` above — this was the LAST pytest
+# invocation in this file without it (CI-089). With the testbed exported it opened sockets and
+# folded live-source tests into the HTML report, which contradicted the comment below: the
+# guarantee those documents sell is the MARKER, holding by construction rather than by absence
+# of configuration, and one unguarded target is enough to make that sentence false.
+coverage: ## Generate an HTML coverage report; excludes the live-source suite
+	@uv run pytest -m "not integration" --cov=src/castiron --cov-report=term-missing --cov-report=html
 
 # NOTE the interpreter ORDER: the pinned one (3.12, per .python-version) runs LAST.
 # `uv run --python X` tears down and recreates .venv whenever X differs from the current one,
 # so ending on any other version would leave the tree on the wrong interpreter and force a
 # silent rebuild on the next plain `uv run`. Ending on 3.12 leaves it exactly as it was found.
-# Coverage is enforced once, on that final 3.12 leg — the floor is a property of the suite,
-# not of the interpreter, and gating it four times only multiplies runtime.
 #
-# ⚠ `-m "not integration"` is on BOTH legs, and it is not decoration. This target is what
+# ⚠ THE COVERAGE FLOOR IS ON EVERY LEG (CI-089, closing `CI-088`). It used to be on the final
+# 3.12 leg only, on the reasoning that the floor is a property of the suite and not of the
+# interpreter — true, and beside the point. `--cov-fail-under` is also the only thing here that
+# can tell "everything passed" from "almost nothing ran".
+#
+# Measured on pytest 9.1.1, because the obvious version of this claim is WRONG. Exit 5
+# ("no tests collected") DOES fire on total deselection — `session.testscollected` is the
+# post-deselection count — so a bare `pytest` already caught the hook bug `CI-083` describes:
+#     total deselection   -> `1420 deselected`, exit 5   (bare pytest catches it)
+# The hole is PARTIAL deselection, where nothing is left to trip exit 5:
+#     partial (1236/1420) -> `184 passed, 1236 deselected`, exit 0   (bare pytest: green)
+#                         -> with the floor: exit 1, "Total coverage: 50.59%"
+# And partial is the dangerous one, because "184 passed" READS like success where
+# "1420 deselected" does not. With the floor on one leg of four, three legs of the pre-push gate
+# were blind to it — read the count, not the exit code (`CI-083`).
+#
+# Measured cost of fixing it: ~1s per leg (~14s -> ~17s). Note CI (.github/workflows/ci.yml)
+# already ran the floor on all four legs, so the gate was WEAKER than the CI after it — `CI-081`.
+# term-missing is kept to the final leg only, to keep the gate's output readable; a leg that
+# breaches the floor still prints its own "Required test coverage of 90% not reached" line.
+#
+# ⚠ `-m "not integration"` is on EVERY leg, and it is not decoration. This target is what
 # `validate` runs, so omitting it here would silently undo the exclusion `test` makes above:
 # a developer with CASTIRON_TEST_POSTGREST_URL exported would get a `make validate` that opens
 # sockets — falsifying, in one stroke, the promise made by this file, CONTRIBUTING.md,
 # tests/integration/README.md and tests/integration/conftest.py. The autouse skip fixture would
 # still protect an *unconfigured* machine, but the guarantee those four documents sell is the
 # MARKER, which holds by construction rather than by absence of configuration.
-test-matrix: ## Run the suite on every CI interpreter (3.10-3.13) — coverage on 3.12 only
+test-matrix: ## Run the suite on every CI interpreter (3.10-3.13) — 90% floor on every leg
 	@set -e; for V in 3.10 3.11 3.13 3.12; do \
 		printf '\n=== pytest on py%s ===\n' "$$V"; \
 		if [ "$$V" = "3.12" ]; then \
 			uv run --python "$$V" pytest -q -m "not integration" \
 				--cov=src/castiron --cov-report=term-missing --cov-fail-under=90; \
 		else \
-			uv run --python "$$V" pytest -q -m "not integration"; \
+			uv run --python "$$V" pytest -q -m "not integration" \
+				--cov=src/castiron --cov-report= --cov-fail-under=90; \
 		fi; \
 	done
 

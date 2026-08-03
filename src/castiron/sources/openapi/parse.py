@@ -622,12 +622,25 @@ def _function_description(body_schema: JsonObject | None, operation: JsonObject 
 
 
 def _parse_body_parameters(name: str, body_schema: JsonObject, get_op: JsonObject | None) -> list[Row]:
-    """Parse the POST body schema's ``properties`` into parameter 5-tuples, in order.
+    """Parse the POST body schema's ``properties`` into parameter 5-tuples, in document order.
 
-    ``properties`` is insertion-ordered from ``pdParams``, which ``funcsSqlQuery`` builds
-    with ``array_agg(... ORDER BY idx)`` — so JSON key order *is* pg argument order.
-    ``required`` is ``idx <= (pronargs - pronargdefaults)``, so a parameter has a default
-    exactly when it is absent from ``required``.
+    ⚠ **Document order is ALPHABETICAL, not pg argument order.** This docstring used to claim
+    the opposite — that ``properties`` is insertion-ordered from ``pdParams``, so "JSON key order
+    *is* pg argument order". Measured false against a real PostgREST (CI-089): ``create_order``
+    is declared ``(p_customer_id, p_status, p_lines)`` and its POST body ``properties`` arrive as
+    ``['p_customer_id', 'p_lines', 'p_status']``. **That false claim is why ``CI-078`` exists** —
+    someone read this paragraph instead of measuring, so nothing downstream knows the order it
+    receives is not the order the function was declared with.
+
+    Declaration order survives in exactly one place: the **GET** operation's ``parameters`` array,
+    which PostgREST emits only for a STABLE/IMMUTABLE function. So it is recoverable for those and
+    structurally absent for a VOLATILE one. ``CI-078`` is the row that recovers it; this function
+    still builds from the alphabetical body, and a positional RPC call generated from these
+    parameters (CI-012) would be silently wrong until it lands.
+
+    ``required`` is ``idx <= (pronargs - pronargdefaults)``, so a parameter has a default exactly
+    when it is absent from ``required``. That claim is unaffected — it is about set membership,
+    not order.
     """
     required = {value for value in _as_list(body_schema.get('required')) if isinstance(value, str)}
     variadic = _variadic_parameter_names(get_op)

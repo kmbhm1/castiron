@@ -586,10 +586,23 @@ class TestThePremiseTheClassifierRestsOn:
     def test_the_sweep_covers_every_committed_document(self) -> None:
         assert len(self.DOCUMENTS) == 4, [p.name for p in self.DOCUMENTS]
 
-    @pytest.mark.parametrize('path', DOCUMENTS, ids=lambda p: p.stem)
-    def test_a_pk_marker_outside_a_non_empty_required_means_view(self, path: Path) -> None:
-        document = json.loads(path.read_text(encoding='utf-8'))
-        witnessed = 0
+    #: Per-document count of relations carrying a ``<pk/>`` outside a non-empty ``required``.
+    #: Spelled out per document, because the class claims "**6/6**, 0 exceptions" and a claim
+    #: that is never counted is a claim nobody is checking. ``testbed-inventory`` and
+    #: ``synthetic-torture`` legitimately have none -- every relation in them is a base table --
+    #: and asserting **zero** for those is what makes the other two numbers mean something.
+    EXPECTED_WITNESSES = {
+        # active_customers, ledger_summary, writable_customer_view, order_report, mv_customer_spend
+        'testbed-public.openapi': 5,
+        'postgrest_openapi': 1,  # active_users_view
+        'testbed-inventory.openapi': 0,
+        'synthetic-torture.openapi': 0,
+    }
+
+    @staticmethod
+    def _witnesses(document: dict[str, Any]) -> list[tuple[str, dict[str, Any], list[str]]]:
+        """Relations whose ``<pk/>`` marker falls outside a non-empty ``required``."""
+        found = []
         for name, definition in document.get('definitions', {}).items():
             required = definition.get('required') or []
             marked = [
@@ -598,15 +611,35 @@ class TestThePremiseTheClassifierRestsOn:
                 if isinstance(prop, dict) and '<pk/>' in str(prop.get('description', ''))
             ]
             outside = [column for column in marked if column not in required]
-            if not outside:
-                continue
-            witnessed += 1
+            if outside:
+                found.append((name, definition, outside))
+        return found
+
+    @pytest.mark.parametrize('path', DOCUMENTS, ids=lambda p: p.stem)
+    def test_a_pk_marker_outside_a_non_empty_required_means_view(self, path: Path) -> None:
+        document = json.loads(path.read_text(encoding='utf-8'))
+        witnesses = self._witnesses(document)
+
+        # ⚠ The count is asserted FIRST. Without it this test passes vacuously on a document with
+        # no witnessing relation -- which is two of the four -- and the loop below would be a
+        # guard that cannot fail (`CI-072`, `CI-091`).
+        assert len(witnesses) == self.EXPECTED_WITNESSES[path.stem], (
+            f'{path.name}: expected {self.EXPECTED_WITNESSES[path.stem]} relation(s) with a <pk/> '
+            f'outside a non-empty `required`, found {[name for name, _, _ in witnesses]}. The '
+            f"premise's evidence has moved; do not adjust the number without re-deriving it."
+        )
+        for name, definition, outside in witnesses:
             assert classify_table_type(name, definition, document.get('paths', {})) == 'VIEW', (
                 f'{path.name}:{name} carries a <pk/> on {outside} outside a non-empty `required`, '
                 f'so the premise says VIEW. If a real capture now violates this, the one-signal '
                 f'model of CI-075 has lost its justification -- do not "fix" this test.'
             )
-        assert witnessed >= 0  # documents with no such relation are legitimate (inventory, torture)
+
+    def test_the_premise_totals_six_across_every_committed_document(self) -> None:
+        # The number the class docstring claims, asserted as a total rather than left as prose.
+        total = sum(len(self._witnesses(json.loads(path.read_text(encoding='utf-8')))) for path in self.DOCUMENTS)
+        assert total == 6, total
+        assert sum(self.EXPECTED_WITNESSES.values()) == 6
 
     def test_a_non_empty_required_always_contains_every_pk_marker(self) -> None:
         # The other half, and the stronger claim: over the 26 definitions of the real capture,

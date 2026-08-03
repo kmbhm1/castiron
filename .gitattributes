@@ -18,6 +18,6 @@
 
 tests/unit/corpus/inputs/**     -text
 tests/unit/corpus/golden/**     -text
-tests/unit/corpus/manifest/**   -text
+tests/unit/corpus/fingerprints/** -text
 tests/unit/**/golden/**         -text
 tests/unit/**/fixtures/**       -text

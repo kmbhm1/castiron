@@ -21,7 +21,7 @@ repos:
       # drifts into an unsafe shape is reported rather than silently rewritten.
       - id: trailing-whitespace
         stages: [pre-commit]
-        exclude: &golden_bytes '^tests/unit/(corpus/(inputs|golden|manifest)|.*/golden)/'
+        exclude: &golden_bytes '^tests/unit/(corpus/(inputs|golden|fingerprints)|.*/golden)/'
       - id: end-of-file-fixer
         stages: [pre-commit]
         exclude: *golden_bytes

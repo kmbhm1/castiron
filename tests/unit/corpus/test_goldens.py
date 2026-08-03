@@ -25,7 +25,7 @@ import re
 
 import pytest
 
-from tests.unit.corpus.cases import CASES, FINGERPRINT_DIR, GOLDEN_DIR, INPUTS_DIR, CorpusCase
+from tests.unit.corpus.cases import CASES, FINGERPRINT_DIR, GOLDEN_DIR, INPUTS_DIR, REPO_ROOT, CorpusCase
 from tests.unit.corpus.compare import assert_golden
 from tests.unit.corpus.conftest import case_ids, iter_cases
 from tests.unit.corpus.pipeline import module_compiles, render_ir_golden
@@ -169,5 +169,55 @@ class TestByteHygiene:
 
     def test_the_corpus_enumerates_every_artifact_it_ships(self) -> None:
         # CI6-Q7: an "every artifact is hygienic" claim is worth nothing without the count of what
-        # "every" covered. 13 goldens/manifests + 3 inputs + 3 provenance records.
+        # "every" covered. 13 goldens/fingerprints + 3 inputs + 3 provenance records.
         assert len(artifact_files()) == 19
+
+
+@pytest.mark.unit
+class TestTheToolingActuallyProtectsTheseBytes:
+    """The exclusions are only worth something if they still name the real directories.
+
+    Both guards are **path-based**, so renaming an artifact directory silently unprotects it while
+    every other test stays green. That is not hypothetical: this corpus's fingerprint directory
+    was renamed mid-row (``manifest/`` collides with ``.gitignore``'s ``MANIFEST`` on a
+    case-insensitive filesystem), and for one commit the exclusions still pointed at the old name.
+    These two tests are what turn "remember to update the config" into a red test.
+    """
+
+    def test_pre_commit_excludes_every_artifact_directory_from_the_rewriting_hooks(self) -> None:
+        # Parsed textually rather than with PyYAML: pyyaml is only a TRANSITIVE dependency here
+        # (pre-commit pulls it in), and a test that silently depends on someone else's
+        # requirement is one `uv sync` away from an unexplained collection error.
+        from pathlib import Path
+
+        config = (REPO_ROOT / '.pre-commit-config.yaml').read_text(encoding='utf-8')
+        for hook_id in ('trailing-whitespace', 'end-of-file-fixer'):
+            block = config[config.index(f'- id: {hook_id}') :].splitlines()[:4]
+            exclude = [line for line in block if 'exclude:' in line]
+            assert exclude, (
+                f'{hook_id} declares no exclude. It REWRITES TEXT FILES IN PLACE, so a committed '
+                f'golden would stop being what the emitter produces and the next `make test` '
+                f'would go red for a change nobody made.'
+            )
+
+        pattern = re.search(r"exclude: &golden_bytes '([^']+)'", config)
+        assert pattern, 'the shared golden-bytes exclude anchor is gone from .pre-commit-config.yaml'
+        compiled = re.compile(pattern.group(1))
+        for path in artifact_files():
+            relative = str(Path(path).relative_to(REPO_ROOT))
+            assert compiled.search(relative), (
+                f'the rewriting hooks would edit {relative} in place. The exclude pattern '
+                f'{pattern.group(1)!r} no longer covers every corpus artifact -- most likely a '
+                f'directory was renamed without updating .pre-commit-config.yaml.'
+            )
+
+    def test_gitattributes_marks_every_artifact_directory_binary_safe(self) -> None:
+        text = (REPO_ROOT / '.gitattributes').read_text(encoding='utf-8')
+        declared = {line.split()[0] for line in text.splitlines() if line.strip() and not line.startswith('#')}
+        for directory in ARTIFACT_DIRS:
+            relative = directory.relative_to(REPO_ROOT)
+            assert f'{relative}/**' in declared, (
+                f'{relative}/ is not listed in .gitattributes, so a Windows clone with '
+                f'core.autocrlf=true would rewrite its bytes to CRLF on checkout and every '
+                f'comparison against it would fail for a reason unrelated to castiron.'
+            )

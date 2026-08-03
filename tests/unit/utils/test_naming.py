@@ -23,6 +23,22 @@ def _members(*labels: str) -> list[EnumMember]:
     return python_member_names(EnumInfo(name='t', values=list(labels), schema='public'))
 
 
+def _exec_enum(pairs: list[tuple[str, str]]) -> dict[str, object]:
+    """Build and **execute** a real ``Enum`` class body from ``(member_name, value)`` pairs.
+
+    ⚠ Execution, not ``compile()``. Both shapes CI-080's fix round 1 closed are invisible to a
+    parse: ``_sunder_`` raises when the class body runs, and ``__dunder__`` is silently swallowed
+    by ``EnumMeta``. A test that only compiles reports green on a module that cannot be imported.
+    """
+    import enum as enum_module
+
+    body = '\n'.join(f'    {name} = {value!r}' for name, value in pairs)
+    source = f'class E(str, enum_module.Enum):\n{body}\n'
+    namespace: dict[str, object] = {'enum_module': enum_module}
+    exec(compile(source, '<enum-corpus>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+    return namespace
+
+
 @pytest.mark.unit
 class TestToPascalCase:
     @pytest.mark.parametrize(
@@ -186,53 +202,83 @@ class TestPythonMemberNames:
         assert member.note == 'reserved keyword', 'CI-100 (still open) makes this annotation false'
 
 
+#: Shapes a Postgres enum label can legally carry. Postgres allows any text up to
+#: ``NAMEDATALEN``; PostgREST carries it verbatim into ``properties.<c>.enum``.
+#:
+#: 🔴 **Module-level, and imported by the emitter's executing test, on purpose.** Fix round 1
+#: found the sunder/dunder defect by noticing that the *trigger was already committed here* --
+#: ``'"quoted"'`` maps to ``_QUOTED_`` -- while the only test that actually **executes** an
+#: emitted enum body ran over ``ADVERSARIAL_TEXT``, which is CI-009's docstring/comment corpus
+#: and contains no symmetric-punctuation label. The right corpus and the right assertion both
+#: existed and were pointed at each other's targets. They now share one list, and
+#: ``test_the_executing_emitter_test_uses_this_exact_corpus`` fails if they are separated again.
+ENUM_LABEL_CORPUS = [
+    '',
+    ' ',
+    '   ',
+    '\t',
+    '\n',
+    '\n\ndoc\n\n',
+    '\x00',
+    'a\x00b',
+    '2',
+    '2fast',
+    '2nd pass',
+    'in progress',
+    'in-progress',
+    'in_progress',
+    'n/a',
+    'done!',
+    'DONE',
+    'done',
+    'Done',
+    'class',
+    'import',
+    'None',
+    'True',
+    'lambda',
+    'id',
+    'sum',
+    'ﬁ',
+    'fi',
+    'ß',
+    'ss',
+    'Ünïcödé — 表 — 🚀',
+    'ı',
+    '٣',
+    'x' * 400,
+    '%$#@!',
+    'a.b.c',
+    '"quoted"',
+    "it's",
+    'a b',
+    # ⚠ Added in fix round 1. Every one of these produced a member name that is a valid
+    # identifier AND unusable as an enum member: `_sunder_` raised ValueError at import (the
+    # whole module dead), `__dunder__` was silently dropped (a lost label, which CI94-Q1
+    # forbids outright). A trailing space in a CREATE TYPE was all it took.
+    '(none)',
+    ' x ',
+    ' in progress ',
+    '(pending)',
+    '[x]',
+    '-tbd-',
+    '<null>',
+    '{draft}',
+    '.dot.',
+    '__init__',
+    '__doc__',
+    '_x_',
+    '-',
+    '--',
+    '---',
+]
+
+
 @pytest.mark.unit
 class TestEveryMemberNameIsAnIdentifier:
     """The property, enumerated rather than sampled (`CI-072`)."""
 
-    #: Shapes a Postgres enum label can legally carry. Postgres allows any text up to
-    #: ``NAMEDATALEN``; PostgREST carries it verbatim into ``properties.<c>.enum``.
-    LABELS = [
-        '',
-        ' ',
-        '   ',
-        '\t',
-        '\n',
-        '\n\ndoc\n\n',
-        '\x00',
-        'a\x00b',
-        '2',
-        '2fast',
-        '2nd pass',
-        'in progress',
-        'in-progress',
-        'in_progress',
-        'n/a',
-        'done!',
-        'DONE',
-        'done',
-        'Done',
-        'class',
-        'import',
-        'None',
-        'True',
-        'lambda',
-        'id',
-        'sum',
-        'ﬁ',
-        'fi',
-        'ß',
-        'ss',
-        'Ünïcödé — 表 — 🚀',
-        'ı',
-        '٣',
-        'x' * 400,
-        '%$#@!',
-        'a.b.c',
-        '"quoted"',
-        "it's",
-        'a b',
-    ]
+    LABELS = ENUM_LABEL_CORPUS
 
     def test_every_single_label_yields_an_identifier(self) -> None:
         for label in self.LABELS:
@@ -281,3 +327,139 @@ class TestInflectionWrappers:
 
     def test_round_trip(self) -> None:
         assert singularize(pluralize('book')) == 'book'
+
+
+@pytest.mark.unit
+class TestEveryMemberNameIsUsableAsAnEnumMember:
+    """🔴 The assertion whose absence let the sunder/dunder defect through fix round 0.
+
+    ``.isidentifier()`` is **necessary and not sufficient**. ``EnumMeta`` reserves two shapes on
+    top of Python's identifier rules, and both were reachable from ordinary Postgres labels:
+
+    * ``_sunder_`` (``'(none)'`` -> ``_NONE_``) raised ``ValueError`` when the class body ran, so
+      the **whole emitted module** was unusable -- at ``castiron gen`` exit 0, and after
+      ``py_compile`` had passed. CI-080's failure mode relocated, not closed.
+    * ``__dunder__`` (``'__init__'`` -> ``__INIT__``) was **silently dropped**, violating
+      ``CI94-Q1``'s single non-negotiable: never drop a variant.
+
+    A **trailing space** in a ``CREATE TYPE`` was enough to trigger the first. So these tests
+    build a real ``Enum`` class and **execute** it; they never merely compile.
+    """
+
+    def test_every_label_round_trips_through_a_real_enum_body(self) -> None:
+        # Each label alone, so a failure names the label rather than the corpus.
+        for label in ENUM_LABEL_CORPUS:
+            (member,) = _members(label)
+            namespace = _exec_enum([(member.name, label)])
+            enum_class = namespace['E']
+            assert len(list(enum_class)) == 1, f'{label!r} -> {member.name!r} was dropped by EnumMeta'
+            assert enum_class(label).value == label, f'{label!r} does not round-trip'
+
+    def test_the_whole_corpus_forms_one_working_enum(self) -> None:
+        # And all at once, which is the shape a user actually gets: every label present, every
+        # value exact, nothing collapsed. This is the end-to-end statement of CI94-Q1.
+        members = _members(*ENUM_LABEL_CORPUS)
+        enum_class = _exec_enum([(m.name, m.label) for m in members])['E']
+        assert len(list(enum_class)) == len(ENUM_LABEL_CORPUS), 'a label was dropped or two collapsed'
+        for label in ENUM_LABEL_CORPUS:
+            assert enum_class(label).value == label
+
+    @pytest.mark.parametrize(
+        ('label', 'expected'),
+        [
+            ('(none)', '_NONE__'),
+            (' x ', '_X__'),
+            (' in progress ', '_IN_PROGRESS__'),
+            ('(pending)', '_PENDING__'),
+            ('[x]', '_X__'),
+            ('-tbd-', '_TBD__'),
+            ('<null>', '_NULL__'),
+            ('{draft}', '_DRAFT__'),
+            ('.dot.', '_DOT__'),
+            ('"quoted"', '_QUOTED__'),
+            ('_x_', '_X__'),
+            ('__init__', '__INIT___'),
+            ('__doc__', '__DOC___'),
+        ],
+    )
+    def test_the_repaired_names_are_pinned(self, label: str, expected: str) -> None:
+        (member,) = _members(label)
+        assert member.name == expected
+        assert member.note == 'reserved by Enum'
+
+    @pytest.mark.parametrize('name', ['_', '__', '___', '____', '_2FAST', '_A', 'A_'])
+    def test_short_and_asymmetric_names_are_left_alone(self, name: str) -> None:
+        # The counter-witness. Without it, "append an underscore to everything" would pass every
+        # test above -- and `_2ND_PASS`, `_` and `___` are all legal members that must not move.
+        from castiron.utils.naming import _is_enum_reserved_shape
+
+        assert not _is_enum_reserved_shape(name)
+
+    def test_the_predicate_matches_what_the_INTERPRETER_actually_does(self) -> None:
+        """⚠ ``CI94-D8`` applied to ``enum``: state the rule in ``src/``, check it against reality.
+
+        ``enum._is_sunder`` / ``_is_dunder`` / ``_is_private`` are **private, unguaranteed and
+        demonstrably version-skewed** -- 3.13 dropped a clause from ``_is_private``, and 3.10
+        words the sunder error differently. So this does not compare predicate to predicate. It
+        **builds a real enum class and looks at what came out**, which is the only authority that
+        matters and is immune to all of that.
+
+        A name is "reserved" exactly when the interpreter refuses it, drops it, or gives the
+        member a name other than the one written. Runs on all four gate legs.
+        """
+        import itertools
+
+        from castiron.utils.naming import _is_enum_reserved_shape
+
+        names = [''.join(p) for size in range(1, 8) for p in itertools.product('_A', repeat=size)]
+        assert len(names) == 254
+        for name in names:
+            try:
+                enum_class = _exec_enum([(name, 'v')])['E']
+                survived = [m.name for m in enum_class] == [name]
+            except ValueError:
+                survived = False
+            assert _is_enum_reserved_shape(name) is not survived, (
+                f'{name!r}: predicate says reserved={_is_enum_reserved_shape(name)}, but the '
+                f'interpreter says usable={survived}'
+            )
+
+    def test_the_repair_terminates_in_at_most_three_appends(self) -> None:
+        """The bound is a proof, and this is the proof executed.
+
+        A name ending in three or more underscores can be none of the three shapes, and each
+        iteration adds exactly one -- so three is the ceiling. ``__2`` is the worst case and it
+        needs all three: ``__2_`` is still private, ``__2__`` is then dunder, ``__2___`` is clean.
+        """
+        import itertools
+
+        from castiron.utils.naming import _is_enum_reserved_shape, _repair_enum_shape
+
+        names = [''.join(p) for size in range(1, 8) for p in itertools.product('_A', repeat=size)]
+        reserved = [n for n in names if _is_enum_reserved_shape(n)]
+        assert len(reserved) == 66, len(reserved)
+
+        repaired = [_repair_enum_shape(n) for n in reserved]
+        assert all(not _is_enum_reserved_shape(r) for r in repaired)
+        assert max(len(r) - len(n) for n, r in zip(reserved, repaired)) == 3
+        assert _repair_enum_shape('__2') == '__2___'
+        assert _repair_enum_shape('_X_') == '_X__'
+        assert _repair_enum_shape('__INIT__') == '__INIT___'
+
+        # ... and every repaired name really is accepted, under its own name, by a real Enum.
+        enum_class = _exec_enum([(name, f'v{index}') for index, name in enumerate(sorted(set(repaired)))])['E']
+        assert [m.name for m in enum_class] == sorted(set(repaired))
+
+    def test_the_collision_suffix_cannot_smuggle_a_reserved_shape_back_in(self) -> None:
+        # 🔴 THE regression this round exists for. `''`, `' '`, `'\t'` and `'\n'` all sanitize to
+        # `_`, so the collision rule produced `__2`, `__3`, `__4` -- which Python NAME-MANGLES.
+        # On 3.11+ those labels vanished; on 3.10 they became `_E__2`, i.e. the member name
+        # depended on the enum's class name. The suffix is therefore repaired too.
+        from castiron.utils.naming import _is_enum_reserved_shape
+
+        members = _members('', ' ', '\t', '\n', '\x00', '-', '---', '   ')
+        assert all(not _is_enum_reserved_shape(m.name) for m in members), [m.name for m in members]
+        enum_class = _exec_enum([(m.name, m.label) for m in members])['E']
+        assert len(list(enum_class)) == 8, 'a label was mangled away'
+        for member in members:
+            assert enum_class(member.label).value == member.label

@@ -18,6 +18,7 @@ from castiron.ir import (
     build_schema,
 )
 from castiron.sources.openapi import build_schema_from_document
+from tests.unit.utils.test_naming import ENUM_LABEL_CORPUS
 
 Row = tuple[object, ...]
 GOLDEN = Path(__file__).parent / 'golden' / 'schema.py.txt'
@@ -662,6 +663,11 @@ ADVERSARIAL_TEXT = [
     'x' * 400,
 ]
 
+#: The corpus the **executing** enum test runs over: CI-009's adversarial text (which exercises
+#: the value literal and the comment) UNION the naming corpus (which exercises the member name).
+#: Order-preserving and de-duplicated, so the parametrization ids stay stable.
+EXECUTED_ENUM_LABELS = list(dict.fromkeys([*ADVERSARIAL_TEXT, *ENUM_LABEL_CORPUS]))
+
 
 @pytest.mark.unit
 class TestPyStringLiteral:
@@ -801,13 +807,23 @@ class TestPyStringLiteral:
             warnings.simplefilter('error')
             compile(out, '<generated>', 'exec')
 
-    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    @pytest.mark.parametrize('text', EXECUTED_ENUM_LABELS)
     def test_any_enum_label_yields_an_addressable_member(self, text: str, build_columns: Callable[..., Row]) -> None:
         """Parsing is not enough -- ``ﬁ``/``fi`` parse fine and raise ``TypeError`` at *import*.
 
         So the module is actually **executed** here and the enum class looked up by value. A
-        ``compile()``-only assertion would pass on a module whose two members collapse to one
-        binding, which is the exact hole ``CI94-Q1``'s NFKC ruling exists to close.
+        ``compile()``-only assertion would pass on a module whose members collapse into one
+        binding (``CI94-Q1``'s NFKC ruling), whose name Python mangles, or which ``EnumMeta``
+        rejects or silently drops.
+
+        🔴 **The corpus, not the assertion, is what failed in fix round 0.** This test was already
+        the right shape -- it executes -- but it ran over ``ADVERSARIAL_TEXT`` alone, which is
+        CI-009's *docstring and comment* corpus and contains no symmetric-punctuation label. The
+        trigger (``'"quoted"'`` -> ``_QUOTED_``, a ``_sunder_`` name) was sitting committed in the
+        *naming* corpus the whole time, in a test that only asserted ``.isidentifier()``. The
+        right corpus and the right assertion existed and were pointed at each other's targets, so
+        they now run over the **union** and ``test_the_emitter_executes_the_naming_corpus_too``
+        fails if that is ever undone.
         """
         columns = [build_columns('t', 'status', 'USER-DEFINED', udt_name='mood')]
         enum_types = [('mood', 'public', 'owner', 'E', True, 'e', [text, 'other'])]
@@ -820,6 +836,28 @@ class TestPyStringLiteral:
         assert enum_class(text).value == text  # type: ignore[operator]  # a runtime Enum lookup
         assert enum_class('other').value == 'other'  # type: ignore[operator]
         assert len(list(enum_class)) == 2, 'a label was dropped or two members collapsed into one'  # type: ignore[call-overload]
+
+    def test_the_whole_naming_corpus_emits_one_working_enum(self, build_columns: Callable[..., Row]) -> None:
+        # All 54 hostile labels in ONE emitted enum, executed. The single-label parametrization
+        # above cannot see a collision between two of them, and the collision suffix is exactly
+        # what produced the name-mangled `__2` that dropped four labels on py3.11+.
+        columns = [build_columns('t', 'status', 'USER-DEFINED', udt_name='mood')]
+        enum_types = [('mood', 'public', 'owner', 'E', True, 'e', list(ENUM_LABEL_CORPUS))]
+        enum_mapping = [('status', 't', 'public', 'mood', 'E', '')]
+        out = _emit(build_schema(columns, [], [], enum_types, enum_mapping))
+
+        namespace: dict[str, object] = {}
+        exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - see above
+        enum_class = namespace['PublicMoodEnum']
+        assert len(list(enum_class)) == len(ENUM_LABEL_CORPUS), 'a label was dropped or mangled away'  # type: ignore[call-overload]
+        for label in ENUM_LABEL_CORPUS:
+            assert enum_class(label).value == label  # type: ignore[operator]
+
+    def test_the_emitter_executes_the_naming_corpus_too(self) -> None:
+        # The structural guard for the mistake this round fixed: the executing test must never
+        # again run over a corpus that excludes the naming corpus's shapes.
+        assert set(ENUM_LABEL_CORPUS) <= set(EXECUTED_ENUM_LABELS)
+        assert set(ADVERSARIAL_TEXT) <= set(EXECUTED_ENUM_LABELS)
 
     @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
     def test_any_column_alias_emits_parseable_python(self, text: str) -> None:
@@ -1398,11 +1436,17 @@ class TestCi080TheCommentIsTotalOverItsInput:
     """``CI94-D3``: the label inside the ``#`` comment goes through ``_py_string`` too.
 
     The CI-094 spec called this unreachable-but-correct. **It is reachable**, and only *because*
-    of the CI-080 fix: the reserved guard now reads the sanitized name, and ``dir(builtins)``
-    contains ``__doc__``. So a label of two newlines, ``doc``, two newlines maps to ``__DOC__``,
-    whose ``.lower()`` is a reserved name -- and the raw label would split the comment across
-    three lines and break the module. CI-009's standing lesson: a renderer that injects user text
-    into generated source must be total over its input domain, not over its best-behaved caller.
+    of the CI-080 fix: a guard that fires on the *sanitized* name can be reached by a label whose
+    raw text carries a newline, and the raw label would then split the comment across three lines
+    and break the module. CI-009's standing lesson: a renderer that injects user text into
+    generated source must be total over its input domain, not over its best-behaved caller.
+
+    ⚠ **Which guard catches the example moved in fix round 1, and the test says so rather than
+    being quietly re-pointed.** Originally ``'\\n\\ndoc\\n\\n'`` mapped to ``__DOC__`` and fired
+    the *reserved-keyword* guard (``dir(builtins)`` contains ``__doc__``). The sunder/dunder guard
+    now runs first and claims it, so the note reads ``reserved by Enum``. The reachability claim
+    is unchanged -- the same label, the same comment line, the same newline -- and the collision
+    route below never depended on a builtin at all.
     """
 
     @staticmethod
@@ -1413,13 +1457,14 @@ class TestCi080TheCommentIsTotalOverItsInput:
         )
         return _emit(Schema(tables=[table], enums=[EnumInfo(name='mood', values=labels, schema='public')]))
 
-    def test_a_newline_bearing_label_reaches_the_reserved_comment(self) -> None:
+    def test_a_newline_bearing_label_reaches_a_guard_comment(self) -> None:
         from castiron.utils.naming import python_member_names
 
         members = python_member_names(EnumInfo(name='mood', values=['\n\ndoc\n\n'], schema='public'))
-        assert members[0].note == 'reserved keyword', 'the premise: this label IS reserved after sanitizing'
+        assert members[0].note == 'reserved by Enum', 'the premise: a newline-bearing label DOES reach a guard'
+        assert members[0].name == '__DOC___'
         out = self._module(['\n\ndoc\n\n'])
-        assert '# original name was "\\n\\ndoc\\n\\n" (reserved keyword)' in out
+        assert '# original name was "\\n\\ndoc\\n\\n" (reserved by Enum)' in out
         compile(out, '<generated>', 'exec')
 
     def test_a_newline_bearing_label_reaches_the_collision_comment(self) -> None:

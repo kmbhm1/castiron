@@ -71,13 +71,15 @@ class EnumMember:
         label: The Postgres enum label, verbatim. This is the ground truth, and it is what the
             emitted value literal carries -- so the transform below is never lossy, however much
             it mangles the name.
-        name: The Python identifier. Guaranteed ``name.isidentifier()``, and guaranteed unique
-            within one :func:`python_member_names` call **after NFKC normalization**.
-        note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved keyword'`` or
-            ``'name collision'`` -- or ``None`` when it is. When both apply (labels ``['import_',
-            'import']``, where the second is renamed twice), the **collision** wins: it is what
-            explains the trailing ``_2`` a reader is looking at, and the reserved suffix is
-            already visible next to the value literal on the same line.
+        name: The Python identifier. Guaranteed ``name.isidentifier()``, guaranteed **usable as
+            an ``Enum`` member** (which is a strictly stronger claim -- see
+            :func:`_is_enum_reserved_shape`), and guaranteed unique within one
+            :func:`python_member_names` call **after NFKC normalization**.
+        note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved by Enum'``,
+            ``'reserved keyword'`` or ``'name collision'`` -- or ``None`` when it is. When more
+            than one applies (labels ``['import_', 'import']``, where the second is renamed
+            twice), the **last** one wins: it is what explains the final trailing character a
+            reader is looking at, and the label itself is on the same line either way.
     """
 
     label: str
@@ -103,6 +105,73 @@ def _identifier_characters(label: str) -> str:
     return ''.join(c if ('_' + c).isidentifier() else '_' for c in label)
 
 
+def _is_enum_reserved_shape(name: str) -> bool:
+    """Whether ``name`` is unusable as an ``Enum`` member, even though it is a valid identifier.
+
+    ``str.isidentifier()`` is necessary and **not sufficient**. Three *shapes* are reserved on
+    top of Python's identifier rules, and :func:`_identifier_characters` produces all three
+    freely -- from labels as ordinary as a **trailing space** nobody noticed in a ``CREATE TYPE``:
+
+    * ``_sunder_`` (``'(none)'`` -> ``_NONE_``) -- ``ValueError`` when the class body runs, so
+      the **whole emitted module** is unusable at import.
+    * ``__dunder__`` (``'__init__'`` -> ``__INIT__``) -- the member is **silently dropped**.
+    * **private / name-mangled** (``'' , ' '`` colliding -> ``_``, ``__2``) -- Python mangles any
+      name with two leading underscores and fewer than two trailing ones, at *compile* time, so
+      the member never has the name castiron wrote. ⚠ This one is produced by the **collision
+      rule itself**, and its behaviour is **interpreter-dependent**: 3.11+ drop the label
+      entirely, while 3.10 emits a member called ``_<ClassName>__2`` -- and if the mangled form
+      then happens to be sunder (``__2_`` -> ``_E__2_``) 3.10 raises instead. Output whose
+      meaning depends on the running interpreter is a Hard Rule #9 problem on top of a
+      correctness one.
+
+    All three are CI-080's failure mode relocated, not closed: ``compile()`` passes and
+    ``castiron gen`` still exits 0. Two of them violate ``CI94-Q1``'s one non-negotiable
+    ("never drop a variant") outright.
+
+    ⚠ **Deliberately re-implemented rather than importing ``enum._is_sunder`` /
+    ``enum._is_dunder`` / ``enum._is_private``**, which are private, unguaranteed, and demonstrably
+    version-skewed (3.13 dropped a clause from ``_is_private``; 3.10 words its error differently).
+    This is the ``CI94-D8`` pattern PR #15 used for ``STDLIB_MODULES``: state the rule explicitly
+    here so emitted bytes never depend on a CPython internal, and *cross-check it against the
+    interpreter in a test* that runs on all four gate legs.
+
+    Args:
+        name: A candidate member name, already known to be a valid identifier.
+
+    Returns:
+        ``True`` when ``Enum`` would reject, rename or swallow ``name``.
+    """
+    sunder = len(name) > 2 and name[0] == name[-1] == '_' and name[1] != '_' and name[-2] != '_'
+    dunder = len(name) > 4 and name[:2] == name[-2:] == '__' and name[2] != '_' and name[-3] != '_'
+    private = name.startswith('__') and not name.endswith('__')
+    return sunder or dunder or private
+
+
+def _repair_enum_shape(name: str) -> str:
+    """Append ``'_'`` until ``name`` is usable as an ``Enum`` member.
+
+    **Terminates in at most three appends, and that bound is a proof rather than an observation.**
+    A name ending in three or more underscores can be none of the three shapes: sunder needs
+    ``name[-2] != '_'``, dunder needs ``name[-3] != '_'``, and private needs the name *not* to end
+    ``'__'``. Every iteration adds one trailing underscore, so the loop cannot run more than three
+    times. (``__2`` is the worst case: ``__2_`` is still private, ``__2__`` is then dunder, and
+    ``__2___`` is finally clean.)
+
+    Appending rather than prefixing is deliberate: a prefix would create *more* leading
+    underscores and walk further into the mangled shape, and it would also break the alignment
+    between a member name and the label a reader is looking at.
+
+    Args:
+        name: A candidate member name.
+
+    Returns:
+        ``name``, with as many trailing underscores as it takes.
+    """
+    while _is_enum_reserved_shape(name):
+        name = f'{name}_'
+    return name
+
+
 def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     """Derive one unique, valid Python identifier per label, in ``enum.values`` order.
 
@@ -117,19 +186,31 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     2. Uppercase, which is what keeps ``PENDING``/``ACTIVE``/``OK`` byte-identical to what
        castiron has always emitted.
     3. Empty guard -- ``CREATE TYPE t AS ENUM ('')`` is legal Postgres; it becomes ``_``.
-    4. Leading-digit guard -- ``'2nd pass'`` becomes ``_2ND_PASS``. A single leading underscore is
-       not ``_sunder_``, not dunder and not name-mangled, so ``E._2ND_PASS`` is addressable.
-    5. Reserved guard, **carried over verbatim from the emitter** (see the note below).
-    6. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate.
+    4. Leading-digit guard -- ``'2nd pass'`` becomes ``_2ND_PASS``. A leading underscore is not
+       name-mangled and is addressable as ``E._2ND_PASS``; whether it is *also* a ``_sunder_``
+       name is step 5's problem, not this step's.
+    5. Enum-shape guard (:func:`_is_enum_reserved_shape`) -- append ``'_'`` to a sunder or dunder
+       name. ``str.isidentifier()`` is **necessary but not sufficient**: ``Enum`` raises on the
+       first and silently drops the second.
+    6. Reserved guard, **carried over verbatim from the emitter** (see the note below).
+    7. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate.
 
-    ⚠ **Step 6 must key on the NFKC form, and this is not pedantry** (``CI94-Q1``, ruled). Python
+    ⚠ **Step 5 runs before step 6 and one append is provably enough.** Appending ``'_'`` sets
+    ``name[-2] == '_'``, which is exactly what both predicates forbid, so the result can be
+    neither shape -- and it cannot turn a sunder name into a dunder one, because a sunder name
+    has ``name[1] != '_'`` and so never starts ``__``. Verified by exhaustive enumeration over an
+    underscore/letter alphabet, and by feeding every repaired name to a real ``Enum`` body, on
+    3.10-3.13. Step 6 can still append after it; that only adds a further trailing underscore,
+    which cannot re-create either shape by the same argument.
+
+    ⚠ **Step 7 must key on the NFKC form, and this is not pedantry** (``CI94-Q1``, ruled). Python
     NFKC-normalizes identifiers at compile time, so two distinct strings can be one binding:
     ``ﬁ = 1; fi = 2`` leaves a single name worth ``2``. ``str.isidentifier()`` does not catch it
     (``'ﬁ'.isidentifier()`` is ``True``) and ``str.upper()`` performs the same folding
     (``'ﬁ'.upper() == 'FI'``, ``'ß'.upper() == 'SS'``). A raw uniqueness check would emit a module
     that raises ``TypeError`` at **import** -- CI-080's own failure mode in a new costume.
 
-    ⚠ **Step 5 is ``string_is_reserved(...) or column_name_reserved_exceptions(...)``, byte-for-byte
+    ⚠ **Step 6 is ``string_is_reserved(...) or column_name_reserved_exceptions(...)``, byte-for-byte
     as the emitter had it, and that ``or`` is KNOWN-WRONG.** The exceptions list exists to *exempt*
     names from renaming (``ir/build.py``'s ``standardize_column_name`` reads it as ``and not``),
     so the enum path treats an exemption as an addition and an enum label ``id`` emits
@@ -160,15 +241,21 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
             name = f'_{name}'
 
         note: str | None = None
+        if _is_enum_reserved_shape(name):
+            name = _repair_enum_shape(name)
+            note = 'reserved by Enum'
         if string_is_reserved(name.lower()) or column_name_reserved_exceptions(name.lower()):
             name = f'{name}_'
             note = 'reserved keyword'
 
-        candidate = name
+        # ⚠ The ordinal suffix can itself create a reserved shape -- `_` plus `_2` is `__2`,
+        # which Python name-mangles -- so every candidate is repaired again, and the loop
+        # re-checks uniqueness afterwards rather than assuming the repair kept it unique.
+        candidate = _repair_enum_shape(name)
         ordinal = 1
         while unicodedata.normalize('NFKC', candidate) in used:
             ordinal += 1
-            candidate = f'{name}_{ordinal}'
+            candidate = _repair_enum_shape(f'{name}_{ordinal}')
             note = 'name collision'
 
         used.add(unicodedata.normalize('NFKC', candidate))

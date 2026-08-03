@@ -344,8 +344,9 @@ class PydanticEmitter(Emitter):
         (``CI94-D3``): the value literal sits on the same line and already is the label, so
         glossing every member would be bytes in every user's file forever. ⚠ The label in that
         comment goes through :func:`_py_string` too. That is not decoration -- after CI-080 the
-        reserved guard reads the *sanitized* name, and ``dir(builtins)`` contains ``__doc__``,
-        so the label ``'\\n\\ndoc\\n\\n'`` maps to ``__DOC__`` and fires it. A raw label would
+        guards fire on the *sanitized* name, so a label whose raw text carries a newline reaches
+        them: ``'\\n\\ndoc\\n\\n'`` maps to ``__DOC___`` via the enum-shape guard, and two labels
+        that sanitize alike put the newline-bearing one in a collision comment. A raw label would
         split the ``#`` comment across lines and break the module, which is CI-009's standing
         lesson: a renderer injecting user text into generated source must be total over its input
         domain, not over its best-behaved caller.

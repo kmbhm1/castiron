@@ -232,18 +232,6 @@ def all_config_points() -> tuple[tuple[EmitterConfig, SourceOptions], ...]:
 #: directions (``test_corpus_selfcheck.py``): every id a case cites exists here, and every entry
 #: here is cited by ≥1 case **and** witnessed by ≥1 test. A stale entry cannot survive.
 KNOWN_DEFECTS: dict[str, Defect] = {
-    'CI-075': Defect(
-        row_id='CI-075',
-        summary='classify_table_type() misreads an auto-updatable view as a BASE TABLE.',
-        why_it_is_wrong=(
-            'Path verbs follow Postgres auto-updatability, not write privileges, so three of the '
-            "testbed's views are writable through the API and classify as BASE TABLE. They then "
-            "keep a primary key they should not have: CI5-D14a downgrades a view's <pk/> marker to "
-            'UNIQUE, and that downgrade never fires. Correct output has no "# Primary Keys" block '
-            'on ActiveCustomers, LedgerSummary or WritableCustomerView -- exactly as OrderReport '
-            'and MvCustomerSpend, the two views that DO classify correctly, already show.'
-        ),
-    ),
     'CI-076': Defect(
         row_id='CI-076',
         summary='The CI-005 fixture contains a shape PostgREST cannot emit: a VIEW as an FK target.',
@@ -380,7 +368,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=SourceOptions(),
         emitter_config=EmitterConfig(),
         status='characterized',
-        defects=('CI-075', 'CI-084', 'CI-090'),
+        defects=('CI-084', 'CI-090'),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'default.py.txt',
         golden_ir=GOLDEN_DIR / 'testbed-public' / 'ir.json',
@@ -391,7 +379,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=_MAXIMAL_SOURCE,
         emitter_config=_MAXIMAL_EMITTER,
         status='characterized',
-        defects=('CI-075', 'CI-084', 'CI-090'),
+        defects=('CI-084', 'CI-090'),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'maximal.py.txt',
         # A DIFFERENT IR from `testbed-public-default`: both source options are flipped, and the

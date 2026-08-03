@@ -3,7 +3,7 @@
     {
       "name": "active_customers",
       "schema": "public",
-      "table_type": "BASE TABLE",
+      "table_type": "VIEW",
       "is_bridge": false,
       "columns": [
         {
@@ -13,12 +13,14 @@
           "default": null,
           "max_length": null,
           "is_nullable": true,
-          "primary": true,
-          "is_unique": false,
+          "primary": false,
+          "is_unique": true,
           "is_foreign_key": false,
           "is_identity": false,
           "is_generated": false,
-          "unique_partners": [],
+          "unique_partners": [
+            "id"
+          ],
           "enum_info": null,
           "array_element_type": null,
           "description": null,
@@ -117,13 +119,13 @@
       "foreign_keys": [],
       "constraints": [
         {
-          "constraint_name": "active_customers_pkey",
-          "type": "PRIMARY KEY",
+          "constraint_name": "active_customers_id_key",
+          "type": "UNIQUE",
           "columns": [
             "id"
           ],
-          "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "constraint_definition": "UNIQUE (id)",
+          "raw_constraint_type": "u"
         }
       ],
       "relationships": [],
@@ -132,7 +134,7 @@
     {
       "name": "all_nullable_readonly",
       "schema": "public",
-      "table_type": "BASE TABLE",
+      "table_type": "VIEW",
       "is_bridge": false,
       "columns": [
         {
@@ -1293,7 +1295,7 @@
     {
       "name": "ledger_summary",
       "schema": "public",
-      "table_type": "BASE TABLE",
+      "table_type": "VIEW",
       "is_bridge": false,
       "columns": [
         {
@@ -1303,12 +1305,14 @@
           "default": null,
           "max_length": null,
           "is_nullable": true,
-          "primary": true,
-          "is_unique": false,
+          "primary": false,
+          "is_unique": true,
           "is_foreign_key": false,
           "is_identity": false,
           "is_generated": false,
-          "unique_partners": [],
+          "unique_partners": [
+            "id"
+          ],
           "enum_info": null,
           "array_element_type": null,
           "description": null,
@@ -1338,13 +1342,13 @@
       "foreign_keys": [],
       "constraints": [
         {
-          "constraint_name": "ledger_summary_pkey",
-          "type": "PRIMARY KEY",
+          "constraint_name": "ledger_summary_id_key",
+          "type": "UNIQUE",
           "columns": [
             "id"
           ],
-          "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "constraint_definition": "UNIQUE (id)",
+          "raw_constraint_type": "u"
         }
       ],
       "relationships": [],
@@ -3618,7 +3622,7 @@
     {
       "name": "writable_customer_view",
       "schema": "public",
-      "table_type": "BASE TABLE",
+      "table_type": "VIEW",
       "is_bridge": false,
       "columns": [
         {
@@ -3628,12 +3632,14 @@
           "default": null,
           "max_length": null,
           "is_nullable": true,
-          "primary": true,
-          "is_unique": false,
+          "primary": false,
+          "is_unique": true,
           "is_foreign_key": false,
           "is_identity": false,
           "is_generated": false,
-          "unique_partners": [],
+          "unique_partners": [
+            "id"
+          ],
           "enum_info": null,
           "array_element_type": null,
           "description": null,
@@ -3682,13 +3688,13 @@
       "foreign_keys": [],
       "constraints": [
         {
-          "constraint_name": "writable_customer_view_pkey",
-          "type": "PRIMARY KEY",
+          "constraint_name": "writable_customer_view_id_key",
+          "type": "UNIQUE",
           "columns": [
             "id"
           ],
-          "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "constraint_definition": "UNIQUE (id)",
+          "raw_constraint_type": "u"
         }
       ],
       "relationships": [],

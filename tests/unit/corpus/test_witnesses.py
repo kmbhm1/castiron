@@ -76,7 +76,9 @@ def _ir(case_id: str, corpus_irs: dict[tuple[str, Any], Schema]) -> dict[str, An
     mismatch, and the cheapest response to that is "regenerate" -- which is precisely the move
     this whole mechanism exists to prevent. Reading the live IR makes the witness fire on the
     behaviour change itself, before anything is regenerated. (Measured: with the golden-file
-    version, a patched ``classify_table_type`` left all six CI-075 witnesses GREEN.)
+    version, a patched ``classify_table_type`` left all six CI-075 witnesses GREEN. Those six are
+    now retired -- CI-075 is fixed -- but the design point they proved is why the successor guard
+    :class:`TestEveryViewIsClassifiedAsAView` reads the live IR too.)
 
     Args:
         case_id: The corpus case.
@@ -123,82 +125,126 @@ def _class_body(module: str, class_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CI-075 — the corpus's most valuable witness, because it comes with a clean pair.
+# CI-075 -- FIXED. What was the corpus's most valuable witness is now its regression guard.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestCi075ViewMisclassification:
-    """One document, one emitter, one run: the only difference between the two groups is the bug.
+class TestEveryViewIsClassifiedAsAView:
+    """The CI-075 witness, read the right way round.
 
-    ``classify_table_type()`` infers a relation's kind from which HTTP verbs PostgREST exposes.
-    Measured against real PostgREST (CI-008): the verbs follow Postgres **auto-updatability**,
-    not write privileges, so an auto-updatable view is writable through the API and classifies as
-    a BASE TABLE. CI5-D14a's "a view's ``<pk/>`` becomes UNIQUE" downgrade then never fires and
-    the view keeps a primary key it cannot have.
+    ``TestCi075ViewMisclassification`` used to assert that three of the capture's five views
+    carried a ``# Primary Keys`` block they could not have, with the other two as a counter-witness
+    proving the emitter does not put that block on everything. CI-075 is fixed
+    (``classify_table_type`` no longer reads write verbs as evidence of relation kind), so the
+    witness is retired -- but **deleting its counter-witness would throw away the evidence**. It is
+    the same measurement; it now says all **five**.
+
+    ⚠ Class names are spelled out per case rather than derived: ``maximal`` sets ``singular_names``,
+    so ``active_customers`` emits as ``ActiveCustomer`` there. Deriving them would re-implement the
+    emitter's naming rule inside its own test, which is how a test stops being independent evidence.
     """
 
-    #: ``(case_id, emitted class)`` for each VIEW that misclassifies as BASE TABLE and therefore
-    #: wrongly keeps a primary key. Spelled out per case rather than derived: ``maximal`` sets
-    #: ``singular_names``, so ``active_customers`` emits as ``ActiveCustomer`` there and
-    #: ``ActiveCustomers`` under the defaults. Deriving the name would re-implement the emitter's
-    #: naming rule inside its own test, which is how a test stops being independent evidence.
-    MISCLASSIFIED = [
+    #: All five VIEWs in the ``testbed-public`` capture, in both emitted configurations.
+    VIEWS = [
         ('testbed-public-default', 'ActiveCustomersBaseSchema'),
         ('testbed-public-default', 'LedgerSummaryBaseSchema'),
         ('testbed-public-default', 'WritableCustomerViewBaseSchema'),
+        ('testbed-public-default', 'OrderReportBaseSchema'),
+        ('testbed-public-default', 'MvCustomerSpendBaseSchema'),
         ('testbed-public-maximal', 'ActiveCustomerBaseSchema'),
         ('testbed-public-maximal', 'LedgerSummaryBaseSchema'),
         ('testbed-public-maximal', 'WritableCustomerViewBaseSchema'),
-    ]
-
-    #: The counter-witness: VIEWs that classify correctly. Same document, same emitter, same run.
-    CORRECT = [
-        ('testbed-public-default', 'OrderReportBaseSchema'),
-        ('testbed-public-default', 'MvCustomerSpendBaseSchema'),
         ('testbed-public-maximal', 'OrderReportBaseSchema'),
         ('testbed-public-maximal', 'MvCustomerSpendBaseSchema'),
     ]
 
-    @pytest.mark.parametrize(('case_id', 'emitted_class'), MISCLASSIFIED)
-    def test_a_misclassified_view_still_carries_a_primary_key_block(
+    @pytest.mark.parametrize(('case_id', 'emitted_class'), VIEWS)
+    def test_a_view_has_no_primary_key_block(
         self, case_id: str, emitted_class: str, case_modules: dict[str, str]
     ) -> None:
-        body = _class_body(_module(case_id, case_modules), emitted_class)
-        assert '# Primary Keys' in body, witness_failed(
-            'CI-075',
-            case_id,
-            f'{emitted_class} carries a "# Primary Keys" block, which it must not: the relation '
-            f"is a VIEW, and CI5-D14a downgrades a view's <pk/> marker to UNIQUE.",
-            fixed_action=FIX_ACTION,
-        )
-
-    @pytest.mark.parametrize(('case_id', 'emitted_class'), CORRECT)
-    def test_a_correctly_classified_view_has_no_primary_key_block(
-        self, case_id: str, emitted_class: str, case_modules: dict[str, str]
-    ) -> None:
-        # THE COUNTER-WITNESS. Without it, the test above cannot tell "this view is misclassified"
-        # from "the emitter puts that block on everything".
         body = _class_body(_module(case_id, case_modules), emitted_class)
         assert '# Primary Keys' not in body, (
-            f'{emitted_class} is a VIEW that castiron classifies CORRECTLY, and it has just grown '
-            f'a "# Primary Keys" block. That is a REGRESSION, not a fix: CI-075 has widened from '
-            f'3 of 5 views to 4 of 5.'
+            f'{emitted_class} is a VIEW and has grown a "# Primary Keys" block. A view has no '
+            f'primary key: CI5-D14a downgrades its <pk/> marker to UNIQUE. Three of these five '
+            f'looked exactly like this before CI-075 was fixed -- this is that regression.'
         )
 
-    def test_the_ir_records_the_misclassification_itself(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
+    def test_a_base_table_still_has_one(self, case_modules: dict[str, str]) -> None:
+        # THE COUNTER-WITNESS, and it matters as much here as it did before: without it, the test
+        # above cannot tell "views are classified correctly" from "the emitter stopped emitting
+        # that block at all", which would pass just as green.
+        for emitted_class in ('CustomersBaseSchema', 'OrdersBaseSchema', 'ProductsBaseSchema'):
+            body = _class_body(_module('testbed-public-default', case_modules), emitted_class)
+            assert '# Primary Keys' in body, f'{emitted_class} is a BASE TABLE and must keep its primary key'
+
+    def test_the_ir_records_every_view_as_a_view(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
         ir = _ir('testbed-public-default', corpus_irs)
-        wrong = {name: _table(ir, name)['table_type'] for name in ('active_customers', 'ledger_summary')}
-        assert wrong == {'active_customers': 'BASE TABLE', 'ledger_summary': 'BASE TABLE'}, witness_failed(
-            'CI-075',
-            'testbed-public/ir.json',
-            'active_customers and ledger_summary are recorded as BASE TABLE in the IR; both are '
-            'VIEWs in the testbed schema (CREATE VIEW, confirmed against the pg_dump).',
-            fixed_action=FIX_ACTION,
-        )
-        # The counter-witness at IR level: two views the heuristic gets right.
-        assert _table(ir, 'order_report')['table_type'] == 'VIEW'
-        assert _table(ir, 'mv_customer_spend')['table_type'] == 'VIEW'
+        views = ('active_customers', 'ledger_summary', 'writable_customer_view', 'order_report', 'mv_customer_spend')
+        for name in views:
+            assert _table(ir, name)['table_type'] == 'VIEW', name
+        for name in ('customers', 'orders', 'products', 'rls_locked_notes', 'partially_visible'):
+            assert _table(ir, name)['table_type'] == 'BASE TABLE', name
+
+    def test_the_downgrade_now_fires_for_the_three_that_used_to_miss(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        # The observable payoff, stated as the thing a user gets rather than as a table_type
+        # string: CI5-D14a's <pk/> -> UNIQUE downgrade could never fire on these three, so they
+        # carried a PRIMARY KEY constraint a view cannot have.
+        ir = _ir('testbed-public-default', corpus_irs)
+        for name in ('active_customers', 'ledger_summary', 'writable_customer_view'):
+            table = _table(ir, name)
+            assert [c['type'] for c in table['constraints'] if c['type'] == 'PRIMARY KEY'] == [], name
+            assert [c['type'] for c in table['constraints'] if c['type'] == 'UNIQUE'] == ['UNIQUE'], name
+            assert [c['name'] for c in table['columns'] if c['primary']] == [], name
+
+    def test_the_three_reclassified_views_are_shaped_exactly_like_the_two_that_were_right(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        """⚠ The check that caught a gap in this fix's own golden-delta prediction.
+
+        The predicted IR delta was derived from ``parse.py``'s constraint downgrade alone and
+        under-counted, because the DOWNSTREAM step
+        ``ir.build.update_columns_with_constraints`` also reacts to a UNIQUE constraint: it sets
+        ``is_unique`` **and** ``unique_partners``. So each reclassified view gained
+        ``"unique_partners": ["id"]`` as well.
+
+        That is not a new behaviour and not a defect this row introduced -- it is exactly the
+        shape ``order_report`` and ``mv_customer_spend`` (the two views that classified correctly
+        all along) already carried on ``main``. Asserting the five are now identical in shape is
+        what turns "I can explain the extra lines" into evidence.
+        """
+        ir = _ir('testbed-public-default', corpus_irs)
+        shapes = {}
+        for name, key in (
+            ('active_customers', 'id'),
+            ('ledger_summary', 'id'),
+            ('writable_customer_view', 'id'),
+            ('order_report', 'order_id'),
+            ('mv_customer_spend', 'customer_id'),
+        ):
+            column = next(c for c in _table(ir, name)['columns'] if c['name'] == key)
+            shapes[name] = (column['primary'], column['is_unique'], column['unique_partners'] == [key])
+        assert set(shapes.values()) == {(False, True, True)}, shapes
+
+    def test_the_one_accepted_residual_is_pinned_as_expected_not_forgotten(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        """⚠ ``all_nullable_readonly`` is a BASE TABLE that castiron now reports as a VIEW.
+
+        This is the **known, ruled, accepted** cost of `CI94-Q2` -- 25 of 26 relations correct,
+        up from 23. It is pinned here so it is a recorded decision rather than an unnoticed miss.
+
+        It is provably inert: a base table lands in this cell only if PostgREST reports **no NOT
+        NULL column**, and a Postgres PRIMARY KEY column is NOT NULL -- so it has no primary key
+        for the VIEW reading to empty. Asserted below rather than argued: the relation carries no
+        ``<pk/>`` marker, so it has no constraints either way and its emitted module is unchanged.
+        """
+        table = _table(_ir('testbed-public-default', corpus_irs), 'all_nullable_readonly')
+        assert table['table_type'] == 'VIEW'
+        assert table['constraints'] == [], 'the residual is only inert while there is no key to lose'
+        assert [c['name'] for c in table['columns'] if c['primary']] == []
 
 
 # ---------------------------------------------------------------------------

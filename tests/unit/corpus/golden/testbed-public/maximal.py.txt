@@ -54,13 +54,11 @@ class CustomModelUpdate(CustomModel):
 class ActiveCustomerParent(CustomModel):
     """ActiveCustomer (Nullable) Parent Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -182,11 +180,9 @@ class LedgerRefParent(CustomModel):
 class LedgerSummaryParent(CustomModel):
     """LedgerSummary (Nullable) Parent Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Columns
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendParent(CustomModel):
@@ -395,11 +391,9 @@ class TypeMenagerieParent(CustomModel):
 class WritableCustomerViewParent(CustomModel):
     """WritableCustomerView (Nullable) Parent Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 
@@ -410,13 +404,11 @@ class WritableCustomerViewParent(CustomModel):
 class ActiveCustomerBaseSchema(ActiveCustomerParent):
     """ActiveCustomer Base Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -538,11 +530,9 @@ class LedgerRefBaseSchema(LedgerRefParent):
 class LedgerSummaryBaseSchema(LedgerSummaryParent):
     """LedgerSummary Base Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Columns
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendBaseSchema(MvCustomerSpendParent):
@@ -751,11 +741,9 @@ class TypeMenagerieBaseSchema(TypeMenagerieParent):
 class WritableCustomerViewBaseSchema(WritableCustomerViewParent):
     """WritableCustomerView Base Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 
@@ -766,13 +754,11 @@ class WritableCustomerViewBaseSchema(WritableCustomerViewParent):
 class ActiveCustomerInsert(CustomModelInsert):
     """ActiveCustomer Insert Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Optional fields
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -884,11 +870,9 @@ class LedgerRefInsert(CustomModelInsert):
 class LedgerSummaryInsert(CustomModelInsert):
     """LedgerSummary Insert Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Optional fields
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendInsert(CustomModelInsert):
@@ -1077,11 +1061,9 @@ class TypeMenagerieInsert(CustomModelInsert):
 class WritableCustomerViewInsert(CustomModelInsert):
     """WritableCustomerView Insert Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Optional fields
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 
@@ -1092,13 +1074,11 @@ class WritableCustomerViewInsert(CustomModelInsert):
 class ActiveCustomerUpdate(CustomModelUpdate):
     """ActiveCustomer Update Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -1202,11 +1182,9 @@ class LedgerRefUpdate(CustomModelUpdate):
 class LedgerSummaryUpdate(CustomModelUpdate):
     """LedgerSummary Update Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Columns
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendUpdate(CustomModelUpdate):
@@ -1385,11 +1363,9 @@ class TypeMenagerieUpdate(CustomModelUpdate):
 class WritableCustomerViewUpdate(CustomModelUpdate):
     """WritableCustomerView Update Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 

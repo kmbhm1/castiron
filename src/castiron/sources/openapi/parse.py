@@ -46,9 +46,10 @@ move:
   (castiron synthesizes pg's own default ``<table>_<column>_fkey``); composite FKs are
   invisible and a column in two FKs reports only one.
 - Primary-key *membership* is recoverable, composite-key **order** is not.
-- Views carry no marker at all, so ``table_type`` is a two-signal heuristic biased toward
-  ``BASE TABLE`` (see :func:`classify_table_type`), and PostgREST reports every view column
-  as nullable.
+- Views carry no marker at all, so ``table_type`` is inferred from whether the entry declares
+  any NOT NULL column (see :func:`classify_table_type`), and PostgREST reports every view column
+  as nullable. The inference is exact except for a base table with no NOT NULL column at all,
+  which reads as a VIEW -- a cell in which the misreading provably costs nothing (CI-075).
 - **A view's primary key is recorded as a UNIQUE constraint, not a primary key.** The
   document *does* mark it (PostgREST propagates keys through views), but
   :meth:`castiron.ir.TableInfo.primary_key` is defined to be empty for a VIEW, so carrying
@@ -252,15 +253,47 @@ def classify_table_type(name: str, definition: JsonObject, paths: JsonObject) ->
     """Classify a ``definitions`` entry as a ``VIEW`` or a ``BASE TABLE``.
 
     The document carries **no** view marker (PostgREST computes ``relkind IN ('v','m')``
-    internally and never emits it), so this is a two-signal heuristic deliberately biased
-    toward ``BASE TABLE``: ``VIEW`` only when the entry is not writable through the API
-    **and** declares no NOT NULL column. Misreading a table as a view would empty its
-    primary key (a visible regression); misreading a view as a table is nearly harmless.
+    internally and never emits it), so this is one signal: a non-empty ``required`` array means
+    ``BASE TABLE``, and anything else is a ``VIEW``.
+
+    **Why the write verbs are no longer read as evidence (CI-075).** They used to be the first
+    signal. Measured against real PostgREST -- **v14.14 and pinned v12.2.3**, in CI-008 -- the
+    verbs track Postgres **auto-updatability**, not write privileges and not relation kind: a
+    ``GRANT SELECT``-only *simple view* is auto-updatable, so PostgREST emits
+    ``post``/``patch``/``delete`` for it, and 24 of the 26 relations in the committed capture
+    carry write verbs including **3 of its 5 views**. The signal was noise, and it is what made
+    ``active_customers``, ``ledger_summary`` and ``writable_customer_view`` classify as base
+    tables and keep a primary key a view cannot have (CI5-D14a's ``<pk/>`` -> UNIQUE downgrade
+    never fired). ``is_writable`` is still **computed and logged** below, because "this looked
+    like evidence and provably is not" is worth being able to see in a debug trace.
+
+    **The half that is certain.** A view never carries ``required``. PostgREST's ``required`` is
+    exactly the NOT NULL set, and a view column's ``pg_attribute.attnotnull`` is false in
+    Postgres -- views do not carry NOT NULL. That is a *catalog* fact, not a PostgREST behaviour,
+    which is why it outranks anything observed over HTTP. Measured over the capture's 26
+    definitions: 20 carry ``required`` and every one of the 20 is a base table, **0 exceptions**.
+
+    **The residual bias, and why it is inert.** The ambiguous cell is "a base table with no NOT
+    NULL column at all", which this reads as a ``VIEW``. ``CI5-D6`` biased that cell the other way
+    on the argument that misreading a table as a view empties its primary key; **that argument is
+    void here** (``CI94-Q2``, ruled -- ``CI5-D6`` is reversed). A base table lands in this cell
+    only if PostgREST reports no NOT NULL column, and a Postgres PRIMARY KEY column *is* NOT
+    NULL -- so such a table has no primary key and there is nothing to empty. The capture's one
+    instance, ``all_nullable_readonly``, carries no ``<pk/>`` marker at all: flipping it changes
+    exactly one IR field and **zero** emitted bytes. Net accuracy on the real capture: 23/26 ->
+    **25/26**.
+
+    A third signal was considered and rejected: "a ``<pk/>``-marked column outside a non-empty
+    ``required`` implies a VIEW" is measured true 6/6 with 0 exceptions, but it is **provably
+    equivalent** to the rule above on any document PostgREST can emit -- it could only differ in a
+    cell (``required`` non-empty *and* a nullable PK column) Postgres cannot produce. Encoding it
+    would be dead logic that reads as live, so it is asserted as a test instead.
 
     Args:
         name: The ``definitions`` key.
         definition: The definition object.
-        paths: The document's ``paths`` object.
+        paths: The document's ``paths`` object. Not a classification input; retained for the
+            debug log (and to keep this exported function's signature stable -- ``CI94-D6``).
 
     Returns:
         ``'VIEW'`` or ``'BASE TABLE'``.
@@ -270,8 +303,11 @@ def classify_table_type(name: str, definition: JsonObject, paths: JsonObject) ->
     required = definition.get('required')
     has_required = isinstance(required, list) and len(required) > 0
 
-    table_type: TableType = 'BASE TABLE' if (is_writable or has_required) else 'VIEW'
-    logger.debug(f'Classified {name} as {table_type} (writable={is_writable}, has_required={has_required})')
+    table_type: TableType = 'BASE TABLE' if has_required else 'VIEW'
+    logger.debug(
+        f'Classified {name} as {table_type} (has_required={has_required}; writable={is_writable}, '
+        f'which tracks auto-updatability and is NOT evidence of relation kind -- CI-075)'
+    )
     return table_type
 
 

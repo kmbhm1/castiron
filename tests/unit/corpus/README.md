@@ -20,13 +20,23 @@ compare.py  assert_golden() -- a golden failure that a reader can act on
 regenerate.py  the regeneration entry point (writes nothing by default)
 ```
 
-> ⚠ The fingerprint directory is `fingerprints/`, **not** `manifest/`, and that is deliberate.
-> The repository's `.gitignore` carries a `MANIFEST` line (the distutils artifact). Git matches
-> ignore patterns case-**insensitively** on a case-insensitive filesystem, so on macOS
-> `MANIFEST` silently shadows a directory named `manifest/` — the files are untracked, `git add`
-> skips them and `git status` never mentions them — while on Linux CI it does not match at all.
-> A corpus half of whose artifacts are invisible on one platform is worse than no corpus, so the
-> directory is named to avoid the collision rather than relying on everyone's filesystem.
+> ⚠ The fingerprint directory is `fingerprints/`, **not** `manifest/**.** The collision that
+> forced the name was real: the repository's `.gitignore` used to carry a `MANIFEST` line (the
+> distutils artifact), and git matches ignore patterns case-**insensitively** on a
+> case-insensitive filesystem, so on macOS `MANIFEST` silently shadowed a directory named
+> `manifest/` — the files were untracked, `git add` skipped them and `git status` never mentioned
+> them — while on Linux CI it did not match at all. This corpus lost four files to it before
+> anyone noticed.
+>
+> **That line is now deleted (CI-093), so the collision no longer exists.** castiron builds with
+> hatchling and cannot produce the setuptools artifact the line existed for; anchoring it to
+> `/MANIFEST` would *not* have fixed the shadowing, because anchoring constrains where a pattern
+> matches, not how case is compared. `tests/unit/test_repo_tooling.py` now guards it, with a
+> positive control that fails if the detection itself stops working.
+>
+> The directory keeps the name `fingerprints/` regardless: it is accurate, nothing depends on the
+> old one, and renaming it back would churn every path in this README, `cases.py`,
+> `.pre-commit-config.yaml` and `.gitattributes` to buy nothing.
 
 ## A golden is not an endorsement
 

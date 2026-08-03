@@ -132,26 +132,60 @@ def parse_pytest_flags(command: str) -> dict[str, str]:
     return flags
 
 
-def ci_pytest_commands() -> list[str]:
-    """Return every pytest invocation in the CI workflow.
+def workflow_pytest_commands(text: str) -> list[str]:
+    """Return every pytest invocation in a workflow document.
+
+    Only ``run:`` values are considered -- a ``run:`` key with the command inline, or the body of
+    a ``run: |`` block scalar. **A step's ``name:`` is never a command**, which matters more than
+    it looks: relying on tokenization to exclude it works only for names whose punctuation
+    happens to fuse the word, and ``- name: Run pytest`` is an entirely ordinary rename. That
+    would otherwise be read as an invocation with no flags, and every assertion below would
+    report a missing marker on a command that does not exist.
 
     Parsed textually rather than with PyYAML, matching the reasoning already recorded in
     ``test_goldens.py``: pyyaml is only a *transitive* dependency here (pre-commit pulls it in),
     and a test that silently depends on someone else's requirement is one ``uv sync`` away from
     an unexplained collection error.
 
+    Args:
+        text: The whole workflow file.
+
     Returns:
-        The invocations, with comments excluded and any ``run:`` prefix stripped.
+        The pytest invocations, stripped, in file order.
     """
     commands = []
-    for line in CI_WORKFLOW.read_text(encoding='utf-8').splitlines():
-        stripped = line.strip()
-        if stripped.startswith('#'):
+    block_indent: int | None = None
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.rstrip('\n').lstrip())
+        if block_indent is not None:
+            if not stripped or stripped.startswith('#'):
+                continue
+            if indent > block_indent:
+                if invokes_pytest(stripped):
+                    commands.append(stripped)
+                continue
+            block_indent = None  # the block ended; this line is re-read as ordinary YAML below
+        if not stripped or stripped.startswith('#'):
             continue
-        command = stripped.partition('run:')[2] or stripped
-        if invokes_pytest(command):
-            commands.append(command)
+        key, separator, remainder = stripped.partition('run:')
+        if not separator or key.strip().strip('-').strip():
+            continue
+        if remainder.strip() in ('|', '>', '|-', '>-', '|+', '>+'):
+            block_indent = indent
+            continue
+        if invokes_pytest(remainder):
+            commands.append(remainder.strip())
     return commands
+
+
+def ci_pytest_commands() -> list[str]:
+    """Return every pytest invocation in the repository's CI workflow.
+
+    Returns:
+        The invocations found in ``.github/workflows/ci.yml``.
+    """
+    return workflow_pytest_commands(CI_WORKFLOW.read_text(encoding='utf-8'))
 
 
 def make_pytest_commands(target: str) -> list[str]:
@@ -213,6 +247,81 @@ class TestGitignoreDoesNotShadowADirectory:
             f'castiron builds with hatchling and cannot produce the setuptools artifact it '
             f'existed for. Restore it only alongside a build backend that can.'
         )
+
+    def test_the_guard_above_can_still_see_a_shadowing_rule(self, tmp_path: Path) -> None:
+        """Positive control: prove the detector still detects, in a repo that IS trapped.
+
+        Without this, the guard above asserts one thing -- "not ignored" -- which is also what it
+        would report if ``-c core.ignorecase=true`` stopped casefolding the exclude matcher
+        altogether. It would then stay green forever while the trap became re-armable, which is
+        the CI-091 shape (a harness weaker than the thing it guards) that this module's own
+        docstring invokes. The measurement that makes the guard meaningful has to be *executed*,
+        not asserted in prose.
+
+        Verified on a real case-sensitive volume, not only by simulation: with the flag forced on,
+        git casefolds the ignore matcher even where the filesystem does not, so this control holds
+        on Linux CI exactly as it does on macOS.
+        """
+        subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, capture_output=True)
+        (tmp_path / '.gitignore').write_text('MANIFEST\n', encoding='utf-8')
+        result = subprocess.run(
+            ['git', '-c', 'core.ignorecase=true', 'check-ignore', '-v', 'manifest/f.txt'],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f'a bare `MANIFEST` line did NOT shadow `manifest/f.txt` under '
+            f'`core.ignorecase=true` (git said {result.returncode}). That is the CI-093 trap '
+            f'failing to reproduce, which means test_no_ignore_rule_hides_a_manifest_directory '
+            f'is no longer testing anything: it would pass whether or not the rule came back. '
+            f'Most likely git changed how `core.ignorecase` affects `check-ignore`. Find a '
+            f'detection method that works before trusting that guard again.'
+        )
+
+
+@pytest.mark.unit
+class TestTheWorkflowParserReadsCommandsNotLabels:
+    """The parser is the load-bearing half of every CI assertion below, so it is tested directly.
+
+    Each case here is a regression the reviewer measured against the previous implementation,
+    which partitioned on ``run:`` and fell back to the whole line: a step *named* ``Run pytest``
+    was read as an invocation, and the resulting failure named a command that does not exist.
+    """
+
+    def test_a_step_named_after_pytest_is_not_an_invocation(self) -> None:
+        document = '\n'.join(
+            [
+                'jobs:',
+                '  quality:',
+                '    steps:',
+                '      - name: Run pytest',
+                '        run: uv run pytest -m "not integration"',
+            ]
+        )
+        assert workflow_pytest_commands(document) == ['uv run pytest -m "not integration"']
+
+    @pytest.mark.parametrize('label', ('- name: Run pytest', '- name: pytest', '- name: Test (pytest, 90% floor)'))
+    def test_no_step_label_is_ever_read_as_a_command(self, label: str) -> None:
+        assert workflow_pytest_commands(f'      {label}\n') == []
+
+    def test_a_block_scalar_run_is_read(self) -> None:
+        document = '\n'.join(
+            [
+                '      - name: Test',
+                '        run: |',
+                '          echo hello',
+                '          uv run pytest -m "not integration" --cov-fail-under=90',
+                '      - name: After',
+                '        run: echo done',
+            ]
+        )
+        assert workflow_pytest_commands(document) == ['uv run pytest -m "not integration" --cov-fail-under=90']
+
+    def test_the_real_workflow_has_exactly_one_invocation(self) -> None:
+        # Anti-vacuity for every test in the next class: they iterate this list, so an empty or
+        # over-full list would quietly change what they mean.
+        assert len(ci_pytest_commands()) == 1
 
 
 @pytest.mark.unit

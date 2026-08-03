@@ -3,8 +3,8 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 from enum import Enum
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
-from typing import Any, Tuple
+from ipaddress import IPv4Address, IPv4Network, IPv6Address
+from typing import Any
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, Json
 
@@ -371,7 +371,7 @@ class TypeMenagerieParent(CustomModel):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -727,7 +727,7 @@ class TypeMenagerieBaseSchema(TypeMenagerieParent):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -1053,7 +1053,7 @@ class TypeMenagerieInsert(CustomModelInsert):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -1361,7 +1361,7 @@ class TypeMenagerieUpdate(CustomModelUpdate):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)

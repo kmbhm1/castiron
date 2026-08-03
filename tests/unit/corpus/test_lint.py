@@ -31,6 +31,16 @@ and **I** with **default** ruff settings. It promises nothing about ``E501`` (th
 line is 101 characters -- clean at >=102 columns, dirty at ruff's default 88, and it is driven by
 ``Field(description=...)`` carrying the user's own SQL comment) and nothing about non-default rule
 sets.
+
+**The guard asserts that promise flatly, and it did not always.** CI-094 shipped in two PRs, and
+while the first one was in flight ``CI-092`` was still open -- so this module carried a
+``KNOWN_LINT_DEFECTS`` allowance and asserted only that *every finding is owned by a named open
+row*. That allowance was deliberately built to **self-close**: a companion test asserted each
+listed defect was still **reachable**, so the day CI-092 landed the guard went red and named the
+row. It did, the allowance was deleted, and
+:meth:`TestEveryReachableEmissionIsLintClean.test_every_reachable_emission_is_clean` now asserts
+**clean**. Re-introducing an allowance list is a captain-level decision, not a way to make a red
+test green.
 """
 
 import importlib.util
@@ -70,24 +80,6 @@ RUFF_TIMEOUT_SECONDS = 120
 EXCLUSION_REASON = (
     f'{EXCLUDED_FAMILY} emits deliberately invalid Python (CI-085, open and out of scope for '
     f'CI-094); the case table declares compiles=False for it.'
-)
-
-#: Findings castiron still emits because a **named, open** row owns them: ``(rule, symbol, row)``.
-#:
-#: ⚠ This is not a mute list. It is the same bookkeeping ``cases.KNOWN_DEFECTS`` does for the
-#: goldens, and it closes in **both** directions: an unlisted finding fails
-#: ``test_every_finding_is_owned_by_a_named_open_row``, and a listed finding that stops firing
-#: fails ``test_a_known_lint_defect_is_still_reachable``. So the day CI-092 lands, the guard goes
-#: red and the entry must be deleted rather than left behind as a permanently-true excuse.
-#:
-#: Both entries are ``CI-092`` (``cidr`` imports an ``IPv6Network`` it never resolves to, and
-#: ``point`` resolves to the deprecated ``typing.Tuple``). CI-094 splits into two PRs at the
-#: import block: this half fixes ``I001`` and the unconditional ``Field`` import, and CI-092 is
-#: the semantic half. Measured: all 256 remaining findings are ``testbed-public``'s.
-KNOWN_LINT_DEFECTS: tuple[tuple[str, str, str], ...] = (
-    ('F401', '`ipaddress.IPv6Network`', 'CI-092'),
-    ('UP035', '`typing.Tuple`', 'CI-092'),
-    ('UP006', '`Tuple`', 'CI-092'),
 )
 
 
@@ -243,33 +235,34 @@ class TestEveryReachableEmissionIsLintClean:
         unsorted_blocks = [line for line in sweep_findings if ' I001 ' in line]
         assert unsorted_blocks == [], 'castiron emitted an unsorted import block:\n' + '\n'.join(unsorted_blocks[:20])
 
-    def test_every_finding_is_owned_by_a_named_open_row(self, sweep_findings: list[str]) -> None:
-        # ⚠ NOT "assert clean". castiron still has open, filed, out-of-scope lint defects, and
-        # pretending otherwise would mean either weakening the rule selection or discovering the
-        # difference in a user's repository. Every finding must match a KNOWN_LINT_DEFECTS entry
-        # by rule code AND by the symbol it names; anything else is a regression this PR caused.
-        unaccounted = [
-            line
-            for line in sweep_findings
-            if not any(f' {code} ' in line and symbol in line for code, symbol, _ in KNOWN_LINT_DEFECTS)
-        ]
-        assert unaccounted == [], (
+    def test_every_reachable_emission_is_clean(self, sweep_findings: list[str]) -> None:
+        # 🔴 **"Clean", flat out.** This assertion used to be "every finding is owned by a named
+        # open row", backed by a `KNOWN_LINT_DEFECTS` allowance, because CI-092 was still open
+        # when the guard was written: `cidr` imported an `IPv6Network` it never used and `point`
+        # resolved to the deprecated `typing.Tuple`, so 256 findings were expected.
+        #
+        # That allowance was built to **self-close**, exactly as `cases.KNOWN_DEFECTS` does for
+        # the goldens: its companion `test_a_known_lint_defect_is_still_reachable` went red the
+        # moment CI-092 landed and said so by name. It did, and the correct response was to
+        # DELETE the allowance rather than mute the signal -- which is what this line is.
+        #
+        # castiron now promises F/UP/I cleanliness under default ruff settings (`CI94-Q3(c)`), so
+        # there is no longer any such thing as an acceptable finding here. A new one is either a
+        # regression or a row that has to be opened, argued and ruled before it can be tolerated.
+        assert sweep_findings == [], (
             f'castiron emitted code that trips ruff under `--select {PROMISED_RULES}` at its own '
-            f'defaults, and no open row accounts for it:\n' + '\n'.join(unaccounted[:20])
+            f'defaults. This is the promise CI-094 shipped; do NOT add an allowance list back '
+            f'without a captain ruling:\n' + '\n'.join(sweep_findings[:20])
         )
 
-    @pytest.mark.parametrize(('code', 'symbol', 'row'), KNOWN_LINT_DEFECTS, ids=[d[2] for d in KNOWN_LINT_DEFECTS])
-    def test_a_known_lint_defect_is_still_reachable(
-        self, code: str, symbol: str, row: str, sweep_findings: list[str]
-    ) -> None:
-        # Closes in the OTHER direction, exactly as `KNOWN_DEFECTS` does for the goldens: when the
-        # owning row lands, this goes red and forces the allowance to be deleted rather than left
-        # behind as a permanently-true excuse. `CI-074`.
-        hits = [line for line in sweep_findings if f' {code} ' in line and symbol in line]
-        assert hits, (
-            f'{code} on {symbol} is GONE. That is very likely good news -- {row} has probably '
-            f'landed. Delete its KNOWN_LINT_DEFECTS entry so this guard tightens to match.'
-        )
+    def test_the_ci_092_shapes_specifically_are_gone(self, sweep_findings: list[str]) -> None:
+        # Named separately from the blanket assertion above so a future rule-selection change
+        # cannot quietly stop covering the two shapes CI-092 was actually about. Measured on
+        # `origin/main` @ `0a70513`: 128 `F401` on `ipaddress.IPv6Network`, 128 `UP035` on
+        # `typing.Tuple`, 320 `UP006` -- all of them `testbed-public`'s.
+        for code, symbol in (('F401', 'IPv6Network'), ('UP035', 'Tuple'), ('UP006', 'Tuple')):
+            offenders = [line for line in sweep_findings if f' {code} ' in line and symbol in line]
+            assert offenders == [], f'CI-092 has regressed ({code} on {symbol}):\n' + '\n'.join(offenders[:10])
 
     def test_the_excluded_family_is_excluded_by_name_and_still_fails_for_the_stated_reason(
         self, probe_findings: list[str]
@@ -292,7 +285,7 @@ class TestEveryReachableEmissionIsLintClean:
         # it inherited: `from pydantic import Field` was unconditional, and measured on
         # origin/main **32 of these 512** emissions imported it and never called it. All 32 were
         # `testbed-inventory` at `--no-crud-models --no-null-parent-classes` -- an ordinary
-        # invocation. A `KNOWN_LINT_DEFECTS` entry must never be able to cover this.
+        # invocation. Kept separate so no future allowance list can ever be written that covers it.
         offenders = [line for line in sweep_findings if ' F401 ' in line and 'Field' in line]
         assert offenders == [], 'castiron imported `pydantic.Field` into a module that never calls it:\n' + '\n'.join(
             offenders[:10]

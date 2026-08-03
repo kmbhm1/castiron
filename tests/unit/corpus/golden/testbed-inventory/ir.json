@@ -1,0 +1,165 @@
+{
+  "tables": [
+    {
+      "name": "currencies",
+      "schema": "inventory",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "code",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 3,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "symbol",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "minor_units",
+          "raw_type": "integer",
+          "alias": null,
+          "default": "2",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "currencies_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "code"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "regions",
+      "schema": "inventory",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "code",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 2,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "regions_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "code"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    }
+  ],
+  "enums": [],
+  "functions": [
+    {
+      "name": "lookup_region",
+      "schema": "inventory",
+      "parameters": [
+        {
+          "name": "p_code",
+          "raw_type": "character",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    }
+  ]
+}

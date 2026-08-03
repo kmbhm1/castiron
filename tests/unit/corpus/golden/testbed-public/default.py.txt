@@ -1,0 +1,1392 @@
+from __future__ import annotations
+from decimal import Decimal
+from enum import Enum
+from ipaddress import IPv4Address, IPv6Address
+from ipaddress import IPv4Network, IPv6Network
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import Json
+from pydantic import UUID4
+from typing import Any
+from typing import Tuple
+import datetime
+
+
+# ENUM TYPES
+# These are generated from Postgres user-defined enum types.
+
+
+class AuditStatusEnum(str, Enum):
+    OK = "ok"
+    WARN = "warn"
+    ERROR = "error"
+
+
+class PublicOrderStatusEnum(str, Enum):
+    PENDING = "pending"
+    PAID = "paid"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+
+
+class PublicStatusEnum(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ARCHIVED = "archived"
+
+
+# CUSTOM CLASSES
+# Custom model classes defining common features shared by the generated schemas.
+
+
+class CustomModel(BaseModel):
+    """Base model class with common features."""
+
+
+class CustomModelInsert(CustomModel):
+    """Base model for insert operations with common features."""
+
+
+class CustomModelUpdate(CustomModel):
+    """Base model for update operations with common features."""
+
+
+# BASE CLASSES
+# These are the base Row models that include all fields.
+
+
+class ActiveCustomersBaseSchema(CustomModel):
+    """ActiveCustomers Base Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Columns
+    created_at: datetime.datetime | None = Field(default=None)
+    display_name: str | None = Field(default=None)
+    email: str | None = Field(default=None)
+    signup_status: PublicStatusEnum | None = Field(default=None)
+
+
+class AllNullableReadonlyBaseSchema(CustomModel):
+    """AllNullableReadonly Base Schema."""
+
+    # Columns
+    id: int | None = Field(default=None)
+    label: str | None = Field(default=None)
+
+
+class AuditLinksBaseSchema(CustomModel):
+    """AuditLinks Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    event_id: int
+    label: str | None = Field(default=None)
+
+
+class AwkwardNamesBaseSchema(CustomModel):
+    """AwkwardNames Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    MixedCase: str | None = Field(default=None)
+    copyright: str | None = Field(default=None)
+    field_class: str | None = Field(default=None, alias="class")
+    field_import: str | None = Field(default=None, alias="import")
+    field_lambda: str | None = Field(default=None, alias="lambda")
+    field_model_config: str | None = Field(default=None, alias="model_config")
+    field_model_name: str | None = Field(default=None, alias="model_name")
+    field_type: str | None = Field(default=None, alias="type")
+    order: str | None = Field(default=None)
+    select: str | None = Field(default=None)
+    sum: int | None = Field(default=None)
+
+
+class BookingsBaseSchema(CustomModel):
+    """Bookings Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    ends_at: datetime.datetime
+    room_code: str
+    starts_at: datetime.datetime
+
+
+class CustomerTagsBaseSchema(CustomModel):
+    """CustomerTags Base Schema."""
+
+    # Primary Keys
+    customer_id: UUID4
+    tag_id: int
+
+
+class CustomersBaseSchema(CustomModel):
+    """Customers Base Schema.
+
+    People who can place orders.
+    """
+
+    # Primary Keys
+    id: UUID4 = Field(description="Stable public identifier.")
+
+    # Columns
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime
+    display_name: str
+    email: str
+    is_active: bool
+    lifetime_value: Decimal
+    notes: str | None = Field(default=None)
+    signup_status: PublicStatusEnum
+
+
+class EmployeeProfilesBaseSchema(CustomModel):
+    """EmployeeProfiles Base Schema."""
+
+    # Primary Keys
+    employee_id: int
+
+    # Columns
+    avatar_url: str | None = Field(default=None)
+    bio: str | None = Field(default=None)
+
+
+class EmployeesBaseSchema(CustomModel):
+    """Employees Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    full_name: str
+    manager_id: int | None = Field(default=None)
+    work_email: str | None = Field(default=None)
+
+
+class LedgerRefsBaseSchema(CustomModel):
+    """LedgerRefs Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    ledger_id: int
+    note: str | None = Field(default=None)
+
+
+class LedgerSummaryBaseSchema(CustomModel):
+    """LedgerSummary Base Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    amount: Decimal | None = Field(default=None)
+
+
+class MvCustomerSpendBaseSchema(CustomModel):
+    """MvCustomerSpend Base Schema."""
+
+    # Columns
+    customer_id: UUID4 | None = Field(default=None)
+    order_count: int | None = Field(default=None)
+    total_spend: Decimal | None = Field(default=None)
+
+
+class OrderLinesBaseSchema(CustomModel):
+    """OrderLines Base Schema."""
+
+    # Primary Keys
+    order_id: int
+    product_region: str
+    product_sku: str
+
+    # Columns
+    quantity: int
+
+
+class OrderReportBaseSchema(CustomModel):
+    """OrderReport Base Schema."""
+
+    # Columns
+    customer_id: UUID4 | None = Field(default=None)
+    customer_name: str | None = Field(default=None)
+    order_id: int | None = Field(default=None)
+    order_status: PublicOrderStatusEnum | None = Field(default=None)
+    total: Decimal | None = Field(default=None)
+
+
+class OrdersBaseSchema(CustomModel):
+    """Orders Base Schema.
+
+    One row per placed order.
+    """
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    customer_id: UUID4 = Field(description="The customer who placed the order.")
+    order_status: PublicOrderStatusEnum
+    placed_at: datetime.datetime
+    subtotal: Decimal
+    tags: list[PublicOrderStatusEnum] | None = Field(default=None)
+    tax: Decimal = Field(description="Sales tax.\n\nNote: computed upstream.")
+    total: Decimal | None = Field(default=None)
+
+
+class PartiallyVisibleBaseSchema(CustomModel):
+    """PartiallyVisible Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    secret_body: str
+    title: str
+
+
+class PeopleBaseSchema(CustomModel):
+    """People Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    favorite_status: PublicStatusEnum | None = Field(default=None)
+    full_name: str
+
+
+class PersonNotesBaseSchema(CustomModel):
+    """PersonNotes Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    body: str | None = Field(default=None)
+    person_id: int
+
+
+class ProductsBaseSchema(CustomModel):
+    """Products Base Schema."""
+
+    # Primary Keys
+    region: str
+    sku: str = Field(description="Vendor `SKU` (<= 32 chars).")
+
+    # Columns
+    is_discontinued: bool
+    list_price: Decimal
+    name: str
+
+
+class RlsLockedNotesBaseSchema(CustomModel):
+    """RlsLockedNotes Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    content: str
+    owner: UUID4
+
+
+class RlsOpenNotesBaseSchema(CustomModel):
+    """RlsOpenNotes Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    content: str
+
+
+class SeriesBaseSchema(CustomModel):
+    """Series Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    title: str
+
+
+class SeriesEntriesBaseSchema(CustomModel):
+    """SeriesEntries Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    ordinal: int
+    series_id: int
+
+
+class TagsBaseSchema(CustomModel):
+    """Tags Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    label: str
+    slug: str | None = Field(default=None)
+
+
+class TypeMenagerieBaseSchema(CustomModel):
+    """TypeMenagerie Base Schema.
+
+    One column per interesting Postgres type.
+    """
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    c_audit_status: AuditStatusEnum | None = Field(default=None)
+    c_bigint: int | None = Field(default=None)
+    c_bit: str | None = Field(default=None)
+    c_boolean: bool | None = Field(default=None)
+    c_bytea: bytes | None = Field(default=None)
+    c_char: str | None = Field(default=None)
+    c_cidr: IPv4Network | None = Field(default=None)
+    c_date: datetime.date | None = Field(default=None)
+    c_decimal: Decimal | None = Field(default=None)
+    c_double: float | None = Field(default=None)
+    c_email: str | None = Field(default=None)
+    c_inet: IPv4Address | IPv6Address | None = Field(default=None)
+    c_int_array: list[int] | None = Field(default=None)
+    c_integer: int | None = Field(default=None)
+    c_interval: datetime.timedelta | None = Field(default=None)
+    c_json: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_jsonb: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_macaddr: str | None = Field(default=None)
+    c_money: Decimal | None = Field(default=None)
+    c_numeric: Decimal | None = Field(default=None)
+    c_numeric_plain: Decimal | None = Field(default=None)
+    c_percentage: Decimal | None = Field(default=None)
+    c_point: Tuple[float, float] | None = Field(default=None)
+    c_polygon: Any | None = Field(default=None)
+    c_real: float | None = Field(default=None)
+    c_smallint: int | None = Field(default=None)
+    c_status: PublicStatusEnum | None = Field(default=None)
+    c_status_array: list[PublicStatusEnum] | None = Field(default=None)
+    c_text: str | None = Field(default=None)
+    c_text_array: list[str] | None = Field(default=None)
+    c_time: datetime.time | None = Field(default=None)
+    c_timestamp: datetime.datetime | None = Field(default=None)
+    c_timestamptz: datetime.datetime | None = Field(default=None)
+    c_timestamptz_array: list[datetime.datetime] | None = Field(default=None)
+    c_timetz: datetime.time | None = Field(default=None)
+    c_tsvector: str | None = Field(default=None)
+    c_uuid: UUID4 | None = Field(default=None)
+    c_varbit: str | None = Field(default=None)
+    c_varchar: str | None = Field(default=None)
+    c_varchar_unbounded: str | None = Field(default=None)
+    c_xml: str | None = Field(default=None)
+
+
+class WritableCustomerViewBaseSchema(CustomModel):
+    """WritableCustomerView Base Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Columns
+    display_name: str | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+
+
+# INSERT CLASSES
+# Models for insert operations; auto-generated fields are optional.
+
+
+class ActiveCustomersInsert(CustomModelInsert):
+    """ActiveCustomers Insert Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Optional fields
+    created_at: datetime.datetime | None = Field(default=None)
+    display_name: str | None = Field(default=None)
+    email: str | None = Field(default=None)
+    signup_status: PublicStatusEnum | None = Field(default=None)
+
+
+class AllNullableReadonlyInsert(CustomModelInsert):
+    """AllNullableReadonly Insert Schema."""
+
+    # Optional fields
+    id: int | None = Field(default=None)
+    label: str | None = Field(default=None)
+
+
+class AuditLinksInsert(CustomModelInsert):
+    """AuditLinks Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    event_id: int
+
+    # Optional fields
+    label: str | None = Field(default=None)
+
+
+class AwkwardNamesInsert(CustomModelInsert):
+    """AwkwardNames Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Optional fields
+    MixedCase: str | None = Field(default=None)
+    copyright: str | None = Field(default=None)
+    field_class: str | None = Field(default=None, alias="class")
+    field_import: str | None = Field(default=None, alias="import")
+    field_lambda: str | None = Field(default=None, alias="lambda")
+    field_model_config: str | None = Field(default=None, alias="model_config")
+    field_model_name: str | None = Field(default=None, alias="model_name")
+    field_type: str | None = Field(default=None, alias="type")
+    order: str | None = Field(default=None)
+    select: str | None = Field(default=None)
+    sum: int | None = Field(default=None)
+
+
+class BookingsInsert(CustomModelInsert):
+    """Bookings Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    ends_at: datetime.datetime
+    room_code: str
+    starts_at: datetime.datetime
+
+
+class CustomerTagsInsert(CustomModelInsert):
+    """CustomerTags Insert Schema."""
+
+    # Primary Keys
+    customer_id: UUID4
+    tag_id: int
+
+
+class CustomersInsert(CustomModelInsert):
+    """Customers Insert Schema.
+
+    People who can place orders.
+    """
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None, description="Stable public identifier.")
+
+    # Required fields
+    display_name: str
+    email: str
+
+    # Optional fields
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+    lifetime_value: Decimal | None = Field(default=None)
+    notes: str | None = Field(default=None)
+    signup_status: PublicStatusEnum | None = Field(default=None)
+
+
+class EmployeeProfilesInsert(CustomModelInsert):
+    """EmployeeProfiles Insert Schema."""
+
+    # Primary Keys
+    employee_id: int
+
+    # Optional fields
+    avatar_url: str | None = Field(default=None)
+    bio: str | None = Field(default=None)
+
+
+class EmployeesInsert(CustomModelInsert):
+    """Employees Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    full_name: str
+
+    # Optional fields
+    manager_id: int | None = Field(default=None)
+    work_email: str | None = Field(default=None)
+
+
+class LedgerRefsInsert(CustomModelInsert):
+    """LedgerRefs Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    ledger_id: int
+
+    # Optional fields
+    note: str | None = Field(default=None)
+
+
+class LedgerSummaryInsert(CustomModelInsert):
+    """LedgerSummary Insert Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Optional fields
+    amount: Decimal | None = Field(default=None)
+
+
+class MvCustomerSpendInsert(CustomModelInsert):
+    """MvCustomerSpend Insert Schema."""
+
+    # Optional fields
+    customer_id: UUID4 | None = Field(default=None)
+    order_count: int | None = Field(default=None)
+    total_spend: Decimal | None = Field(default=None)
+
+
+class OrderLinesInsert(CustomModelInsert):
+    """OrderLines Insert Schema."""
+
+    # Primary Keys
+    order_id: int
+    product_region: str
+    product_sku: str
+
+    # Optional fields
+    quantity: int | None = Field(default=None)
+
+
+class OrderReportInsert(CustomModelInsert):
+    """OrderReport Insert Schema."""
+
+    # Optional fields
+    customer_id: UUID4 | None = Field(default=None)
+    customer_name: str | None = Field(default=None)
+    order_id: int | None = Field(default=None)
+    order_status: PublicOrderStatusEnum | None = Field(default=None)
+    total: Decimal | None = Field(default=None)
+
+
+class OrdersInsert(CustomModelInsert):
+    """Orders Insert Schema.
+
+    One row per placed order.
+    """
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    customer_id: UUID4 = Field(description="The customer who placed the order.")
+    subtotal: Decimal
+
+    # Optional fields
+    order_status: PublicOrderStatusEnum | None = Field(default=None)
+    placed_at: datetime.datetime | None = Field(default=None)
+    tags: list[PublicOrderStatusEnum] | None = Field(default=None)
+    tax: Decimal | None = Field(default=None, description="Sales tax.\n\nNote: computed upstream.")
+    total: Decimal | None = Field(default=None)
+
+
+class PartiallyVisibleInsert(CustomModelInsert):
+    """PartiallyVisible Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    secret_body: str
+    title: str
+
+
+class PeopleInsert(CustomModelInsert):
+    """People Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    full_name: str
+
+    # Optional fields
+    favorite_status: PublicStatusEnum | None = Field(default=None)
+
+
+class PersonNotesInsert(CustomModelInsert):
+    """PersonNotes Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    person_id: int
+
+    # Optional fields
+    body: str | None = Field(default=None)
+
+
+class ProductsInsert(CustomModelInsert):
+    """Products Insert Schema."""
+
+    # Primary Keys
+    region: str
+    sku: str = Field(description="Vendor `SKU` (<= 32 chars).")
+
+    # Required fields
+    list_price: Decimal
+    name: str
+
+    # Optional fields
+    is_discontinued: bool | None = Field(default=None)
+
+
+class RlsLockedNotesInsert(CustomModelInsert):
+    """RlsLockedNotes Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    content: str
+    owner: UUID4
+
+
+class RlsOpenNotesInsert(CustomModelInsert):
+    """RlsOpenNotes Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    content: str
+
+
+class SeriesInsert(CustomModelInsert):
+    """Series Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    title: str
+
+
+class SeriesEntriesInsert(CustomModelInsert):
+    """SeriesEntries Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    ordinal: int
+    series_id: int
+
+
+class TagsInsert(CustomModelInsert):
+    """Tags Insert Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    label: str
+
+    # Optional fields
+    slug: str | None = Field(default=None)
+
+
+class TypeMenagerieInsert(CustomModelInsert):
+    """TypeMenagerie Insert Schema.
+
+    One column per interesting Postgres type.
+    """
+
+    # Primary Keys
+    id: int
+
+    # Optional fields
+    c_audit_status: AuditStatusEnum | None = Field(default=None)
+    c_bigint: int | None = Field(default=None)
+    c_bit: str | None = Field(default=None)
+    c_boolean: bool | None = Field(default=None)
+    c_bytea: bytes | None = Field(default=None)
+    c_char: str | None = Field(default=None)
+    c_cidr: IPv4Network | None = Field(default=None)
+    c_date: datetime.date | None = Field(default=None)
+    c_decimal: Decimal | None = Field(default=None)
+    c_double: float | None = Field(default=None)
+    c_email: str | None = Field(default=None)
+    c_inet: IPv4Address | IPv6Address | None = Field(default=None)
+    c_int_array: list[int] | None = Field(default=None)
+    c_integer: int | None = Field(default=None)
+    c_interval: datetime.timedelta | None = Field(default=None)
+    c_json: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_jsonb: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_macaddr: str | None = Field(default=None)
+    c_money: Decimal | None = Field(default=None)
+    c_numeric: Decimal | None = Field(default=None)
+    c_numeric_plain: Decimal | None = Field(default=None)
+    c_percentage: Decimal | None = Field(default=None)
+    c_point: Tuple[float, float] | None = Field(default=None)
+    c_polygon: Any | None = Field(default=None)
+    c_real: float | None = Field(default=None)
+    c_smallint: int | None = Field(default=None)
+    c_status: PublicStatusEnum | None = Field(default=None)
+    c_status_array: list[PublicStatusEnum] | None = Field(default=None)
+    c_text: str | None = Field(default=None)
+    c_text_array: list[str] | None = Field(default=None)
+    c_time: datetime.time | None = Field(default=None)
+    c_timestamp: datetime.datetime | None = Field(default=None)
+    c_timestamptz: datetime.datetime | None = Field(default=None)
+    c_timestamptz_array: list[datetime.datetime] | None = Field(default=None)
+    c_timetz: datetime.time | None = Field(default=None)
+    c_tsvector: str | None = Field(default=None)
+    c_uuid: UUID4 | None = Field(default=None)
+    c_varbit: str | None = Field(default=None)
+    c_varchar: str | None = Field(default=None)
+    c_varchar_unbounded: str | None = Field(default=None)
+    c_xml: str | None = Field(default=None)
+
+
+class WritableCustomerViewInsert(CustomModelInsert):
+    """WritableCustomerView Insert Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Optional fields
+    display_name: str | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+
+
+# UPDATE CLASSES
+# Models for update operations; all fields are optional.
+
+
+class ActiveCustomersUpdate(CustomModelUpdate):
+    """ActiveCustomers Update Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Columns
+    created_at: datetime.datetime | None = Field(default=None)
+    display_name: str | None = Field(default=None)
+    email: str | None = Field(default=None)
+    signup_status: PublicStatusEnum | None = Field(default=None)
+
+
+class AllNullableReadonlyUpdate(CustomModelUpdate):
+    """AllNullableReadonly Update Schema."""
+
+    # Columns
+    id: int | None = Field(default=None)
+    label: str | None = Field(default=None)
+
+
+class AuditLinksUpdate(CustomModelUpdate):
+    """AuditLinks Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    event_id: int | None = Field(default=None)
+    label: str | None = Field(default=None)
+
+
+class AwkwardNamesUpdate(CustomModelUpdate):
+    """AwkwardNames Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    MixedCase: str | None = Field(default=None)
+    copyright: str | None = Field(default=None)
+    field_class: str | None = Field(default=None, alias="class")
+    field_import: str | None = Field(default=None, alias="import")
+    field_lambda: str | None = Field(default=None, alias="lambda")
+    field_model_config: str | None = Field(default=None, alias="model_config")
+    field_model_name: str | None = Field(default=None, alias="model_name")
+    field_type: str | None = Field(default=None, alias="type")
+    order: str | None = Field(default=None)
+    select: str | None = Field(default=None)
+    sum: int | None = Field(default=None)
+
+
+class BookingsUpdate(CustomModelUpdate):
+    """Bookings Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    ends_at: datetime.datetime | None = Field(default=None)
+    room_code: str | None = Field(default=None)
+    starts_at: datetime.datetime | None = Field(default=None)
+
+
+class CustomerTagsUpdate(CustomModelUpdate):
+    """CustomerTags Update Schema."""
+
+    # Primary Keys
+    customer_id: UUID4 | None = Field(default=None)
+    tag_id: int | None = Field(default=None)
+
+
+class CustomersUpdate(CustomModelUpdate):
+    """Customers Update Schema.
+
+    People who can place orders.
+    """
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None, description="Stable public identifier.")
+
+    # Columns
+    bio: str | None = Field(default=None, description="A short profile blurb.")
+    created_at: datetime.datetime | None = Field(default=None)
+    display_name: str | None = Field(default=None)
+    email: str | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+    lifetime_value: Decimal | None = Field(default=None)
+    notes: str | None = Field(default=None)
+    signup_status: PublicStatusEnum | None = Field(default=None)
+
+
+class EmployeeProfilesUpdate(CustomModelUpdate):
+    """EmployeeProfiles Update Schema."""
+
+    # Primary Keys
+    employee_id: int | None = Field(default=None)
+
+    # Columns
+    avatar_url: str | None = Field(default=None)
+    bio: str | None = Field(default=None)
+
+
+class EmployeesUpdate(CustomModelUpdate):
+    """Employees Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    full_name: str | None = Field(default=None)
+    manager_id: int | None = Field(default=None)
+    work_email: str | None = Field(default=None)
+
+
+class LedgerRefsUpdate(CustomModelUpdate):
+    """LedgerRefs Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    ledger_id: int | None = Field(default=None)
+    note: str | None = Field(default=None)
+
+
+class LedgerSummaryUpdate(CustomModelUpdate):
+    """LedgerSummary Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    amount: Decimal | None = Field(default=None)
+
+
+class MvCustomerSpendUpdate(CustomModelUpdate):
+    """MvCustomerSpend Update Schema."""
+
+    # Columns
+    customer_id: UUID4 | None = Field(default=None)
+    order_count: int | None = Field(default=None)
+    total_spend: Decimal | None = Field(default=None)
+
+
+class OrderLinesUpdate(CustomModelUpdate):
+    """OrderLines Update Schema."""
+
+    # Primary Keys
+    order_id: int | None = Field(default=None)
+    product_region: str | None = Field(default=None)
+    product_sku: str | None = Field(default=None)
+
+    # Columns
+    quantity: int | None = Field(default=None)
+
+
+class OrderReportUpdate(CustomModelUpdate):
+    """OrderReport Update Schema."""
+
+    # Columns
+    customer_id: UUID4 | None = Field(default=None)
+    customer_name: str | None = Field(default=None)
+    order_id: int | None = Field(default=None)
+    order_status: PublicOrderStatusEnum | None = Field(default=None)
+    total: Decimal | None = Field(default=None)
+
+
+class OrdersUpdate(CustomModelUpdate):
+    """Orders Update Schema.
+
+    One row per placed order.
+    """
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    customer_id: UUID4 | None = Field(default=None, description="The customer who placed the order.")
+    order_status: PublicOrderStatusEnum | None = Field(default=None)
+    placed_at: datetime.datetime | None = Field(default=None)
+    subtotal: Decimal | None = Field(default=None)
+    tags: list[PublicOrderStatusEnum] | None = Field(default=None)
+    tax: Decimal | None = Field(default=None, description="Sales tax.\n\nNote: computed upstream.")
+    total: Decimal | None = Field(default=None)
+
+
+class PartiallyVisibleUpdate(CustomModelUpdate):
+    """PartiallyVisible Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    secret_body: str | None = Field(default=None)
+    title: str | None = Field(default=None)
+
+
+class PeopleUpdate(CustomModelUpdate):
+    """People Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    favorite_status: PublicStatusEnum | None = Field(default=None)
+    full_name: str | None = Field(default=None)
+
+
+class PersonNotesUpdate(CustomModelUpdate):
+    """PersonNotes Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    body: str | None = Field(default=None)
+    person_id: int | None = Field(default=None)
+
+
+class ProductsUpdate(CustomModelUpdate):
+    """Products Update Schema."""
+
+    # Primary Keys
+    region: str | None = Field(default=None)
+    sku: str | None = Field(default=None, description="Vendor `SKU` (<= 32 chars).")
+
+    # Columns
+    is_discontinued: bool | None = Field(default=None)
+    list_price: Decimal | None = Field(default=None)
+    name: str | None = Field(default=None)
+
+
+class RlsLockedNotesUpdate(CustomModelUpdate):
+    """RlsLockedNotes Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    content: str | None = Field(default=None)
+    owner: UUID4 | None = Field(default=None)
+
+
+class RlsOpenNotesUpdate(CustomModelUpdate):
+    """RlsOpenNotes Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    content: str | None = Field(default=None)
+
+
+class SeriesUpdate(CustomModelUpdate):
+    """Series Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    title: str | None = Field(default=None)
+
+
+class SeriesEntriesUpdate(CustomModelUpdate):
+    """SeriesEntries Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    ordinal: int | None = Field(default=None)
+    series_id: int | None = Field(default=None)
+
+
+class TagsUpdate(CustomModelUpdate):
+    """Tags Update Schema."""
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    label: str | None = Field(default=None)
+    slug: str | None = Field(default=None)
+
+
+class TypeMenagerieUpdate(CustomModelUpdate):
+    """TypeMenagerie Update Schema.
+
+    One column per interesting Postgres type.
+    """
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    c_audit_status: AuditStatusEnum | None = Field(default=None)
+    c_bigint: int | None = Field(default=None)
+    c_bit: str | None = Field(default=None)
+    c_boolean: bool | None = Field(default=None)
+    c_bytea: bytes | None = Field(default=None)
+    c_char: str | None = Field(default=None)
+    c_cidr: IPv4Network | None = Field(default=None)
+    c_date: datetime.date | None = Field(default=None)
+    c_decimal: Decimal | None = Field(default=None)
+    c_double: float | None = Field(default=None)
+    c_email: str | None = Field(default=None)
+    c_inet: IPv4Address | IPv6Address | None = Field(default=None)
+    c_int_array: list[int] | None = Field(default=None)
+    c_integer: int | None = Field(default=None)
+    c_interval: datetime.timedelta | None = Field(default=None)
+    c_json: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_jsonb: dict | list[dict] | list[Any] | Json | None = Field(default=None)
+    c_macaddr: str | None = Field(default=None)
+    c_money: Decimal | None = Field(default=None)
+    c_numeric: Decimal | None = Field(default=None)
+    c_numeric_plain: Decimal | None = Field(default=None)
+    c_percentage: Decimal | None = Field(default=None)
+    c_point: Tuple[float, float] | None = Field(default=None)
+    c_polygon: Any | None = Field(default=None)
+    c_real: float | None = Field(default=None)
+    c_smallint: int | None = Field(default=None)
+    c_status: PublicStatusEnum | None = Field(default=None)
+    c_status_array: list[PublicStatusEnum] | None = Field(default=None)
+    c_text: str | None = Field(default=None)
+    c_text_array: list[str] | None = Field(default=None)
+    c_time: datetime.time | None = Field(default=None)
+    c_timestamp: datetime.datetime | None = Field(default=None)
+    c_timestamptz: datetime.datetime | None = Field(default=None)
+    c_timestamptz_array: list[datetime.datetime] | None = Field(default=None)
+    c_timetz: datetime.time | None = Field(default=None)
+    c_tsvector: str | None = Field(default=None)
+    c_uuid: UUID4 | None = Field(default=None)
+    c_varbit: str | None = Field(default=None)
+    c_varchar: str | None = Field(default=None)
+    c_varchar_unbounded: str | None = Field(default=None)
+    c_xml: str | None = Field(default=None)
+
+
+class WritableCustomerViewUpdate(CustomModelUpdate):
+    """WritableCustomerView Update Schema."""
+
+    # Primary Keys
+    id: UUID4 | None = Field(default=None)
+
+    # Columns
+    display_name: str | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
+
+
+# OPERATIONAL CLASSES
+# Extend these models to add custom behavior; they carry relationship fields.
+
+
+class ActiveCustomers(ActiveCustomersBaseSchema):
+    """ActiveCustomers Schema for Pydantic.
+
+    Inherits from ActiveCustomersBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class AllNullableReadonly(AllNullableReadonlyBaseSchema):
+    """AllNullableReadonly Schema for Pydantic.
+
+    Inherits from AllNullableReadonlyBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class AuditLinks(AuditLinksBaseSchema):
+    """AuditLinks Schema for Pydantic.
+
+    Inherits from AuditLinksBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class AwkwardNames(AwkwardNamesBaseSchema):
+    """AwkwardNames Schema for Pydantic.
+
+    Inherits from AwkwardNamesBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class Bookings(BookingsBaseSchema):
+    """Bookings Schema for Pydantic.
+
+    Inherits from BookingsBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class CustomerTags(CustomerTagsBaseSchema):
+    """CustomerTags Schema for Pydantic.
+
+    Inherits from CustomerTagsBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    customer: Customers | None = Field(default=None)
+    tag: Tags | None = Field(default=None)
+
+
+class Customers(CustomersBaseSchema):
+    """Customers Schema for Pydantic.
+
+    People who can place orders.
+
+    Inherits from CustomersBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    customer_tags: list[CustomerTags] | None = Field(default=None)
+    order_reports: list[OrderReport] | None = Field(default=None)
+    orders: list[Orders] | None = Field(default=None)
+
+
+class EmployeeProfiles(EmployeeProfilesBaseSchema):
+    """EmployeeProfiles Schema for Pydantic.
+
+    Inherits from EmployeeProfilesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    employee: Employees | None = Field(default=None)
+
+
+class Employees(EmployeesBaseSchema):
+    """Employees Schema for Pydantic.
+
+    Inherits from EmployeesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    employees: Employees | None = Field(default=None)
+    employee_profile: EmployeeProfiles | None = Field(default=None)
+
+
+class LedgerRefs(LedgerRefsBaseSchema):
+    """LedgerRefs Schema for Pydantic.
+
+    Inherits from LedgerRefsBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class LedgerSummary(LedgerSummaryBaseSchema):
+    """LedgerSummary Schema for Pydantic.
+
+    Inherits from LedgerSummaryBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class MvCustomerSpend(MvCustomerSpendBaseSchema):
+    """MvCustomerSpend Schema for Pydantic.
+
+    Inherits from MvCustomerSpendBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class OrderLines(OrderLinesBaseSchema):
+    """OrderLines Schema for Pydantic.
+
+    Inherits from OrderLinesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    order: Orders | None = Field(default=None)
+
+
+class OrderReport(OrderReportBaseSchema):
+    """OrderReport Schema for Pydantic.
+
+    Inherits from OrderReportBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    customer: Customers | None = Field(default=None)
+
+
+class Orders(OrdersBaseSchema):
+    """Orders Schema for Pydantic.
+
+    One row per placed order.
+
+    Inherits from OrdersBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    customer: Customers | None = Field(default=None)
+    order_lines: list[OrderLines] | None = Field(default=None)
+
+
+class PartiallyVisible(PartiallyVisibleBaseSchema):
+    """PartiallyVisible Schema for Pydantic.
+
+    Inherits from PartiallyVisibleBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class People(PeopleBaseSchema):
+    """People Schema for Pydantic.
+
+    Inherits from PeopleBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    person_notes: list[PersonNotes] | None = Field(default=None)
+
+
+class PersonNotes(PersonNotesBaseSchema):
+    """PersonNotes Schema for Pydantic.
+
+    Inherits from PersonNotesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    person: People | None = Field(default=None)
+
+
+class Products(ProductsBaseSchema):
+    """Products Schema for Pydantic.
+
+    Inherits from ProductsBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class RlsLockedNotes(RlsLockedNotesBaseSchema):
+    """RlsLockedNotes Schema for Pydantic.
+
+    Inherits from RlsLockedNotesBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class RlsOpenNotes(RlsOpenNotesBaseSchema):
+    """RlsOpenNotes Schema for Pydantic.
+
+    Inherits from RlsOpenNotesBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class Series(SeriesBaseSchema):
+    """Series Schema for Pydantic.
+
+    Inherits from SeriesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    series_entries: list[SeriesEntries] | None = Field(default=None)
+
+
+class SeriesEntries(SeriesEntriesBaseSchema):
+    """SeriesEntries Schema for Pydantic.
+
+    Inherits from SeriesEntriesBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    series: Series | None = Field(default=None)
+
+
+class Tags(TagsBaseSchema):
+    """Tags Schema for Pydantic.
+
+    Inherits from TagsBaseSchema. Add any customization here.
+    """
+
+    # Foreign Keys
+    customer_tags: list[CustomerTags] | None = Field(default=None)
+
+
+class TypeMenagerie(TypeMenagerieBaseSchema):
+    """TypeMenagerie Schema for Pydantic.
+
+    One column per interesting Postgres type.
+
+    Inherits from TypeMenagerieBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class WritableCustomerView(WritableCustomerViewBaseSchema):
+    """WritableCustomerView Schema for Pydantic.
+
+    Inherits from WritableCustomerViewBaseSchema. Add any customization here.
+    """
+
+    pass

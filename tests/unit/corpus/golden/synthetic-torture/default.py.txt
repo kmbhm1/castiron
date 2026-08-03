@@ -1,0 +1,157 @@
+from enum import Enum
+from pydantic import BaseModel
+from pydantic import Field
+
+
+# ENUM TYPES
+# These are generated from Postgres user-defined enum types.
+
+
+class PublicTaskStateEnum(str, Enum):
+    IN PROGRESS = "in progress"
+    DONE = "done"
+    N/A = "n/a"
+    2ND PASS = "2nd pass"
+
+
+# CUSTOM CLASSES
+# Custom model classes defining common features shared by the generated schemas.
+
+
+class CustomModel(BaseModel):
+    """Base model class with common features."""
+
+
+class CustomModelInsert(CustomModel):
+    """Base model for insert operations with common features."""
+
+
+class CustomModelUpdate(CustomModel):
+    """Base model for update operations with common features."""
+
+
+# BASE CLASSES
+# These are the base Row models that include all fields.
+
+
+class HostileColumnsBaseSchema(CustomModel):
+    """HostileColumns Base Schema.
+
+    Columns whose names are legal in Postgres and illegal in Python (CI-085).
+    """
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    2fast: str
+    kebab-case: str | None = Field(default=None)
+    ok_column: str | None = Field(default=None)
+    space name: str | None = Field(default=None)
+
+
+class HostileEnumLabelsBaseSchema(CustomModel):
+    """HostileEnumLabels Base Schema.
+
+    An enum whose LABELS are legal in Postgres and illegal as Python identifiers (CI-080).
+    """
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    state: PublicTaskStateEnum
+
+
+# INSERT CLASSES
+# Models for insert operations; auto-generated fields are optional.
+
+
+class HostileColumnsInsert(CustomModelInsert):
+    """HostileColumns Insert Schema.
+
+    Columns whose names are legal in Postgres and illegal in Python (CI-085).
+    """
+
+    # Primary Keys
+    id: int
+
+    # Required fields
+    2fast: str
+
+    # Optional fields
+    kebab-case: str | None = Field(default=None)
+    ok_column: str | None = Field(default=None)
+    space name: str | None = Field(default=None)
+
+
+class HostileEnumLabelsInsert(CustomModelInsert):
+    """HostileEnumLabels Insert Schema.
+
+    An enum whose LABELS are legal in Postgres and illegal as Python identifiers (CI-080).
+    """
+
+    # Primary Keys
+    id: int
+
+    # Optional fields
+    state: PublicTaskStateEnum | None = Field(default=None)
+
+
+# UPDATE CLASSES
+# Models for update operations; all fields are optional.
+
+
+class HostileColumnsUpdate(CustomModelUpdate):
+    """HostileColumns Update Schema.
+
+    Columns whose names are legal in Postgres and illegal in Python (CI-085).
+    """
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    2fast: str | None = Field(default=None)
+    kebab-case: str | None = Field(default=None)
+    ok_column: str | None = Field(default=None)
+    space name: str | None = Field(default=None)
+
+
+class HostileEnumLabelsUpdate(CustomModelUpdate):
+    """HostileEnumLabels Update Schema.
+
+    An enum whose LABELS are legal in Postgres and illegal as Python identifiers (CI-080).
+    """
+
+    # Primary Keys
+    id: int | None = Field(default=None)
+
+    # Columns
+    state: PublicTaskStateEnum | None = Field(default=None)
+
+
+# OPERATIONAL CLASSES
+# Extend these models to add custom behavior; they carry relationship fields.
+
+
+class HostileColumns(HostileColumnsBaseSchema):
+    """HostileColumns Schema for Pydantic.
+
+    Columns whose names are legal in Postgres and illegal in Python (CI-085).
+
+    Inherits from HostileColumnsBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class HostileEnumLabels(HostileEnumLabelsBaseSchema):
+    """HostileEnumLabels Schema for Pydantic.
+
+    An enum whose LABELS are legal in Postgres and illegal as Python identifiers (CI-080).
+
+    Inherits from HostileEnumLabelsBaseSchema. Add any customization here.
+    """
+
+    pass

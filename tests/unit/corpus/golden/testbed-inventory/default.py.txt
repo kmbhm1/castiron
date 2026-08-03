@@ -1,0 +1,117 @@
+from pydantic import BaseModel
+from pydantic import Field
+
+
+# CUSTOM CLASSES
+# Custom model classes defining common features shared by the generated schemas.
+
+
+class CustomModel(BaseModel):
+    """Base model class with common features."""
+
+
+class CustomModelInsert(CustomModel):
+    """Base model for insert operations with common features."""
+
+
+class CustomModelUpdate(CustomModel):
+    """Base model for update operations with common features."""
+
+
+# BASE CLASSES
+# These are the base Row models that include all fields.
+
+
+class CurrenciesBaseSchema(CustomModel):
+    """Currencies Base Schema."""
+
+    # Primary Keys
+    code: str
+
+    # Columns
+    minor_units: int
+    symbol: str
+
+
+class RegionsBaseSchema(CustomModel):
+    """Regions Base Schema."""
+
+    # Primary Keys
+    code: str
+
+    # Columns
+    name: str
+
+
+# INSERT CLASSES
+# Models for insert operations; auto-generated fields are optional.
+
+
+class CurrenciesInsert(CustomModelInsert):
+    """Currencies Insert Schema."""
+
+    # Primary Keys
+    code: str
+
+    # Required fields
+    symbol: str
+
+    # Optional fields
+    minor_units: int | None = Field(default=None)
+
+
+class RegionsInsert(CustomModelInsert):
+    """Regions Insert Schema."""
+
+    # Primary Keys
+    code: str
+
+    # Required fields
+    name: str
+
+
+# UPDATE CLASSES
+# Models for update operations; all fields are optional.
+
+
+class CurrenciesUpdate(CustomModelUpdate):
+    """Currencies Update Schema."""
+
+    # Primary Keys
+    code: str | None = Field(default=None)
+
+    # Columns
+    minor_units: int | None = Field(default=None)
+    symbol: str | None = Field(default=None)
+
+
+class RegionsUpdate(CustomModelUpdate):
+    """Regions Update Schema."""
+
+    # Primary Keys
+    code: str | None = Field(default=None)
+
+    # Columns
+    name: str | None = Field(default=None)
+
+
+# OPERATIONAL CLASSES
+# Extend these models to add custom behavior; they carry relationship fields.
+
+
+class Currencies(CurrenciesBaseSchema):
+    """Currencies Schema for Pydantic.
+
+    Inherits from CurrenciesBaseSchema. Add any customization here.
+    """
+
+    pass
+
+
+class Regions(RegionsBaseSchema):
+    """Regions Schema for Pydantic.
+
+    Inherits from RegionsBaseSchema. Add any customization here.
+    """
+
+    pass

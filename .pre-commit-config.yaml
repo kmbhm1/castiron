@@ -6,10 +6,25 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # ⚠ These two hooks REWRITE TEXT FILES IN PLACE. The golden corpus (CI-007) is
+      # compared byte for byte, so a hook that strips a trailing space or appends a
+      # newline silently edits the very artifact under test — the commit then contains a
+      # golden that is not what the emitter produces, and the next `make test` goes red
+      # for a change nobody made. The exclusion keeps the goldens exactly as
+      # `tests.unit.corpus.regenerate` wrote them.
+      #
+      # This is a structural guarantee, not a courtesy: every golden happens to be
+      # hook-safe today (measured — one trailing `\n`, no trailing whitespace), but that
+      # holds by luck of the emitter's current formatting, not by construction. The day an
+      # emitter emits a trailing space, this line is what stops the hook from "fixing" it.
+      # `tests/unit/corpus/test_goldens.py` still ASSERTS hook-safety, so a golden that
+      # drifts into an unsafe shape is reported rather than silently rewritten.
       - id: trailing-whitespace
         stages: [pre-commit]
+        exclude: &golden_bytes '^tests/unit/(corpus/(inputs|golden|fingerprints)|.*/golden)/'
       - id: end-of-file-fixer
         stages: [pre-commit]
+        exclude: *golden_bytes
       - id: check-yaml
         stages: [pre-commit]
         exclude: mkdocs.yml

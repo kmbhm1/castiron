@@ -1,0 +1,3970 @@
+{
+  "tables": [
+    {
+      "name": "active_customers",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "email",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "display_name",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 120,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "signup_status",
+          "raw_type": "public.status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "active",
+              "inactive",
+              "archived"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "active",
+            "inactive",
+            "archived"
+          ]
+        },
+        {
+          "name": "created_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "active_customers_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "all_nullable_readonly",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "label",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "audit_links",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "event_id",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "label",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "audit_links_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "awkward_names",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "field_class",
+          "raw_type": "text",
+          "alias": "class",
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "field_import",
+          "raw_type": "text",
+          "alias": "import",
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "field_lambda",
+          "raw_type": "text",
+          "alias": "lambda",
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "field_type",
+          "raw_type": "text",
+          "alias": "type",
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "select",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "order",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "MixedCase",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "model_name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "model_config",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "sum",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "copyright",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "awkward_names_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "bookings",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "room_code",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 4,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "starts_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "ends_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "bookings_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "customer_tags",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": true,
+      "columns": [
+        {
+          "name": "customer_id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "tag_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "customer_tags_customer_id_fkey",
+          "column_name": "customer_id",
+          "foreign_table_name": "customers",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        },
+        {
+          "constraint_name": "customer_tags_tag_id_fkey",
+          "column_name": "tag_id",
+          "foreign_table_name": "tags",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "customer_tags_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "customer_id",
+            "tag_id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "customer_tags_customer_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "customer_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
+          "raw_constraint_type": "f"
+        },
+        {
+          "constraint_name": "customer_tags_tag_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "tag_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (tag_id) REFERENCES tags(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "customer_tags",
+          "related_table_name": "customers",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "customer_tags",
+          "related_table_name": "tags",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "customers",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": "gen_random_uuid()",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "Stable public identifier.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "email",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "display_name",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 120,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "signup_status",
+          "raw_type": "public.status",
+          "alias": null,
+          "default": "active",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "active",
+              "inactive",
+              "archived"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "active",
+            "inactive",
+            "archived"
+          ]
+        },
+        {
+          "name": "lifetime_value",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": "0",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "is_active",
+          "raw_type": "boolean",
+          "alias": null,
+          "default": "true",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "created_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": "now()",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "bio",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "A short profile blurb.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "notes",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "customer_tags_customer_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "customer_tags",
+          "foreign_column_name": "customer_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "constraint_name": "order_report_customer_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "order_report",
+          "foreign_column_name": "customer_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "constraint_name": "orders_customer_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "orders",
+          "foreign_column_name": "customer_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "customers_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "customers",
+          "related_table_name": "customer_tags",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "customers",
+          "related_table_name": "order_report",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "customers",
+          "related_table_name": "orders",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": "People who can place orders."
+    },
+    {
+      "name": "employee_profiles",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "employee_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "bio",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "avatar_url",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "employee_profiles_employee_id_fkey",
+          "column_name": "employee_id",
+          "foreign_table_name": "employees",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "employee_profiles_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "employee_id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "employee_profiles_employee_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "employee_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (employee_id) REFERENCES employees(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "employee_profiles",
+          "related_table_name": "employees",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "employees",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "manager_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "full_name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "work_email",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "employees_manager_id_fkey",
+          "column_name": "manager_id",
+          "foreign_table_name": "employees",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "constraint_name": "employee_profiles_employee_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "employee_profiles",
+          "foreign_column_name": "employee_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "employees_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "employees_manager_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "manager_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (manager_id) REFERENCES employees(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "employees",
+          "related_table_name": "employee_profiles",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "employees",
+          "related_table_name": "employees",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "employees",
+          "related_table_name": "employees",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "ledger_refs",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "ledger_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "note",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "ledger_refs_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "ledger_refs_ledger_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "ledger_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "ledger_summary",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "amount",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "ledger_summary_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "mv_customer_spend",
+      "schema": "public",
+      "table_type": "VIEW",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "customer_id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": true,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [
+            "customer_id"
+          ],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "order_count",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "total_spend",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "mv_customer_spend_customer_id_key",
+          "type": "UNIQUE",
+          "columns": [
+            "customer_id"
+          ],
+          "constraint_definition": "UNIQUE (customer_id)",
+          "raw_constraint_type": "u"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "order_lines",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "order_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "product_sku",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 32,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "product_region",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 2,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "quantity",
+          "raw_type": "integer",
+          "alias": null,
+          "default": "1",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "order_lines_order_id_fkey",
+          "column_name": "order_id",
+          "foreign_table_name": "orders",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "order_lines_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "order_id",
+            "product_sku",
+            "product_region"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "order_lines_order_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "order_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (order_id) REFERENCES orders(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "order_lines",
+          "related_table_name": "orders",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "order_report",
+      "schema": "public",
+      "table_type": "VIEW",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "order_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": true,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [
+            "order_id"
+          ],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "customer_id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "customer_name",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 120,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "order_status",
+          "raw_type": "public.order_status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "paid",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "pending",
+            "paid",
+            "shipped",
+            "cancelled"
+          ]
+        },
+        {
+          "name": "total",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "order_report_customer_id_fkey",
+          "column_name": "customer_id",
+          "foreign_table_name": "customers",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "order_report_order_id_key",
+          "type": "UNIQUE",
+          "columns": [
+            "order_id"
+          ],
+          "constraint_definition": "UNIQUE (order_id)",
+          "raw_constraint_type": "u"
+        },
+        {
+          "constraint_name": "order_report_customer_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "customer_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "order_report",
+          "related_table_name": "customers",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "orders",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "customer_id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "The customer who placed the order.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "order_status",
+          "raw_type": "public.order_status",
+          "alias": null,
+          "default": "pending",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "paid",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "pending",
+            "paid",
+            "shipped",
+            "cancelled"
+          ]
+        },
+        {
+          "name": "placed_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": "now()",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "subtotal",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "tax",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": "0",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "Sales tax.\n\nNote: computed upstream.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "total",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "tags",
+          "raw_type": "public.order_status[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "paid",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": "public.order_status",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "orders_customer_id_fkey",
+          "column_name": "customer_id",
+          "foreign_table_name": "customers",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        },
+        {
+          "constraint_name": "order_lines_order_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "order_lines",
+          "foreign_column_name": "order_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "orders_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "orders_customer_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "customer_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "orders",
+          "related_table_name": "order_lines",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "orders",
+          "related_table_name": "customers",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": "One row per placed order."
+    },
+    {
+      "name": "partially_visible",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "title",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "secret_body",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "partially_visible_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "people",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "full_name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "favorite_status",
+          "raw_type": "public.status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "active",
+              "inactive",
+              "archived"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "active",
+            "inactive",
+            "archived"
+          ]
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "person_notes_person_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "person_notes",
+          "foreign_column_name": "person_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "people_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "people",
+          "related_table_name": "person_notes",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "person_notes",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "person_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "body",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "person_notes_person_id_fkey",
+          "column_name": "person_id",
+          "foreign_table_name": "people",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "person_notes_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "person_notes_person_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "person_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (person_id) REFERENCES people(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "person_notes",
+          "related_table_name": "people",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "products",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "sku",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 32,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "Vendor `SKU` (<= 32 chars).",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "region",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 2,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "list_price",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "is_discontinued",
+          "raw_type": "boolean",
+          "alias": null,
+          "default": "false",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "products_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "sku",
+            "region"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "rls_locked_notes",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "owner",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "content",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "rls_locked_notes_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "rls_open_notes",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "content",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "rls_open_notes_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    },
+    {
+      "name": "series",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "title",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "series_entries_series_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "series_entries",
+          "foreign_column_name": "series_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "series_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "series",
+          "related_table_name": "series_entries",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "series_entries",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "series_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "ordinal",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "series_entries_series_id_fkey",
+          "column_name": "series_id",
+          "foreign_table_name": "series",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "series_entries_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "series_entries_series_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "series_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (series_id) REFERENCES series(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "series_entries",
+          "related_table_name": "series",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "tags",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "label",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "slug",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "customer_tags_tag_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "customer_tags",
+          "foreign_column_name": "tag_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "tags_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "tags",
+          "related_table_name": "customer_tags",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "type_menagerie",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": true,
+          "is_generated": true,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_smallint",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_integer",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_bigint",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_numeric",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_numeric_plain",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_decimal",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_real",
+          "raw_type": "real",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_double",
+          "raw_type": "double precision",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_money",
+          "raw_type": "money",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_text",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_varchar",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 50,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_varchar_unbounded",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_char",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 4,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_boolean",
+          "raw_type": "boolean",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_uuid",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_json",
+          "raw_type": "json",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_jsonb",
+          "raw_type": "jsonb",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_date",
+          "raw_type": "date",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_time",
+          "raw_type": "time without time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_timetz",
+          "raw_type": "time with time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_timestamp",
+          "raw_type": "timestamp without time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_timestamptz",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_interval",
+          "raw_type": "interval",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_bytea",
+          "raw_type": "bytea",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_inet",
+          "raw_type": "inet",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_cidr",
+          "raw_type": "cidr",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_macaddr",
+          "raw_type": "macaddr",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_bit",
+          "raw_type": "bit",
+          "alias": null,
+          "default": null,
+          "max_length": 8,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_varbit",
+          "raw_type": "bit varying",
+          "alias": null,
+          "default": null,
+          "max_length": 16,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_tsvector",
+          "raw_type": "tsvector",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_xml",
+          "raw_type": "xml",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_point",
+          "raw_type": "point",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_polygon",
+          "raw_type": "polygon",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_int_array",
+          "raw_type": "integer[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": "integer",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_text_array",
+          "raw_type": "text[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": "text",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_timestamptz_array",
+          "raw_type": "timestamp with time zone[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": "timestamp with time zone",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_status",
+          "raw_type": "public.status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "active",
+              "inactive",
+              "archived"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "active",
+            "inactive",
+            "archived"
+          ]
+        },
+        {
+          "name": "c_status_array",
+          "raw_type": "public.status[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "active",
+              "inactive",
+              "archived"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": "public.status",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_audit_status",
+          "raw_type": "audit.status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "status",
+            "values": [
+              "ok",
+              "warn",
+              "error"
+            ],
+            "schema": "audit"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "ok",
+            "warn",
+            "error"
+          ]
+        },
+        {
+          "name": "c_email",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "c_percentage",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "type_menagerie_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": "One column per interesting Postgres type."
+    },
+    {
+      "name": "writable_customer_view",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "uuid",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "display_name",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 120,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "is_active",
+          "raw_type": "boolean",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [],
+      "constraints": [
+        {
+          "constraint_name": "writable_customer_view_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [],
+      "description": null
+    }
+  ],
+  "enums": [
+    {
+      "name": "status",
+      "values": [
+        "ok",
+        "warn",
+        "error"
+      ],
+      "schema": "audit"
+    },
+    {
+      "name": "order_status",
+      "values": [
+        "pending",
+        "paid",
+        "shipped",
+        "cancelled"
+      ],
+      "schema": "public"
+    },
+    {
+      "name": "status",
+      "values": [
+        "active",
+        "inactive",
+        "archived"
+      ],
+      "schema": "public"
+    }
+  ],
+  "functions": [
+    {
+      "name": "bump_counter",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_value",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": null
+    },
+    {
+      "name": "create_order",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_customer_id",
+          "raw_type": "uuid",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_lines",
+          "raw_type": "jsonb",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_status",
+          "raw_type": "order_status",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "paid",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          }
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": null
+    },
+    {
+      "name": "get_customer_stats",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_customer_id",
+          "raw_type": "uuid",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_since",
+          "raw_type": "date",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "list_statuses",
+      "schema": "public",
+      "parameters": [],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "monthly_totals",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_year",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "normalize_email",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_email",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "ping",
+      "schema": "public",
+      "parameters": [],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": null
+    },
+    {
+      "name": "reserved_args",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "class",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "def",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "search_products",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_limit",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_terms",
+          "raw_type": "text[]",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": "text",
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "split_name",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_full",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    },
+    {
+      "name": "tally",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_values",
+          "raw_type": "integer[]",
+          "mode": "VARIADIC",
+          "has_default": false,
+          "array_element_type": "integer",
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": null
+    }
+  ]
+}

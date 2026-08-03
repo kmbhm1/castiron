@@ -1,0 +1,14 @@
+{
+  "origin": "captured",
+  "source_repo": "github.com/kmbhm1/castiron-testbed",
+  "seed_revision": "3150132",
+  "postgrest_version": "14.14",
+  "captured_with": "./scripts/capture.sh",
+  "captured_on": "2026-08-02",
+  "schema": "public",
+  "definition_count": 26,
+  "path_count": 38,
+  "verified_by": "./scripts/verify.sh - clean-slate double rebuild, run-a and run-b byte-identical for all three documents and the pg_dump schema",
+  "sha256": "67fc3af1734552ad10c26af52b55e5946955372d6f4b398cdb0097f831fe8162",
+  "notes": "Key-free: the API key travels in a header, not the body. host is 0.0.0.0:3000, so the document is port- and hostname-independent. The only environment-identifying field is info.version, which is the PostgREST version - useful provenance, not leakage."
+}

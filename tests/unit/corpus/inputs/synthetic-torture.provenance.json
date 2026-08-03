@@ -1,0 +1,9 @@
+{
+  "origin": "synthetic",
+  "authored_by": "castiron, CI-007",
+  "authored_on": "2026-08-02",
+  "schema": "public",
+  "definition_count": 2,
+  "path_count": 2,
+  "notes": "HAND-AUTHORED. This document is NOT a capture and is never evidence about what PostgREST emits. It exists to carry identifier-hostile shapes that no corpus capture contains: column names that are legal in Postgres and illegal in Python (CI-085), and enum LABELS with the same property (CI-080). Both shapes are legal Postgres - any quoted identifier or enum label is - and PostgREST would carry them verbatim, but the testbed seed happens to contain neither. Synthetic on purpose: it is under castiron's own control, so no PostgREST upgrade can move it. Per the corpus provenance rule, an 'origin': 'synthetic' record carries NO seed_revision and NO postgrest_version - a synthetic input must never be able to masquerade as evidence about a real source (the structural half of the CI-076 lesson)."
+}

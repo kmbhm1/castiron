@@ -1,0 +1,991 @@
+{
+  "tables": [
+    {
+      "name": "active_users_view",
+      "schema": "public",
+      "table_type": "VIEW",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": true,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [
+            "id"
+          ],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "email",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 255,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "favorite_product_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "active_users_view_favorite_product_id_fkey",
+          "column_name": "favorite_product_id",
+          "foreign_table_name": "products",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        },
+        {
+          "constraint_name": "restricted_table_owner_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "restricted_table",
+          "foreign_column_name": "owner_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "active_users_view_id_key",
+          "type": "UNIQUE",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": "UNIQUE (id)",
+          "raw_constraint_type": "u"
+        },
+        {
+          "constraint_name": "active_users_view_favorite_product_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "favorite_product_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (favorite_product_id) REFERENCES products(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "active_users_view",
+          "related_table_name": "products",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "active_users_view",
+          "related_table_name": "restricted_table",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": "Users with a recent login."
+    },
+    {
+      "name": "order_items",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": true,
+      "columns": [
+        {
+          "name": "order_id",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "product_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "quantity",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "status",
+          "raw_type": "order_status",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "pending",
+            "shipped",
+            "cancelled"
+          ]
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "order_items_order_id_fkey",
+          "column_name": "order_id",
+          "foreign_table_name": "orders",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        },
+        {
+          "constraint_name": "order_items_product_id_fkey",
+          "column_name": "product_id",
+          "foreign_table_name": "products",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "order_items_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "order_id",
+            "product_id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "order_items_order_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "order_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (order_id) REFERENCES orders(id)",
+          "raw_constraint_type": "f"
+        },
+        {
+          "constraint_name": "order_items_product_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "product_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (product_id) REFERENCES products(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "order_items",
+          "related_table_name": "orders",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "order_items",
+          "related_table_name": "products",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "orders",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "bigint",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "user_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "The customer who placed the order.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "total",
+          "raw_type": "numeric",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "code",
+          "raw_type": "character",
+          "alias": null,
+          "default": null,
+          "max_length": 1,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "labels",
+          "raw_type": "order_status[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": "order_status",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "orders_user_id_fkey",
+          "column_name": "user_id",
+          "foreign_table_name": "users",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        },
+        {
+          "constraint_name": "order_items_order_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "order_items",
+          "foreign_column_name": "order_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "orders_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "orders_user_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "user_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (user_id) REFERENCES users(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "orders",
+          "related_table_name": "order_items",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "orders",
+          "related_table_name": "users",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": "Customer orders."
+    },
+    {
+      "name": "products",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "name",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "active_users_view_favorite_product_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "active_users_view",
+          "foreign_column_name": "favorite_product_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "constraint_name": "order_items_product_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "order_items",
+          "foreign_column_name": "product_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "products_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "products",
+          "related_table_name": "active_users_view",
+          "relation_type": "One-to-Many"
+        },
+        {
+          "table_name": "products",
+          "related_table_name": "order_items",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "restricted_table",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "secret",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "owner_id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": true,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "restricted_table_owner_id_fkey",
+          "column_name": "owner_id",
+          "foreign_table_name": "active_users_view",
+          "foreign_column_name": "id",
+          "foreign_table_schema": "public",
+          "relation_type": "Many-to-One"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "restricted_table_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        },
+        {
+          "constraint_name": "restricted_table_owner_id_fkey",
+          "type": "FOREIGN KEY",
+          "columns": [
+            "owner_id"
+          ],
+          "constraint_definition": "FOREIGN KEY (owner_id) REFERENCES active_users_view(id)",
+          "raw_constraint_type": "f"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "restricted_table",
+          "related_table_name": "active_users_view",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": null
+    },
+    {
+      "name": "users",
+      "schema": "public",
+      "table_type": "BASE TABLE",
+      "is_bridge": false,
+      "columns": [
+        {
+          "name": "id",
+          "raw_type": "integer",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": false,
+          "primary": true,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "email",
+          "raw_type": "character varying",
+          "alias": null,
+          "default": null,
+          "max_length": 255,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "created_at",
+          "raw_type": "timestamp with time zone",
+          "alias": null,
+          "default": "now()",
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "status",
+          "raw_type": "order_status",
+          "alias": null,
+          "default": "pending",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          },
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": [
+            "pending",
+            "shipped",
+            "cancelled"
+          ]
+        },
+        {
+          "name": "metadata",
+          "raw_type": "jsonb",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "tags",
+          "raw_type": "text[]",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": "text",
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "bio",
+          "raw_type": "text",
+          "alias": null,
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": "A short profile blurb.",
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "field_class",
+          "raw_type": "text",
+          "alias": "class",
+          "default": null,
+          "max_length": null,
+          "is_nullable": true,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "login_count",
+          "raw_type": "integer",
+          "alias": null,
+          "default": "0",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        },
+        {
+          "name": "is_active",
+          "raw_type": "boolean",
+          "alias": null,
+          "default": "false",
+          "max_length": null,
+          "is_nullable": false,
+          "primary": false,
+          "is_unique": false,
+          "is_foreign_key": false,
+          "is_identity": false,
+          "is_generated": false,
+          "unique_partners": [],
+          "enum_info": null,
+          "array_element_type": null,
+          "description": null,
+          "constraint_definition": null,
+          "user_defined_values": []
+        }
+      ],
+      "foreign_keys": [
+        {
+          "constraint_name": "orders_user_id_fkey",
+          "column_name": "id",
+          "foreign_table_name": "orders",
+          "foreign_column_name": "user_id",
+          "foreign_table_schema": "public",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "users_pkey",
+          "type": "PRIMARY KEY",
+          "columns": [
+            "id"
+          ],
+          "constraint_definition": null,
+          "raw_constraint_type": "p"
+        }
+      ],
+      "relationships": [
+        {
+          "table_name": "users",
+          "related_table_name": "orders",
+          "relation_type": "One-to-Many"
+        }
+      ],
+      "description": "Application users."
+    }
+  ],
+  "enums": [
+    {
+      "name": "order_status",
+      "values": [
+        "pending",
+        "shipped",
+        "cancelled"
+      ],
+      "schema": "public"
+    }
+  ],
+  "functions": [
+    {
+      "name": "create_order",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "user_id",
+          "raw_type": "bigint",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "status",
+          "raw_type": "order_status",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": {
+            "name": "order_status",
+            "values": [
+              "pending",
+              "shipped",
+              "cancelled"
+            ],
+            "schema": "public"
+          }
+        },
+        {
+          "name": "items",
+          "raw_type": "text[]",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": "text",
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": "Create an order\n\nInserts a row and returns its id."
+    },
+    {
+      "name": "get_user_stats",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "user_id",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "since",
+          "raw_type": "date",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": "Aggregate statistics for one user\n\nReturns lifetime totals."
+    },
+    {
+      "name": "ping",
+      "schema": "public",
+      "parameters": [],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": "Health check"
+    },
+    {
+      "name": "search_products",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "terms",
+          "raw_type": "text[]",
+          "mode": "VARIADIC",
+          "has_default": false,
+          "array_element_type": "text",
+          "enum_info": null
+        },
+        {
+          "name": "limit_to",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": null,
+      "is_read_only": true,
+      "description": "Search products\n\nReturns matching product rows."
+    }
+  ]
+}

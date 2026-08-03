@@ -1,0 +1,6450 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "description": "",
+    "title": "standard public schema",
+    "version": "14.14"
+  },
+  "host": "0.0.0.0:3000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "consumes": [
+    "application/json",
+    "application/vnd.pgrst.object+json;nulls=stripped",
+    "application/vnd.pgrst.object+json",
+    "text/csv"
+  ],
+  "produces": [
+    "application/json",
+    "application/vnd.pgrst.object+json;nulls=stripped",
+    "application/vnd.pgrst.object+json",
+    "text/csv"
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "produces": [
+          "application/openapi+json",
+          "application/json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OpenAPI description (this document)",
+        "tags": [
+          "Introspection"
+        ]
+      }
+    },
+    "/series_entries": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.series_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.ordinal"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/series_entries"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "series_entries"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.series_entries"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "series_entries"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.series_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.ordinal"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "series_entries"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.series_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series_entries.ordinal"
+          },
+          {
+            "$ref": "#/parameters/body.series_entries"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "series_entries"
+        ]
+      }
+    },
+    "/orders": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.orders.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.order_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.placed_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.subtotal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tax"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.total"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tags"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/orders"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "summary": "One row per placed order.",
+        "tags": [
+          "orders"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.orders"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "summary": "One row per placed order.",
+        "tags": [
+          "orders"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.orders.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.order_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.placed_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.subtotal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tax"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.total"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tags"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "One row per placed order.",
+        "tags": [
+          "orders"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.orders.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.order_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.placed_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.subtotal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tax"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.total"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.orders.tags"
+          },
+          {
+            "$ref": "#/parameters/body.orders"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "One row per placed order.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/awkward_names": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.class"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.import"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.lambda"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.type"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.select"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.order"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.MixedCase"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_config"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.sum"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.copyright"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/awkward_names"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "awkward_names"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.awkward_names"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "awkward_names"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.class"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.import"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.lambda"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.type"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.select"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.order"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.MixedCase"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_config"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.sum"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.copyright"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "awkward_names"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.class"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.import"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.lambda"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.type"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.select"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.order"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.MixedCase"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.model_config"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.sum"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.awkward_names.copyright"
+          },
+          {
+            "$ref": "#/parameters/body.awkward_names"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "awkward_names"
+        ]
+      }
+    },
+    "/type_menagerie": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_smallint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_integer"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bigint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric_plain"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_decimal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_real"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_double"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_money"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar_unbounded"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_char"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_boolean"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_uuid"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_json"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_jsonb"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_date"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_time"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timetz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamp"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_interval"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bytea"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_inet"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_cidr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_macaddr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varbit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_tsvector"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_xml"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_point"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_polygon"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_int_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_audit_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_percentage"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/type_menagerie"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "summary": "One column per interesting Postgres type.",
+        "tags": [
+          "type_menagerie"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.type_menagerie"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "summary": "One column per interesting Postgres type.",
+        "tags": [
+          "type_menagerie"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_smallint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_integer"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bigint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric_plain"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_decimal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_real"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_double"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_money"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar_unbounded"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_char"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_boolean"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_uuid"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_json"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_jsonb"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_date"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_time"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timetz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamp"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_interval"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bytea"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_inet"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_cidr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_macaddr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varbit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_tsvector"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_xml"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_point"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_polygon"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_int_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_audit_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_percentage"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "One column per interesting Postgres type.",
+        "tags": [
+          "type_menagerie"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_smallint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_integer"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bigint"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_numeric_plain"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_decimal"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_real"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_double"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_money"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varchar_unbounded"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_char"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_boolean"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_uuid"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_json"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_jsonb"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_date"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_time"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timetz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamp"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_interval"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bytea"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_inet"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_cidr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_macaddr"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_bit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_varbit"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_tsvector"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_xml"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_point"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_polygon"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_int_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_text_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_timestamptz_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_status_array"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_audit_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.type_menagerie.c_percentage"
+          },
+          {
+            "$ref": "#/parameters/body.type_menagerie"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "One column per interesting Postgres type.",
+        "tags": [
+          "type_menagerie"
+        ]
+      }
+    },
+    "/ledger_summary": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.amount"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/ledger_summary"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "ledger_summary"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.ledger_summary"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "ledger_summary"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.amount"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "ledger_summary"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_summary.amount"
+          },
+          {
+            "$ref": "#/parameters/body.ledger_summary"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "ledger_summary"
+        ]
+      }
+    },
+    "/customers": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.lifetime_value"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.is_active"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.notes"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/customers"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "summary": "People who can place orders.",
+        "tags": [
+          "customers"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.customers"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "summary": "People who can place orders.",
+        "tags": [
+          "customers"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.lifetime_value"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.is_active"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.notes"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "People who can place orders.",
+        "tags": [
+          "customers"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.lifetime_value"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.is_active"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customers.notes"
+          },
+          {
+            "$ref": "#/parameters/body.customers"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "summary": "People who can place orders.",
+        "tags": [
+          "customers"
+        ]
+      }
+    },
+    "/order_report": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.order_report.order_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_report.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_report.customer_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_report.order_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_report.total"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/order_report"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "order_report"
+        ]
+      }
+    },
+    "/mv_customer_spend": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.mv_customer_spend.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.mv_customer_spend.order_count"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.mv_customer_spend.total_spend"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/mv_customer_spend"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "mv_customer_spend"
+        ]
+      }
+    },
+    "/partially_visible": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.title"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.secret_body"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/partially_visible"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "partially_visible"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.partially_visible"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "partially_visible"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.title"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.secret_body"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "partially_visible"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.title"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.partially_visible.secret_body"
+          },
+          {
+            "$ref": "#/parameters/body.partially_visible"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "partially_visible"
+        ]
+      }
+    },
+    "/audit_links": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.event_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.label"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/audit_links"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "audit_links"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.audit_links"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "audit_links"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.event_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.label"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "audit_links"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.event_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.audit_links.label"
+          },
+          {
+            "$ref": "#/parameters/body.audit_links"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "audit_links"
+        ]
+      }
+    },
+    "/employees": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employees.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.manager_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.work_email"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/employees"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "employees"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.employees"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "employees"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employees.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.manager_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.work_email"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "employees"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employees.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.manager_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employees.work_email"
+          },
+          {
+            "$ref": "#/parameters/body.employees"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "employees"
+        ]
+      }
+    },
+    "/bookings": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.bookings.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.room_code"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.starts_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.ends_at"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/bookings"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "bookings"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.bookings"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "bookings"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.bookings.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.room_code"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.starts_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.ends_at"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "bookings"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.bookings.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.room_code"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.starts_at"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.bookings.ends_at"
+          },
+          {
+            "$ref": "#/parameters/body.bookings"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "bookings"
+        ]
+      }
+    },
+    "/ledger_refs": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.ledger_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.note"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/ledger_refs"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "ledger_refs"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.ledger_refs"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "ledger_refs"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.ledger_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.note"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "ledger_refs"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.ledger_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.ledger_refs.note"
+          },
+          {
+            "$ref": "#/parameters/body.ledger_refs"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "ledger_refs"
+        ]
+      }
+    },
+    "/products": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.products.sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.list_price"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.is_discontinued"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/products"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "products"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.products"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "products"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.products.sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.list_price"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.is_discontinued"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "products"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.products.sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.list_price"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.products.is_discontinued"
+          },
+          {
+            "$ref": "#/parameters/body.products"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/order_lines": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.order_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.quantity"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/order_lines"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "order_lines"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.order_lines"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "order_lines"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.order_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.quantity"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "order_lines"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.order_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_sku"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.product_region"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.order_lines.quantity"
+          },
+          {
+            "$ref": "#/parameters/body.order_lines"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "order_lines"
+        ]
+      }
+    },
+    "/rls_locked_notes": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.owner"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.content"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/rls_locked_notes"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "rls_locked_notes"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.rls_locked_notes"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "rls_locked_notes"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.owner"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.content"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "rls_locked_notes"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.owner"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_locked_notes.content"
+          },
+          {
+            "$ref": "#/parameters/body.rls_locked_notes"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "rls_locked_notes"
+        ]
+      }
+    },
+    "/writable_customer_view": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.is_active"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/writable_customer_view"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "writable_customer_view"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.writable_customer_view"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "writable_customer_view"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.is_active"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "writable_customer_view"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.writable_customer_view.is_active"
+          },
+          {
+            "$ref": "#/parameters/body.writable_customer_view"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "writable_customer_view"
+        ]
+      }
+    },
+    "/person_notes": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.person_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.body"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/person_notes"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "person_notes"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.person_notes"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "person_notes"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.person_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.body"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "person_notes"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.person_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.person_notes.body"
+          },
+          {
+            "$ref": "#/parameters/body.person_notes"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "person_notes"
+        ]
+      }
+    },
+    "/tags": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.tags.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.label"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.slug"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/tags"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.tags"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "tags"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.tags.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.label"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.slug"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "tags"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.tags.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.label"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.tags.slug"
+          },
+          {
+            "$ref": "#/parameters/body.tags"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/customer_tags": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.tag_id"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/customer_tags"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "customer_tags"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.customer_tags"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "customer_tags"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.tag_id"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "customer_tags"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.customer_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.customer_tags.tag_id"
+          },
+          {
+            "$ref": "#/parameters/body.customer_tags"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "customer_tags"
+        ]
+      }
+    },
+    "/rls_open_notes": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.content"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/rls_open_notes"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "rls_open_notes"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.rls_open_notes"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "rls_open_notes"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.content"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "rls_open_notes"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.rls_open_notes.content"
+          },
+          {
+            "$ref": "#/parameters/body.rls_open_notes"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "rls_open_notes"
+        ]
+      }
+    },
+    "/active_customers": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/active_customers"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "active_customers"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.active_customers"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "active_customers"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "active_customers"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.email"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.display_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.signup_status"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.active_customers.created_at"
+          },
+          {
+            "$ref": "#/parameters/body.active_customers"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "active_customers"
+        ]
+      }
+    },
+    "/series": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series.title"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/series"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "series"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.series"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "series"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series.title"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "series"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.series.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.series.title"
+          },
+          {
+            "$ref": "#/parameters/body.series"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "series"
+        ]
+      }
+    },
+    "/employee_profiles": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.employee_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.avatar_url"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/employee_profiles"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "employee_profiles"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.employee_profiles"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "employee_profiles"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.employee_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.avatar_url"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "employee_profiles"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.employee_id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.bio"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.employee_profiles.avatar_url"
+          },
+          {
+            "$ref": "#/parameters/body.employee_profiles"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "employee_profiles"
+        ]
+      }
+    },
+    "/all_nullable_readonly": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.label"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/all_nullable_readonly"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "all_nullable_readonly"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.all_nullable_readonly"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "all_nullable_readonly"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.label"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "all_nullable_readonly"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.all_nullable_readonly.label"
+          },
+          {
+            "$ref": "#/parameters/body.all_nullable_readonly"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "all_nullable_readonly"
+        ]
+      }
+    },
+    "/people": {
+      "get": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.people.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.favorite_status"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/order"
+          },
+          {
+            "$ref": "#/parameters/range"
+          },
+          {
+            "$ref": "#/parameters/rangeUnit"
+          },
+          {
+            "$ref": "#/parameters/offset"
+          },
+          {
+            "$ref": "#/parameters/limit"
+          },
+          {
+            "$ref": "#/parameters/preferCount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "items": {
+                "$ref": "#/definitions/people"
+              },
+              "type": "array"
+            }
+          },
+          "206": {
+            "description": "Partial Content"
+          }
+        },
+        "tags": [
+          "people"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/body.people"
+          },
+          {
+            "$ref": "#/parameters/select"
+          },
+          {
+            "$ref": "#/parameters/preferPost"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "people"
+        ]
+      },
+      "delete": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.people.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.favorite_status"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "people"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "$ref": "#/parameters/rowFilter.people.id"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.full_name"
+          },
+          {
+            "$ref": "#/parameters/rowFilter.people.favorite_status"
+          },
+          {
+            "$ref": "#/parameters/body.people"
+          },
+          {
+            "$ref": "#/parameters/preferReturn"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "people"
+        ]
+      }
+    },
+    "/rpc/create_order": {
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_customer_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "p_lines": {
+                  "format": "jsonb"
+                },
+                "p_status": {
+                  "format": "order_status",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_customer_id"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) create_order"
+        ]
+      }
+    },
+    "/rpc/reserved_args": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "class",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "text",
+            "in": "query",
+            "name": "def",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) reserved_args"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "class": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "def": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "class"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) reserved_args"
+        ]
+      }
+    },
+    "/rpc/tally": {
+      "get": {
+        "parameters": [
+          {
+            "collectionFormat": "multi",
+            "in": "query",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "name": "p_values",
+            "required": true,
+            "type": "array"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) tally"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_values": {
+                  "format": "integer[]",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "p_values"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) tally"
+        ]
+      }
+    },
+    "/rpc/bump_counter": {
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_value": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "p_value"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) bump_counter"
+        ]
+      }
+    },
+    "/rpc/ping": {
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) ping"
+        ]
+      }
+    },
+    "/rpc/get_customer_stats": {
+      "get": {
+        "parameters": [
+          {
+            "format": "uuid",
+            "in": "query",
+            "name": "p_customer_id",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "date",
+            "in": "query",
+            "name": "p_since",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) get_customer_stats"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_customer_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "p_since": {
+                  "format": "date",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_customer_id"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) get_customer_stats"
+        ]
+      }
+    },
+    "/rpc/monthly_totals": {
+      "get": {
+        "parameters": [
+          {
+            "format": "int32",
+            "in": "query",
+            "name": "p_year",
+            "required": true,
+            "type": "integer"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) monthly_totals"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_year": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "p_year"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) monthly_totals"
+        ]
+      }
+    },
+    "/rpc/normalize_email": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_email",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) normalize_email"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_email": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_email"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) normalize_email"
+        ]
+      }
+    },
+    "/rpc/search_products": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text[]",
+            "in": "query",
+            "name": "p_terms",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "int32",
+            "in": "query",
+            "name": "p_limit",
+            "required": false,
+            "type": "integer"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) search_products"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_limit": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "p_terms": {
+                  "format": "text[]",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "p_terms"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) search_products"
+        ]
+      }
+    },
+    "/rpc/list_statuses": {
+      "get": {
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) list_statuses"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) list_statuses"
+        ]
+      }
+    },
+    "/rpc/split_name": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_full",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) split_name"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_full": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_full"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) split_name"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "series_entries": {
+      "required": [
+        "id",
+        "series_id",
+        "ordinal"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "series_id": {
+          "description": "Note:\nThis is a Foreign Key to `series.id`.<fk table='series' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "ordinal": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "orders": {
+      "description": "One row per placed order.",
+      "required": [
+        "id",
+        "customer_id",
+        "order_status",
+        "placed_at",
+        "subtotal",
+        "tax"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "customer_id": {
+          "description": "The customer who placed the order.\n\nNote:\nThis is a Foreign Key to `customers.id`.<fk table='customers' column='id'/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "order_status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "paid",
+            "shipped",
+            "cancelled"
+          ],
+          "format": "public.order_status",
+          "type": "string"
+        },
+        "placed_at": {
+          "default": "now()",
+          "format": "timestamp with time zone",
+          "type": "string"
+        },
+        "subtotal": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "tax": {
+          "default": 0,
+          "description": "Sales tax.\n\nNote: computed upstream.",
+          "format": "numeric",
+          "type": "number"
+        },
+        "total": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "tags": {
+          "format": "public.order_status[]",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "awkward_names": {
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "class": {
+          "format": "text",
+          "type": "string"
+        },
+        "import": {
+          "format": "text",
+          "type": "string"
+        },
+        "lambda": {
+          "format": "text",
+          "type": "string"
+        },
+        "type": {
+          "format": "text",
+          "type": "string"
+        },
+        "select": {
+          "format": "text",
+          "type": "string"
+        },
+        "order": {
+          "format": "text",
+          "type": "string"
+        },
+        "MixedCase": {
+          "format": "text",
+          "type": "string"
+        },
+        "model_name": {
+          "format": "text",
+          "type": "string"
+        },
+        "model_config": {
+          "format": "text",
+          "type": "string"
+        },
+        "sum": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "copyright": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "type_menagerie": {
+      "description": "One column per interesting Postgres type.",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int64",
+          "type": "integer"
+        },
+        "c_smallint": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "c_integer": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "c_bigint": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "c_numeric": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "c_numeric_plain": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "c_decimal": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "c_real": {
+          "format": "real",
+          "type": "number"
+        },
+        "c_double": {
+          "format": "double precision",
+          "type": "number"
+        },
+        "c_money": {
+          "format": "money",
+          "type": "string"
+        },
+        "c_text": {
+          "format": "text",
+          "type": "string"
+        },
+        "c_varchar": {
+          "format": "character varying",
+          "maxLength": 50,
+          "type": "string"
+        },
+        "c_varchar_unbounded": {
+          "format": "character varying",
+          "type": "string"
+        },
+        "c_char": {
+          "format": "character",
+          "maxLength": 4,
+          "type": "string"
+        },
+        "c_boolean": {
+          "format": "boolean",
+          "type": "boolean"
+        },
+        "c_uuid": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "c_json": {
+          "format": "json"
+        },
+        "c_jsonb": {
+          "format": "jsonb"
+        },
+        "c_date": {
+          "format": "date",
+          "type": "string"
+        },
+        "c_time": {
+          "format": "time without time zone",
+          "type": "string"
+        },
+        "c_timetz": {
+          "format": "time with time zone",
+          "type": "string"
+        },
+        "c_timestamp": {
+          "format": "timestamp without time zone",
+          "type": "string"
+        },
+        "c_timestamptz": {
+          "format": "timestamp with time zone",
+          "type": "string"
+        },
+        "c_interval": {
+          "format": "interval",
+          "type": "string"
+        },
+        "c_bytea": {
+          "format": "bytea",
+          "type": "string"
+        },
+        "c_inet": {
+          "format": "inet",
+          "type": "string"
+        },
+        "c_cidr": {
+          "format": "cidr",
+          "type": "string"
+        },
+        "c_macaddr": {
+          "format": "macaddr",
+          "type": "string"
+        },
+        "c_bit": {
+          "format": "bit",
+          "maxLength": 8,
+          "type": "string"
+        },
+        "c_varbit": {
+          "format": "bit varying",
+          "maxLength": 16,
+          "type": "string"
+        },
+        "c_tsvector": {
+          "format": "tsvector",
+          "type": "string"
+        },
+        "c_xml": {
+          "format": "xml",
+          "type": "string"
+        },
+        "c_point": {
+          "format": "point",
+          "type": "string"
+        },
+        "c_polygon": {
+          "format": "polygon",
+          "type": "string"
+        },
+        "c_int_array": {
+          "format": "integer[]",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "c_text_array": {
+          "format": "text[]",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "c_timestamptz_array": {
+          "format": "timestamp with time zone[]",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "c_status": {
+          "enum": [
+            "active",
+            "inactive",
+            "archived"
+          ],
+          "format": "public.status",
+          "type": "string"
+        },
+        "c_status_array": {
+          "format": "public.status[]",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "c_audit_status": {
+          "enum": [
+            "ok",
+            "warn",
+            "error"
+          ],
+          "format": "audit.status",
+          "type": "string"
+        },
+        "c_email": {
+          "format": "text",
+          "type": "string"
+        },
+        "c_percentage": {
+          "format": "numeric",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ledger_summary": {
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "amount": {
+          "format": "numeric",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "customers": {
+      "description": "People who can place orders.",
+      "required": [
+        "id",
+        "email",
+        "display_name",
+        "signup_status",
+        "lifetime_value",
+        "is_active",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "default": "gen_random_uuid()",
+          "description": "Stable public identifier.\n\nNote:\nThis is a Primary Key.<pk/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "email": {
+          "format": "text",
+          "type": "string"
+        },
+        "display_name": {
+          "format": "character varying",
+          "maxLength": 120,
+          "type": "string"
+        },
+        "signup_status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "inactive",
+            "archived"
+          ],
+          "format": "public.status",
+          "type": "string"
+        },
+        "lifetime_value": {
+          "default": 0,
+          "format": "numeric",
+          "type": "number"
+        },
+        "is_active": {
+          "default": true,
+          "format": "boolean",
+          "type": "boolean"
+        },
+        "created_at": {
+          "default": "now()",
+          "format": "timestamp with time zone",
+          "type": "string"
+        },
+        "bio": {
+          "description": "A short profile blurb.",
+          "format": "text",
+          "type": "string"
+        },
+        "notes": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "order_report": {
+      "properties": {
+        "order_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "customer_id": {
+          "description": "Note:\nThis is a Foreign Key to `customers.id`.<fk table='customers' column='id'/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "customer_name": {
+          "format": "character varying",
+          "maxLength": 120,
+          "type": "string"
+        },
+        "order_status": {
+          "enum": [
+            "pending",
+            "paid",
+            "shipped",
+            "cancelled"
+          ],
+          "format": "public.order_status",
+          "type": "string"
+        },
+        "total": {
+          "format": "numeric",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "mv_customer_spend": {
+      "properties": {
+        "customer_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "order_count": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "total_spend": {
+          "format": "numeric",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "partially_visible": {
+      "required": [
+        "id",
+        "title",
+        "secret_body"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "title": {
+          "format": "text",
+          "type": "string"
+        },
+        "secret_body": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "audit_links": {
+      "required": [
+        "id",
+        "event_id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "label": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "employees": {
+      "required": [
+        "id",
+        "full_name"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "manager_id": {
+          "description": "Note:\nThis is a Foreign Key to `employees.id`.<fk table='employees' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "full_name": {
+          "format": "text",
+          "type": "string"
+        },
+        "work_email": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "bookings": {
+      "required": [
+        "id",
+        "room_code",
+        "starts_at",
+        "ends_at"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "room_code": {
+          "format": "character",
+          "maxLength": 4,
+          "type": "string"
+        },
+        "starts_at": {
+          "format": "timestamp with time zone",
+          "type": "string"
+        },
+        "ends_at": {
+          "format": "timestamp with time zone",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ledger_refs": {
+      "required": [
+        "id",
+        "ledger_id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "ledger_id": {
+          "description": "Note:\nThis is a Foreign Key to `private_ledger.id`.<fk table='private_ledger' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "note": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "products": {
+      "required": [
+        "sku",
+        "region",
+        "name",
+        "list_price",
+        "is_discontinued"
+      ],
+      "properties": {
+        "sku": {
+          "description": "Vendor `SKU` (<= 32 chars).\n\nNote:\nThis is a Primary Key.<pk/>",
+          "format": "character varying",
+          "maxLength": 32,
+          "type": "string"
+        },
+        "region": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "character",
+          "maxLength": 2,
+          "type": "string"
+        },
+        "name": {
+          "format": "text",
+          "type": "string"
+        },
+        "list_price": {
+          "format": "numeric",
+          "type": "number"
+        },
+        "is_discontinued": {
+          "default": false,
+          "format": "boolean",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "order_lines": {
+      "required": [
+        "order_id",
+        "product_sku",
+        "product_region",
+        "quantity"
+      ],
+      "properties": {
+        "order_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `orders.id`.<fk table='orders' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "product_sku": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "character varying",
+          "maxLength": 32,
+          "type": "string"
+        },
+        "product_region": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "character",
+          "maxLength": 2,
+          "type": "string"
+        },
+        "quantity": {
+          "default": 1,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "rls_locked_notes": {
+      "required": [
+        "id",
+        "owner",
+        "content"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "owner": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "content": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "writable_customer_view": {
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "display_name": {
+          "format": "character varying",
+          "maxLength": 120,
+          "type": "string"
+        },
+        "is_active": {
+          "format": "boolean",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "person_notes": {
+      "required": [
+        "id",
+        "person_id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "person_id": {
+          "description": "Note:\nThis is a Foreign Key to `people.id`.<fk table='people' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "body": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "tags": {
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "label": {
+          "format": "text",
+          "type": "string"
+        },
+        "slug": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "customer_tags": {
+      "required": [
+        "customer_id",
+        "tag_id"
+      ],
+      "properties": {
+        "customer_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `customers.id`.<fk table='customers' column='id'/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "tag_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `tags.id`.<fk table='tags' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "rls_open_notes": {
+      "required": [
+        "id",
+        "content"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "content": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "active_customers": {
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "uuid",
+          "type": "string"
+        },
+        "email": {
+          "format": "text",
+          "type": "string"
+        },
+        "display_name": {
+          "format": "character varying",
+          "maxLength": 120,
+          "type": "string"
+        },
+        "signup_status": {
+          "enum": [
+            "active",
+            "inactive",
+            "archived"
+          ],
+          "format": "public.status",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "timestamp with time zone",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "series": {
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "title": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "employee_profiles": {
+      "required": [
+        "employee_id"
+      ],
+      "properties": {
+        "employee_id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>\nThis is a Foreign Key to `employees.id`.<fk table='employees' column='id'/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "bio": {
+          "format": "text",
+          "type": "string"
+        },
+        "avatar_url": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "all_nullable_readonly": {
+      "properties": {
+        "id": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "label": {
+          "format": "text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "people": {
+      "required": [
+        "id",
+        "full_name"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "full_name": {
+          "format": "text",
+          "type": "string"
+        },
+        "favorite_status": {
+          "enum": [
+            "active",
+            "inactive",
+            "archived"
+          ],
+          "format": "public.status",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "parameters": {
+    "preferParams": {
+      "name": "Prefer",
+      "description": "Preference",
+      "required": false,
+      "in": "header",
+      "type": "string"
+    },
+    "preferReturn": {
+      "name": "Prefer",
+      "description": "Preference",
+      "required": false,
+      "enum": [
+        "return=representation",
+        "return=minimal",
+        "return=none"
+      ],
+      "in": "header",
+      "type": "string"
+    },
+    "preferCount": {
+      "name": "Prefer",
+      "description": "Preference",
+      "required": false,
+      "enum": [
+        "count=none"
+      ],
+      "in": "header",
+      "type": "string"
+    },
+    "preferPost": {
+      "name": "Prefer",
+      "description": "Preference",
+      "required": false,
+      "enum": [
+        "return=representation",
+        "return=minimal",
+        "return=none",
+        "resolution=ignore-duplicates",
+        "resolution=merge-duplicates"
+      ],
+      "in": "header",
+      "type": "string"
+    },
+    "select": {
+      "name": "select",
+      "description": "Filtering Columns",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "on_conflict": {
+      "name": "on_conflict",
+      "description": "On Conflict",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "order": {
+      "name": "order",
+      "description": "Ordering",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "range": {
+      "name": "Range",
+      "description": "Limiting and Pagination",
+      "required": false,
+      "in": "header",
+      "type": "string"
+    },
+    "rangeUnit": {
+      "name": "Range-Unit",
+      "description": "Limiting and Pagination",
+      "required": false,
+      "default": "items",
+      "in": "header",
+      "type": "string"
+    },
+    "offset": {
+      "name": "offset",
+      "description": "Limiting and Pagination",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "limit": {
+      "name": "limit",
+      "description": "Limiting and Pagination",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.series_entries": {
+      "name": "series_entries",
+      "description": "series_entries",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/series_entries"
+      }
+    },
+    "rowFilter.series_entries.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.series_entries.series_id": {
+      "name": "series_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.series_entries.ordinal": {
+      "name": "ordinal",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.orders": {
+      "name": "orders",
+      "description": "orders",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/orders"
+      }
+    },
+    "rowFilter.orders.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.customer_id": {
+      "name": "customer_id",
+      "description": "The customer who placed the order.",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.order_status": {
+      "name": "order_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.placed_at": {
+      "name": "placed_at",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.subtotal": {
+      "name": "subtotal",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.tax": {
+      "name": "tax",
+      "description": "Sales tax.\n\nNote: computed upstream.",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.total": {
+      "name": "total",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.orders.tags": {
+      "name": "tags",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.awkward_names": {
+      "name": "awkward_names",
+      "description": "awkward_names",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/awkward_names"
+      }
+    },
+    "rowFilter.awkward_names.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.class": {
+      "name": "class",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.import": {
+      "name": "import",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.lambda": {
+      "name": "lambda",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.type": {
+      "name": "type",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.select": {
+      "name": "select",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.order": {
+      "name": "order",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.MixedCase": {
+      "name": "MixedCase",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.model_name": {
+      "name": "model_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.model_config": {
+      "name": "model_config",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.sum": {
+      "name": "sum",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.awkward_names.copyright": {
+      "name": "copyright",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.type_menagerie": {
+      "name": "type_menagerie",
+      "description": "type_menagerie",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/type_menagerie"
+      }
+    },
+    "rowFilter.type_menagerie.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_smallint": {
+      "name": "c_smallint",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_integer": {
+      "name": "c_integer",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_bigint": {
+      "name": "c_bigint",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_numeric": {
+      "name": "c_numeric",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_numeric_plain": {
+      "name": "c_numeric_plain",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_decimal": {
+      "name": "c_decimal",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_real": {
+      "name": "c_real",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_double": {
+      "name": "c_double",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_money": {
+      "name": "c_money",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_text": {
+      "name": "c_text",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_varchar": {
+      "name": "c_varchar",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_varchar_unbounded": {
+      "name": "c_varchar_unbounded",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_char": {
+      "name": "c_char",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_boolean": {
+      "name": "c_boolean",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_uuid": {
+      "name": "c_uuid",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_json": {
+      "name": "c_json",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_jsonb": {
+      "name": "c_jsonb",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_date": {
+      "name": "c_date",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_time": {
+      "name": "c_time",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_timetz": {
+      "name": "c_timetz",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_timestamp": {
+      "name": "c_timestamp",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_timestamptz": {
+      "name": "c_timestamptz",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_interval": {
+      "name": "c_interval",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_bytea": {
+      "name": "c_bytea",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_inet": {
+      "name": "c_inet",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_cidr": {
+      "name": "c_cidr",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_macaddr": {
+      "name": "c_macaddr",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_bit": {
+      "name": "c_bit",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_varbit": {
+      "name": "c_varbit",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_tsvector": {
+      "name": "c_tsvector",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_xml": {
+      "name": "c_xml",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_point": {
+      "name": "c_point",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_polygon": {
+      "name": "c_polygon",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_int_array": {
+      "name": "c_int_array",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_text_array": {
+      "name": "c_text_array",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_timestamptz_array": {
+      "name": "c_timestamptz_array",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_status": {
+      "name": "c_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_status_array": {
+      "name": "c_status_array",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_audit_status": {
+      "name": "c_audit_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_email": {
+      "name": "c_email",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.type_menagerie.c_percentage": {
+      "name": "c_percentage",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.ledger_summary": {
+      "name": "ledger_summary",
+      "description": "ledger_summary",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/ledger_summary"
+      }
+    },
+    "rowFilter.ledger_summary.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.ledger_summary.amount": {
+      "name": "amount",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.customers": {
+      "name": "customers",
+      "description": "customers",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/customers"
+      }
+    },
+    "rowFilter.customers.id": {
+      "name": "id",
+      "description": "Stable public identifier.",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.email": {
+      "name": "email",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.display_name": {
+      "name": "display_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.signup_status": {
+      "name": "signup_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.lifetime_value": {
+      "name": "lifetime_value",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.is_active": {
+      "name": "is_active",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.created_at": {
+      "name": "created_at",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.bio": {
+      "name": "bio",
+      "description": "A short profile blurb.",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customers.notes": {
+      "name": "notes",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.order_report": {
+      "name": "order_report",
+      "description": "order_report",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/order_report"
+      }
+    },
+    "rowFilter.order_report.order_id": {
+      "name": "order_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_report.customer_id": {
+      "name": "customer_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_report.customer_name": {
+      "name": "customer_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_report.order_status": {
+      "name": "order_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_report.total": {
+      "name": "total",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.mv_customer_spend": {
+      "name": "mv_customer_spend",
+      "description": "mv_customer_spend",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/mv_customer_spend"
+      }
+    },
+    "rowFilter.mv_customer_spend.customer_id": {
+      "name": "customer_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.mv_customer_spend.order_count": {
+      "name": "order_count",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.mv_customer_spend.total_spend": {
+      "name": "total_spend",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.partially_visible": {
+      "name": "partially_visible",
+      "description": "partially_visible",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/partially_visible"
+      }
+    },
+    "rowFilter.partially_visible.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.partially_visible.title": {
+      "name": "title",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.partially_visible.secret_body": {
+      "name": "secret_body",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.audit_links": {
+      "name": "audit_links",
+      "description": "audit_links",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/audit_links"
+      }
+    },
+    "rowFilter.audit_links.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.audit_links.event_id": {
+      "name": "event_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.audit_links.label": {
+      "name": "label",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.employees": {
+      "name": "employees",
+      "description": "employees",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/employees"
+      }
+    },
+    "rowFilter.employees.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.employees.manager_id": {
+      "name": "manager_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.employees.full_name": {
+      "name": "full_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.employees.work_email": {
+      "name": "work_email",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.bookings": {
+      "name": "bookings",
+      "description": "bookings",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/bookings"
+      }
+    },
+    "rowFilter.bookings.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.bookings.room_code": {
+      "name": "room_code",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.bookings.starts_at": {
+      "name": "starts_at",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.bookings.ends_at": {
+      "name": "ends_at",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.ledger_refs": {
+      "name": "ledger_refs",
+      "description": "ledger_refs",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/ledger_refs"
+      }
+    },
+    "rowFilter.ledger_refs.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.ledger_refs.ledger_id": {
+      "name": "ledger_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.ledger_refs.note": {
+      "name": "note",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.products": {
+      "name": "products",
+      "description": "products",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/products"
+      }
+    },
+    "rowFilter.products.sku": {
+      "name": "sku",
+      "description": "Vendor `SKU` (<= 32 chars).",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.products.region": {
+      "name": "region",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.products.name": {
+      "name": "name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.products.list_price": {
+      "name": "list_price",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.products.is_discontinued": {
+      "name": "is_discontinued",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.order_lines": {
+      "name": "order_lines",
+      "description": "order_lines",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/order_lines"
+      }
+    },
+    "rowFilter.order_lines.order_id": {
+      "name": "order_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_lines.product_sku": {
+      "name": "product_sku",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_lines.product_region": {
+      "name": "product_region",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.order_lines.quantity": {
+      "name": "quantity",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.rls_locked_notes": {
+      "name": "rls_locked_notes",
+      "description": "rls_locked_notes",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/rls_locked_notes"
+      }
+    },
+    "rowFilter.rls_locked_notes.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.rls_locked_notes.owner": {
+      "name": "owner",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.rls_locked_notes.content": {
+      "name": "content",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.writable_customer_view": {
+      "name": "writable_customer_view",
+      "description": "writable_customer_view",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/writable_customer_view"
+      }
+    },
+    "rowFilter.writable_customer_view.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.writable_customer_view.display_name": {
+      "name": "display_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.writable_customer_view.is_active": {
+      "name": "is_active",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.person_notes": {
+      "name": "person_notes",
+      "description": "person_notes",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/person_notes"
+      }
+    },
+    "rowFilter.person_notes.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.person_notes.person_id": {
+      "name": "person_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.person_notes.body": {
+      "name": "body",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.tags": {
+      "name": "tags",
+      "description": "tags",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/tags"
+      }
+    },
+    "rowFilter.tags.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.tags.label": {
+      "name": "label",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.tags.slug": {
+      "name": "slug",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.customer_tags": {
+      "name": "customer_tags",
+      "description": "customer_tags",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/customer_tags"
+      }
+    },
+    "rowFilter.customer_tags.customer_id": {
+      "name": "customer_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.customer_tags.tag_id": {
+      "name": "tag_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.rls_open_notes": {
+      "name": "rls_open_notes",
+      "description": "rls_open_notes",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/rls_open_notes"
+      }
+    },
+    "rowFilter.rls_open_notes.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.rls_open_notes.content": {
+      "name": "content",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.active_customers": {
+      "name": "active_customers",
+      "description": "active_customers",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/active_customers"
+      }
+    },
+    "rowFilter.active_customers.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.active_customers.email": {
+      "name": "email",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.active_customers.display_name": {
+      "name": "display_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.active_customers.signup_status": {
+      "name": "signup_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.active_customers.created_at": {
+      "name": "created_at",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.series": {
+      "name": "series",
+      "description": "series",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/series"
+      }
+    },
+    "rowFilter.series.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.series.title": {
+      "name": "title",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.employee_profiles": {
+      "name": "employee_profiles",
+      "description": "employee_profiles",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/employee_profiles"
+      }
+    },
+    "rowFilter.employee_profiles.employee_id": {
+      "name": "employee_id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.employee_profiles.bio": {
+      "name": "bio",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.employee_profiles.avatar_url": {
+      "name": "avatar_url",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.all_nullable_readonly": {
+      "name": "all_nullable_readonly",
+      "description": "all_nullable_readonly",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/all_nullable_readonly"
+      }
+    },
+    "rowFilter.all_nullable_readonly.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.all_nullable_readonly.label": {
+      "name": "label",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "body.people": {
+      "name": "people",
+      "description": "people",
+      "required": false,
+      "in": "body",
+      "schema": {
+        "$ref": "#/definitions/people"
+      }
+    },
+    "rowFilter.people.id": {
+      "name": "id",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.people.full_name": {
+      "name": "full_name",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    },
+    "rowFilter.people.favorite_status": {
+      "name": "favorite_status",
+      "required": false,
+      "in": "query",
+      "type": "string"
+    }
+  },
+  "externalDocs": {
+    "description": "PostgREST Documentation",
+    "url": "https://postgrest.org/en/v14/references/api.html"
+  }
+}

@@ -19,7 +19,10 @@ Reading guide for the three kinds of assertion in this file:
 """
 
 import re
-from collections.abc import Mapping
+import sys
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -75,6 +78,40 @@ def _emit(schema: Schema) -> str:
     files = PydanticEmitter(EmitterConfig()).emit(schema)
     assert [f.path for f in files] == ['schema.py']
     return files[0].content
+
+
+@contextmanager
+def _executed(schema: Schema) -> Iterator[ModuleType]:
+    """Execute ``schema``'s emitted module the way importing the written file does.
+
+    ⚠ **The** ``sys.modules`` **registration is load-bearing, not bookkeeping.** The emitted module
+    opens with ``from __future__ import annotations``, so every annotation is a string that pydantic
+    resolves lazily — by looking up ``cls.__module__`` in ``sys.modules``. Executing into a bare
+    ``dict`` (which is what this suite did while the proof ran on ``inventory``) leaves nothing to
+    look up, so the first model carrying a deferred name fails at **instantiation**::
+
+        PydanticUserError: `CustomersInsert` is not fully defined; you should define `UUID4`,
+        then call `CustomersInsert.model_rebuild()`
+
+    That is an artifact of the harness, not a defect in the output — a user writes ``schema.py`` to
+    disk and imports it, which registers it — but it is why the bare-dict harness could not be
+    pointed at ``public`` unchanged. It passed on ``inventory`` only because two small tables
+    happen to use no type that defers (measured: ``UUID4`` is imported by the module and still
+    unresolvable without the registration). Mirrors ``tests/unit/cli/test_gen.py``'s exec harness.
+
+    Args:
+        schema: The IR to emit and execute.
+
+    Yields:
+        The executed module, with the generated classes as attributes.
+    """
+    module = ModuleType('castiron_live_generated')
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(_emit(schema), 'schema.py', 'exec'), module.__dict__)  # noqa: S102 - the proof
+        yield module
+    finally:
+        del sys.modules[module.__name__]
 
 
 class TestEnvelope:
@@ -877,14 +914,67 @@ class TestEmitterEndToEnd:
         refetched = build_schema_from_document(live_document_refetch('public'), schema='public')
         assert _emit(refetched) == _emit(live_public_schema)
 
-    def test_a_generated_module_executes_and_its_models_instantiate(self, live_inventory_schema: Schema) -> None:
-        namespace: dict[str, Any] = {}
+    def test_a_generated_module_executes_and_its_models_instantiate(self, live_public_schema: Schema) -> None:
         # exec() is the point: "the generated module imports and its models instantiate" is the
         # Phase-0 exit criterion, and nothing short of executing the text proves it.
-        exec(compile(_emit(live_inventory_schema), 'schema.py', 'exec'), namespace)
-        region = namespace['Regions'](code='NA', name='North America')
-        assert (region.code, region.name) == ('NA', 'North America')
-        assert namespace['CurrenciesInsert'](code='USD', symbol='$').minor_units is None
+        #
+        # ⚠ Runs against `public` (26 tables, 119 classes), NOT `inventory` (2 tables). It used to
+        # use `inventory` only because `public` did not compile when this was written -- CI-009
+        # fixed that, so the exit criterion is no longer demonstrated on a toy schema (CI-089).
+        # The two shapes that make `public` a real exercise are asserted in the two tests below.
+        with _executed(live_public_schema) as module:
+            # Insert model: only the genuinely required columns, everything defaulted omitted.
+            customer = module.CustomersInsert(email='ada@example.com', display_name='Ada')
+            assert (customer.email, customer.display_name) == ('ada@example.com', 'Ada')
+            assert customer.signup_status is None  # a DB default -> optional on Insert
+            # Row model: every NOT NULL column, and the enum column coerces to the enum class
+            # rather than staying a bare string.
+            row = module.Customers(
+                id='0e5b1a3e-1f4d-4a1a-9a3e-2b7c8d9e0f11',
+                email='ada@example.com',
+                display_name='Ada',
+                signup_status='active',
+                lifetime_value=0,
+                is_active=True,
+                created_at='2026-01-01T00:00:00Z',
+            )
+            assert row.signup_status is module.PublicStatusEnum.ACTIVE
+
+    def test_a_column_that_shadows_a_basemodel_attribute_is_renamed_and_aliased(
+        self, live_public_schema: Schema
+    ) -> None:
+        # Hazard 1 of the exec proof, asserted rather than merely survived (CI6-Q7): a field
+        # literally named `model_config` raises PydanticUserError when the class body RUNS -- it
+        # compiles clean. `awkward_names` carries `model_config` and `model_name`, so this is the
+        # shape that makes `test_..._executes_and_its_models_instantiate` above a real exercise. A
+        # regression that dropped the rename would fail there with no explanation; it fails here
+        # with one. The alias is what keeps the wire format the real column name.
+        with _executed(live_public_schema) as module:
+            fields = module.AwkwardNamesInsert.model_fields
+            assert {name: fields[name].alias for name in ('field_model_config', 'field_model_name')} == {
+                'field_model_config': 'model_config',
+                'field_model_name': 'model_name',
+            }
+            populated = module.AwkwardNamesInsert.model_validate({'id': 1, 'model_config': 'x', 'model_name': 'y'})
+            assert (populated.field_model_config, populated.field_model_name) == ('x', 'y')
+
+    def test_the_two_same_named_enums_emit_two_distinct_classes(self, live_public_schema: Schema) -> None:
+        # Hazard 2, and the end-to-end form of TestEnumCollision above: `public.status` and
+        # `audit.status` share a bare name in one document. If they collapsed to one class, or if a
+        # column's annotation named a class that was never emitted, the module would still COMPILE
+        # and fail (or silently mistype a column) at exec. This is CI-005's cross-schema
+        # `_match_enum` fix holding against the real apparatus -- the bug that once handed
+        # `audit.status`'s labels to `public.status`, rejecting a valid value and accepting an
+        # invalid one.
+        with _executed(live_public_schema) as module:
+            assert module.PublicStatusEnum is not module.AuditStatusEnum
+            assert [member.value for member in module.PublicStatusEnum] == ['active', 'inactive', 'archived']
+            assert [member.value for member in module.AuditStatusEnum] == ['ok', 'warn', 'error']
+            # ...and each column's annotation resolves to its OWN class, which is the assertion a
+            # bare exec cannot make.
+            annotations = module.TypeMenagerie.model_fields
+            assert annotations['c_status'].annotation == (module.PublicStatusEnum | None)
+            assert annotations['c_audit_status'].annotation == (module.AuditStatusEnum | None)
 
     def test_the_public_schema_emits_a_module_that_parses(self, live_public_schema: Schema) -> None:
         # Carried `xfail(strict=False)` for CI9-Q1 until CI-089: `_py_string()` did not escape

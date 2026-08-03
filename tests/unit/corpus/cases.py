@@ -256,16 +256,6 @@ KNOWN_DEFECTS: dict[str, Defect] = {
             'as evidence about PostgREST.'
         ),
     ),
-    'CI-080': Defect(
-        row_id='CI-080',
-        summary='Enum LABELS are not identifier-safe, so castiron emits unparseable Python.',
-        why_it_is_wrong=(
-            'python_member_name is value.lower(), so a label containing a space, a slash or a '
-            'leading digit becomes an invalid Python identifier on the LEFT-hand side of an enum '
-            'member. Correct output transforms the label into a safe identifier and applies a '
-            'collision rule, because two labels can normalize to the same member name.'
-        ),
-    ),
     'CI-084': Defect(
         row_id='CI-084',
         summary='A dangling FK marker yields is_foreign_key=True with an empty foreign_keys list.',
@@ -428,7 +418,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=SourceOptions(),
         emitter_config=EmitterConfig(),
         status='characterized',
-        defects=('CI-080', 'CI-085'),
+        defects=('CI-085',),
         # ⚠ Deliberately False. castiron emits a module that does not parse, and the corpus
         # asserts that EXACTLY -- so the day it starts parsing, this goes red and names the rows.
         compiles=False,

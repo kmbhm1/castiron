@@ -13,7 +13,7 @@ from pydantic import UUID4, BaseModel, Field, Json, StringConstraints
 class PublicUserStatusEnum(str, Enum):
     ACTIVE = "active"
     PENDING = "pending"
-    IMPORT_ = "import"  # original name was import (reserved keyword)
+    IMPORT_ = "import"  # original name was "import" (reserved keyword)
 
 
 # CUSTOM CLASSES

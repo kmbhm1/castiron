@@ -1,15 +1,24 @@
 """Python-identifier naming helpers for emitters.
 
-Ports supabase-pydantic's ``to_pascal_case`` and ``EnumInfo.python_class_name`` /
-``python_member_name`` (moved off the IR onto this row per CI-003 D8), plus thin
-``pluralize`` / ``singularize`` wrappers over ``inflection``. Keeping ``inflection``
-behind a single call site here isolates the runtime dependency (eases a future move to
-an optional extra).
+Ports supabase-pydantic's ``to_pascal_case`` and ``EnumInfo.python_class_name`` (moved off
+the IR onto this row per CI-003 D8), plus thin ``pluralize`` / ``singularize`` wrappers over
+``inflection``. Keeping ``inflection`` behind a single call site here isolates the runtime
+dependency (eases a future move to an optional extra).
+
+⚠ **Enum member naming is deliberately NOT a port.** upstream's ``python_member_name`` is
+``value.lower()`` (``supabase_pydantic/core/models.py:42-46``), which is not identifier-safe:
+``CREATE TYPE t AS ENUM ('in progress')`` emitted ``IN PROGRESS = "in progress"`` and the whole
+module failed to parse, at exit 0. There is no upstream design to port, so :func:`python_member_names`
+below is castiron's own (CI-080).
 """
+
+import unicodedata
+from dataclasses import dataclass
 
 import inflection
 
 from castiron.ir import EnumInfo
+from castiron.ir.build import column_name_reserved_exceptions, string_is_reserved
 
 
 def to_pascal_case(value: str) -> str:
@@ -54,18 +63,118 @@ def python_class_name(enum: EnumInfo) -> str:
     return f'{enum.schema.capitalize()}{class_name}'
 
 
-def python_member_name(value: str) -> str:
-    """Return the lowercased base member name for an enum value.
+@dataclass(frozen=True)
+class EnumMember:
+    """One emitted enum member: the schema's label and the identifier castiron derives from it.
 
-    The emitter uppercases and reserved-name-guards this before emitting.
+    Attributes:
+        label: The Postgres enum label, verbatim. This is the ground truth, and it is what the
+            emitted value literal carries -- so the transform below is never lossy, however much
+            it mangles the name.
+        name: The Python identifier. Guaranteed ``name.isidentifier()``, and guaranteed unique
+            within one :func:`python_member_names` call **after NFKC normalization**.
+        note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved keyword'`` or
+            ``'name collision'`` -- or ``None`` when it is. When both apply (labels ``['import_',
+            'import']``, where the second is renamed twice), the **collision** wins: it is what
+            explains the trailing ``_2`` a reader is looking at, and the reserved suffix is
+            already visible next to the value literal on the same line.
+    """
+
+    label: str
+    name: str
+    note: str | None = None
+
+
+def _identifier_characters(label: str) -> str:
+    """Map ``label`` to identifier-legal characters, one character out per character in.
+
+    ``('_' + c).isidentifier()`` is the exact test for "Python allows ``c`` inside an
+    identifier", and it is the reason a leading digit still needs :func:`python_member_names`'
+    separate guard: ``'_2'`` is an identifier, ``'2'`` is not.
+
+    ⚠ Unicode identifier characters are **kept**, not folded to ASCII (``CI94-D2``, confirmed by
+    the captain): ``'Ünïcödé'`` becomes ``ÜNÏCÖDÉ`` rather than ``________``. Destroying an
+    international label to satisfy a non-default lint rule (``PLC2401``) is the worse trade.
+
+    No run-collapsing and no stripping: ``'a  b'`` and ``'a b'`` must stay *distinguishable
+    attempts*, and the collision rule -- not this function -- is what resolves them when they are
+    not.
+    """
+    return ''.join(c if ('_' + c).isidentifier() else '_' for c in label)
+
+
+def python_member_names(enum: EnumInfo) -> list[EnumMember]:
+    """Derive one unique, valid Python identifier per label, in ``enum.values`` order.
+
+    Takes the IR's :class:`~castiron.ir.EnumInfo` (Hard Rule #6 -- it already carries the ordered
+    labels; there is no second enum shape) and returns one entry per label, **positionally
+    aligned with** ``enum.values``. Nothing is ever dropped or merged: a label that cannot keep
+    its natural name gets a suffixed one, and its value literal still carries the label exactly.
+
+    The algorithm, in this order. **The order is load-bearing.**
+
+    1. Map every character to an identifier-legal one (:func:`_identifier_characters`).
+    2. Uppercase, which is what keeps ``PENDING``/``ACTIVE``/``OK`` byte-identical to what
+       castiron has always emitted.
+    3. Empty guard -- ``CREATE TYPE t AS ENUM ('')`` is legal Postgres; it becomes ``_``.
+    4. Leading-digit guard -- ``'2nd pass'`` becomes ``_2ND_PASS``. A single leading underscore is
+       not ``_sunder_``, not dunder and not name-mangled, so ``E._2ND_PASS`` is addressable.
+    5. Reserved guard, **carried over verbatim from the emitter** (see the note below).
+    6. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate.
+
+    ⚠ **Step 6 must key on the NFKC form, and this is not pedantry** (``CI94-Q1``, ruled). Python
+    NFKC-normalizes identifiers at compile time, so two distinct strings can be one binding:
+    ``ﬁ = 1; fi = 2`` leaves a single name worth ``2``. ``str.isidentifier()`` does not catch it
+    (``'ﬁ'.isidentifier()`` is ``True``) and ``str.upper()`` performs the same folding
+    (``'ﬁ'.upper() == 'FI'``, ``'ß'.upper() == 'SS'``). A raw uniqueness check would emit a module
+    that raises ``TypeError`` at **import** -- CI-080's own failure mode in a new costume.
+
+    ⚠ **Step 5 is ``string_is_reserved(...) or column_name_reserved_exceptions(...)``, byte-for-byte
+    as the emitter had it, and that ``or`` is KNOWN-WRONG.** The exceptions list exists to *exempt*
+    names from renaming (``ir/build.py``'s ``standardize_column_name`` reads it as ``and not``),
+    so the enum path treats an exemption as an addition and an enum label ``id`` emits
+    ``ID_ = "id"  # original name was "id" (reserved keyword)`` -- a comment stating the opposite
+    of the truth. It is filed as **CI-100** (``CI94-Q4``) and is deliberately **left visible**:
+    this row is identifier safety, and quietly correcting an unrelated logic error inside it is
+    the ``CI-074`` trap. Do not "tidy" it here.
+
+    Determinism (Hard Rule #9): the result is a pure function of the ordered ``enum.values``
+    list. That order is contractual (pg's ``enumsortorder``, preserved end to end by the OpenAPI
+    source). No set iteration and no dict ordering reaches the output; the collision counter walks
+    ``2, 3, 4, …`` deterministically.
 
     Args:
-        value: The raw enum value, e.g. ``'Pending_New'``.
+        enum: The enum whose members to name.
 
     Returns:
-        The lowercased base name, e.g. ``'pending_new'``.
+        One :class:`EnumMember` per label, in ``enum.values`` order.
     """
-    return value.lower()
+    used: set[str] = set()
+    members: list[EnumMember] = []
+
+    for label in enum.values:
+        name = _identifier_characters(label).upper()
+        if not name:
+            name = '_'
+        if not name.isidentifier():
+            name = f'_{name}'
+
+        note: str | None = None
+        if string_is_reserved(name.lower()) or column_name_reserved_exceptions(name.lower()):
+            name = f'{name}_'
+            note = 'reserved keyword'
+
+        candidate = name
+        ordinal = 1
+        while unicodedata.normalize('NFKC', candidate) in used:
+            ordinal += 1
+            candidate = f'{name}_{ordinal}'
+            note = 'name collision'
+
+        used.add(unicodedata.normalize('NFKC', candidate))
+        members.append(EnumMember(label=label, name=candidate, note=note))
+
+    return members
 
 
 def pluralize(word: str) -> str:

@@ -9,6 +9,7 @@ from castiron.emitters import EmittedFile, EmitterConfig, PydanticEmitter
 from castiron.emitters.pydantic.emitter import IND
 from castiron.ir import (
     ColumnInfo,
+    EnumInfo,
     ForeignKeyInfo,
     RelationshipInfo,
     RelationType,
@@ -16,6 +17,7 @@ from castiron.ir import (
     TableInfo,
     build_schema,
 )
+from castiron.sources.openapi import build_schema_from_document
 
 Row = tuple[object, ...]
 GOLDEN = Path(__file__).parent / 'golden' / 'schema.py.txt'
@@ -214,9 +216,14 @@ class TestFidelity:
         assert 'flags: list[PublicUserStatusEnum] | None' in _emit(representative_schema)
 
     def test_enum_member_reserved_keyword_suffixed(self, representative_schema: Schema) -> None:
+        # ⚠ The label in the comment is now rendered through `_py_string`, so it reads
+        # `"import"` and not `import`. That is `CI94-D3`, and it is the ONLY reason this
+        # assertion moved -- the member name, the value literal and the note text are unchanged.
+        # It is not cosmetic: see TestCi080TheCommentIsTotalOverItsInput below for a label that
+        # reaches this exact line carrying newlines.
         out = _emit(representative_schema)
         assert 'ACTIVE = "active"' in out
-        assert 'IMPORT_ = "import"  # original name was import (reserved keyword)' in out
+        assert 'IMPORT_ = "import"  # original name was "import" (reserved keyword)' in out
 
     def test_string_constraints(self, representative_schema: Schema) -> None:
         out = _emit(representative_schema)
@@ -769,13 +776,16 @@ class TestPyStringLiteral:
     def test_any_enum_label_renders_a_valid_value_literal(self, text: str, build_columns: Callable[..., Row]) -> None:
         """The other reachable ``_py_string`` call site: an enum member's *value*.
 
-        ⚠ This asserts only the right-hand side of the member line. It deliberately does
-        **not** assert that the module compiles, because the member *name* is derived
-        separately by ``python_member_name`` (``value.lower()``), which is not
-        identifier-safe: ``CREATE TYPE mood AS ENUM ('in progress')`` emits
-        ``IN PROGRESS = "in progress"``. That is a pre-existing defect on ``main`` @
-        ``026af0f``, independent of this helper and out of scope for CI-009 -- filed, not
-        fixed, and deliberately not pinned here as if it were correct.
+        The value literal (the right-hand side) is ``CI9-Q1``'s; the member *name* (the left-hand
+        side) is ``CI-080``'s. This test asserted only the former and **explicitly declined** to
+        assert that the module compiles, because ``python_member_name`` was ``value.lower()`` and
+        ``CREATE TYPE mood AS ENUM ('in progress')`` emitted ``IN PROGRESS = "in progress"``. That
+        developer was right not to pin a live defect as correct (``CI-074``).
+
+        CI-080 is now **fixed**, so the split is *asserted* rather than tolerated: the value
+        literal is still exactly the label, **and** the module now parses. Keeping both halves in
+        one test is what stops a future change from trading one for the other -- a name transform
+        that also "helpfully" normalized the value would satisfy either assertion alone.
         """
         from castiron.emitters.pydantic.emitter import _py_string
 
@@ -785,8 +795,31 @@ class TestPyStringLiteral:
         out = _emit(build_schema(columns, [], [], enum_types, enum_mapping))
 
         literal = _py_string(text)
-        assert f'= {literal}\n' in out
+        assert f'= {literal}' in out
         assert ast.literal_eval(literal) == text
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
+    def test_any_enum_label_yields_an_addressable_member(self, text: str, build_columns: Callable[..., Row]) -> None:
+        """Parsing is not enough -- ``ﬁ``/``fi`` parse fine and raise ``TypeError`` at *import*.
+
+        So the module is actually **executed** here and the enum class looked up by value. A
+        ``compile()``-only assertion would pass on a module whose two members collapse to one
+        binding, which is the exact hole ``CI94-Q1``'s NFKC ruling exists to close.
+        """
+        columns = [build_columns('t', 'status', 'USER-DEFINED', udt_name='mood')]
+        enum_types = [('mood', 'public', 'owner', 'E', True, 'e', [text, 'other'])]
+        enum_mapping = [('status', 't', 'public', 'mood', 'E', '')]
+        out = _emit(build_schema(columns, [], [], enum_types, enum_mapping))
+
+        namespace: dict[str, object] = {}
+        exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - executing our own output IS the assertion
+        enum_class = namespace['PublicMoodEnum']
+        assert enum_class(text).value == text  # type: ignore[operator]  # a runtime Enum lookup
+        assert enum_class('other').value == 'other'  # type: ignore[operator]
+        assert len(list(enum_class)) == 2, 'a label was dropped or two members collapsed into one'  # type: ignore[call-overload]
 
     @pytest.mark.parametrize('text', ADVERSARIAL_TEXT)
     def test_any_column_alias_emits_parseable_python(self, text: str) -> None:
@@ -1292,3 +1325,130 @@ class TestNulByte:
         rendered = _py_string(f'a{self.NUL}b')
         assert self.NUL not in rendered
         assert ast.literal_eval(rendered) == f'a{self.NUL}b'
+
+
+@pytest.mark.unit
+class TestCi080TheReproducerNowCompiles:
+    """The CI-080 WORKPLAN reproducer, end to end through the real OpenAPI source.
+
+    On ``main``, ``castiron gen`` on this document exited **0**, printed ``wrote .../schema.py``
+    and emitted a module whose every model was unreachable::
+
+        class PublicJobStateEnum(str, Enum):
+            IN PROGRESS = "in progress"
+            DONE! = "done!"
+            2FAST = "2fast"          # SyntaxError: invalid decimal literal
+
+    Exit 0 is what made it a release blocker rather than a bug: a ``check``-mode user would have
+    seen green. Driven from the document rather than from a hand-built ``Schema`` so the whole
+    path -- parse, build, emit -- is the thing under test.
+    """
+
+    LABELS = ['in progress', 'done!', '2fast']
+
+    @pytest.fixture
+    def emitted(self) -> str:
+        document = {
+            'swagger': '2.0',
+            'info': {'title': 'ci-080', 'version': '0'},
+            'paths': {'/jobs': {'get': {}, 'post': {}}},
+            'definitions': {
+                'jobs': {
+                    'type': 'object',
+                    'required': ['id', 'state'],
+                    'properties': {
+                        'id': {
+                            'description': 'Note:\nThis is a Primary Key.<pk/>',
+                            'format': 'int32',
+                            'type': 'integer',
+                        },
+                        'state': {'enum': self.LABELS, 'format': 'public.job_state', 'type': 'string'},
+                    },
+                }
+            },
+        }
+        return _emit(build_schema_from_document(document))
+
+    def test_the_module_parses(self, emitted: str) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(emitted, '<generated>', 'exec')
+
+    def test_the_module_imports_and_every_label_round_trips(self, emitted: str) -> None:
+        # ⚠ Deliberately an execution, not a parse. `py_compile` cannot see a duplicate member
+        # name -- that raises `TypeError` when the class body runs.
+        namespace: dict[str, object] = {}
+        exec(compile(emitted, '<generated>', 'exec'), namespace)  # noqa: S102 - executing our own output IS the assertion
+        enum_class = namespace['PublicJobStateEnum']
+        assert [m.name for m in enum_class] == ['IN_PROGRESS', 'DONE_', '_2FAST']  # type: ignore[union-attr]
+        for label in self.LABELS:
+            assert enum_class(label).value == label  # type: ignore[operator]
+
+    def test_a_leading_underscore_member_is_addressable(self, emitted: str) -> None:
+        # `_2FAST` is not `_sunder_`, not dunder and not name-mangled -- but the whole fix rests
+        # on that, so it is asserted on the interpreter running the test rather than assumed.
+        namespace: dict[str, object] = {}
+        exec(compile(emitted, '<generated>', 'exec'), namespace)  # noqa: S102 - see above
+        enum_class = namespace['PublicJobStateEnum']
+        assert enum_class._2FAST.value == '2fast'  # type: ignore[union-attr]
+
+
+@pytest.mark.unit
+class TestCi080TheCommentIsTotalOverItsInput:
+    """``CI94-D3``: the label inside the ``#`` comment goes through ``_py_string`` too.
+
+    The CI-094 spec called this unreachable-but-correct. **It is reachable**, and only *because*
+    of the CI-080 fix: the reserved guard now reads the sanitized name, and ``dir(builtins)``
+    contains ``__doc__``. So a label of two newlines, ``doc``, two newlines maps to ``__DOC__``,
+    whose ``.lower()`` is a reserved name -- and the raw label would split the comment across
+    three lines and break the module. CI-009's standing lesson: a renderer that injects user text
+    into generated source must be total over its input domain, not over its best-behaved caller.
+    """
+
+    @staticmethod
+    def _module(labels: list[str]) -> str:
+        table = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='c', raw_type='USER-DEFINED', is_nullable=True)],
+        )
+        return _emit(Schema(tables=[table], enums=[EnumInfo(name='mood', values=labels, schema='public')]))
+
+    def test_a_newline_bearing_label_reaches_the_reserved_comment(self) -> None:
+        from castiron.utils.naming import python_member_names
+
+        members = python_member_names(EnumInfo(name='mood', values=['\n\ndoc\n\n'], schema='public'))
+        assert members[0].note == 'reserved keyword', 'the premise: this label IS reserved after sanitizing'
+        out = self._module(['\n\ndoc\n\n'])
+        assert '# original name was "\\n\\ndoc\\n\\n" (reserved keyword)' in out
+        compile(out, '<generated>', 'exec')
+
+    def test_a_newline_bearing_label_reaches_the_collision_comment(self) -> None:
+        # The more direct route, and it needs no builtin at all: two labels that sanitize alike,
+        # with the newline-bearing one SECOND so it is the one that carries a note.
+        out = self._module(['a_b', 'a\nb'])
+        assert '# original name was "a\\nb" (name collision)' in out
+        compile(out, '<generated>', 'exec')
+
+    @pytest.mark.parametrize('label', ADVERSARIAL_TEXT)
+    def test_no_adversarial_label_can_break_a_comment(self, label: str) -> None:
+        # Enumerated over the same 23 shapes the value-literal path uses. `'x' * 400` is in there,
+        # so the comment is also proved not to need wrapping. The middle label is the one forced
+        # through the collision path, between two labels that both sanitize to `A_B`.
+        labels = ['a_b', label, 'a b']
+        out = self._module(labels)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            compile(out, '<generated>', 'exec')
+
+        # ⚠ The assertion that actually detects a split comment: ONE line per member, so a label
+        # that leaked a newline into the `#` comment shows up as an extra line even in the cases
+        # where the result still happens to parse.
+        #
+        # ⚠ `split('\n')`, NOT `splitlines()`. They disagree, and the disagreement is the point:
+        # `str.splitlines()` also breaks on U+2028/U+2029/U+000B/U+000C, which CPython's
+        # *tokenizer* does not treat as line terminators -- and `ADVERSARIAL_TEXT` carries
+        # `'a b'` precisely because it is that kind of trap. A comment is terminated by a
+        # source line break, so the source's own delimiter is the one to count. (`_py_string`
+        # already escapes `\r` and `\n`, which are the two that would really end a line.)
+        body = out.split('class PublicMoodEnum(str, Enum):\n')[1].split('\n\n\n')[0]
+        assert len(body.split('\n')) == len(labels), body

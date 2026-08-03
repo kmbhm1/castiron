@@ -351,33 +351,9 @@ class TestCi076FictionalForeignKeyTarget:
 
 
 # ---------------------------------------------------------------------------
-# CI-080 / CI-085 — two defects, two call sites, one symptom.
+# CI-085 — the column-name half. CI-080 (the enum-member half) is FIXED; see below for why
+# fixing one and not the other is the proof that they really were two defects (CI94-D7).
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestCi080EnumLabelsAreNotIdentifierSafe:
-    def test_the_enum_member_names_are_not_valid_python(self, case_modules: dict[str, str]) -> None:
-        module = _module('synthetic-torture-default', case_modules)
-        offenders = [line.strip() for line in module.splitlines() if ' = "' in line and not line.startswith(' ' * 8)]
-        illegal = [line for line in offenders if not line.split(' = ')[0].isidentifier()]
-        assert illegal, witness_failed(
-            'CI-080',
-            'synthetic-torture/default.py.txt',
-            'the emitted enum carries members whose NAMES are not identifiers -- '
-            'IN PROGRESS = "in progress", N/A = "n/a", 2ND PASS = "2nd pass".',
-            fixed_action=FIX_ACTION,
-        )
-        assert 'IN PROGRESS = "in progress"' in module
-        assert 'N/A = "n/a"' in module
-
-    def test_the_value_literals_are_correct_even_though_the_names_are_not(self, case_modules: dict[str, str]) -> None:
-        # The counter-witness, and it matters: CI9-Q1 fixed the VALUE literal (the right-hand
-        # side) and CI-080 is the MEMBER NAME (the left-hand side). Asserting the values are
-        # right is what proves this witness is about CI-080 and not a relapse of CI9-Q1.
-        module = _module('synthetic-torture-default', case_modules)
-        for label in ('in progress', 'done', 'n/a', '2nd pass'):
-            assert f'= "{label}"' in module, f'the enum VALUE {label!r} is wrong, which would be a CI9-Q1 relapse'
 
 
 @pytest.mark.unit
@@ -413,14 +389,25 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
         assert '    ok_column: str | None = Field(default=None)' in _module('synthetic-torture-default', case_modules)
 
     def test_ci_080_and_ci_085_are_distinct_defects(self, case_modules: dict[str, str]) -> None:
-        # CI-085's WORKPLAN row asks whether it is the same defect as CI-080. Measured here: it is
-        # not. The two live at different call sites and are visible independently -- the enum
-        # module below has NO hostile column, and the column table has NO enum.
+        # CI-085's WORKPLAN row asked whether it is the same defect as CI-080. It is not (CI7-Q4,
+        # re-confirmed as CI94-D7), and this document is now the *demonstration* rather than the
+        # argument: ONE of the two was fixed and the other was not, in the same module.
         module = _module('synthetic-torture-default', case_modules)
         enum_block = module[module.index('class PublicTaskStateEnum') : module.index('# CUSTOM CLASSES')]
-        assert '2fast' not in enum_block, 'the CI-080 witness must be independent of the CI-085 one'
         columns_block = _class_body(module, 'HostileColumnsBaseSchema')
+
+        # They are visible independently: neither block contains the other's evidence.
+        assert '2fast' not in enum_block, 'the CI-080 evidence must be independent of the CI-085 one'
         assert 'TaskState' not in columns_block, 'the CI-085 witness must be independent of the CI-080 one'
+
+        # CI-080 is FIXED -- every enum member name in that block is now a valid identifier ...
+        member_names = [line.split(' = ')[0].strip() for line in enum_block.splitlines() if ' = "' in line]
+        assert member_names == ['IN_PROGRESS', 'DONE', 'N_A', '_2ND_PASS']
+        assert all(name.isidentifier() for name in member_names)
+
+        # ... and the module STILL does not parse, because CI-085 is a different call site.
+        # If these two were one defect, that would be impossible.
+        assert not module_compiles(module)
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +465,7 @@ class TestSyntheticTortureCoversWhatNothingElseDoes:
     def test_the_synthetic_input_is_the_only_source_of_ci_080_and_ci_085(self) -> None:
         from tests.unit.corpus.cases import CASES
 
-        for row_id in ('CI-080', 'CI-085'):
+        for row_id in ('CI-085',):
             carriers = {case.family.family_id for case in CASES if row_id in case.defects}
             assert carriers == {SYNTHETIC_TORTURE.family_id}, (
                 f'{row_id} is now carried by {carriers}. If a capture grew the shape, update this '

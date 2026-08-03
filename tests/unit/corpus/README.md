@@ -13,12 +13,20 @@ in this directory, and an autouse fixture in `conftest.py` makes any socket call
 ```
 inputs/     the source documents, plus a *.provenance.json per document
 golden/     the IR (ir.json) and emitted-module (*.py.txt) goldens
-manifest/   one fingerprint manifest per input, 128 rows -- the full config product
+fingerprints/  one fingerprint manifest per input, 128 rows -- the full config product
 cases.py    the case table, KNOWN_DEFECTS, and the config-axis derivation
 pipeline.py the ONE definition of each artifact's bytes (used by the tests AND the tool)
 compare.py  assert_golden() -- a golden failure that a reader can act on
 regenerate.py  the regeneration entry point (writes nothing by default)
 ```
+
+> ⚠ The fingerprint directory is `fingerprints/`, **not** `manifest/`, and that is deliberate.
+> The repository's `.gitignore` carries a `MANIFEST` line (the distutils artifact). Git matches
+> ignore patterns case-**insensitively** on a case-insensitive filesystem, so on macOS
+> `MANIFEST` silently shadows a directory named `manifest/` — the files are untracked, `git add`
+> skips them and `git status` never mentions them — while on Linux CI it does not match at all.
+> A corpus half of whose artifacts are invisible on one platform is worse than no corpus, so the
+> directory is named to avoid the collision rather than relying on everyone's filesystem.
 
 ## A golden is not an endorsement
 

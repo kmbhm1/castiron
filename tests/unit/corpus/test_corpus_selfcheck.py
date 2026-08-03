@@ -25,12 +25,12 @@ from tests.unit.corpus.cases import (
     CASES,
     EXPECTED_CASE_COUNT,
     FAMILIES,
+    FINGERPRINT_DIR,
     GOLDEN_DIR,
     INPUTS_DIR,
     KNOWN_DEFECTS,
-    MANIFEST_DIR,
     CorpusCase,
-    manifest_path,
+    fingerprint_path,
 )
 from tests.unit.corpus.conftest import case_ids, iter_cases
 from tests.unit.corpus.pipeline import sha256_text
@@ -70,7 +70,7 @@ class TestTheCorpusIsNotEmpty:
 class TestEveryDeclaredArtifactExists:
     @pytest.mark.parametrize('case', iter_cases(), ids=case_ids())
     def test_the_cases_artifacts_are_present_and_non_empty(self, case: CorpusCase) -> None:
-        expected = [case.family.input_path, case.golden_ir, manifest_path(case.family)]
+        expected = [case.family.input_path, case.golden_ir, fingerprint_path(case.family)]
         if case.golden_module is not None:
             expected.append(case.golden_module)
         for path in expected:
@@ -85,7 +85,7 @@ class TestEveryDeclaredArtifactExists:
             claimed.add(family.input_path)
             if family.provenance_path is not None:
                 claimed.add(family.provenance_path)
-            claimed.add(manifest_path(family))
+            claimed.add(fingerprint_path(family))
         for case in CASES:
             claimed.add(case.golden_ir)
             if case.golden_module is not None:
@@ -93,7 +93,7 @@ class TestEveryDeclaredArtifactExists:
 
         on_disk = {
             path
-            for directory in (INPUTS_DIR, GOLDEN_DIR, MANIFEST_DIR)
+            for directory in (INPUTS_DIR, GOLDEN_DIR, FINGERPRINT_DIR)
             for path in directory.rglob('*')
             if path.is_file()
         }
@@ -158,7 +158,7 @@ class TestTheTiersAreTiedTogether:
         assert case.golden_module is not None
         rows = {
             line.split('  ')[0]: line.split('  ')[1]
-            for line in manifest_path(case.family).read_text(encoding='utf-8').splitlines()
+            for line in fingerprint_path(case.family).read_text(encoding='utf-8').splitlines()
             if line and not line.startswith('#')
         }
         assert case.config_key in rows, f'{case.case_id}: its config point has no manifest row'
@@ -203,10 +203,12 @@ class TestTheRegenerationToolStaysInItsLane:
         trespass = sorted(str(path) for path in regeneration_write_set if path.is_relative_to(INPUTS_DIR))
         assert trespass == [], f'the regeneration tool would write corpus inputs: {trespass}'
 
-    def test_its_write_set_is_a_subset_of_golden_and_manifest(self, regeneration_write_set: dict[Path, str]) -> None:
+    def test_its_write_set_is_a_subset_of_golden_and_fingerprints(
+        self, regeneration_write_set: dict[Path, str]
+    ) -> None:
         for path in regeneration_write_set:
-            assert path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(MANIFEST_DIR), (
-                f'the regeneration tool would write {path}, which is outside golden/ and manifest/'
+            assert path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(FINGERPRINT_DIR), (
+                f'the regeneration tool would write {path}, which is outside golden/ and fingerprints/'
             )
 
     def test_it_does_not_offer_to_rewrite_the_ci_005_golden_this_row_does_not_own(
@@ -226,7 +228,7 @@ class TestTheRegenerationToolStaysInItsLane:
         rendered = set(regeneration_write_set)
         expected = {case.golden_ir for case in CASES}
         expected |= {c.golden_module for c in CASES if c.golden_module and c.golden_module.is_relative_to(GOLDEN_DIR)}
-        expected |= {manifest_path(family) for family in FAMILIES}
+        expected |= {fingerprint_path(family) for family in FAMILIES}
         assert rendered == expected
 
 

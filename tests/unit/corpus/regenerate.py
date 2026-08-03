@@ -14,7 +14,7 @@ committed golden is exactly what this branch's code produces.
 operations with different provenance: a changed input must arrive with a changed
 ``provenance.json``, from the testbed's ``capture.sh``, and no code path here can do that by
 accident. ``test_corpus_selfcheck.py`` asserts the write set is a subset of ``golden/`` ∪
-``manifest/``.
+``fingerprints/``.
 """
 
 import argparse
@@ -25,10 +25,10 @@ from pathlib import Path
 from tests.unit.corpus.cases import (
     CASES,
     FAMILIES,
+    FINGERPRINT_DIR,
     GOLDEN_DIR,
-    MANIFEST_DIR,
     REPO_ROOT,
-    manifest_path,
+    fingerprint_path,
 )
 from tests.unit.corpus.pipeline import (
     ENCODING,
@@ -57,14 +57,14 @@ def intended_artifacts() -> dict[Path, str]:
         artifacts.update(artifacts_for_case(case, documents[case.family.family_id]))
     for family in FAMILIES:
         emissions = emissions_for_family(documents[family.family_id], family)
-        artifacts[manifest_path(family)] = render_manifest(family, emissions)
+        artifacts[fingerprint_path(family)] = render_manifest(family, emissions)
     return artifacts
 
 
 def writable(artifacts: dict[Path, str]) -> dict[Path, str]:
     """Filter ``artifacts`` down to the paths this tool is permitted to write.
 
-    The permitted set is ``golden/`` ∪ ``manifest/``. Everything else — the corpus inputs, and
+    The permitted set is ``golden/`` ∪ ``fingerprints/``. Everything else — the corpus inputs, and
     CI-005's golden module, which this row references but does not own — is read-only here.
 
     Args:
@@ -76,7 +76,7 @@ def writable(artifacts: dict[Path, str]) -> dict[Path, str]:
     return {
         path: text
         for path, text in artifacts.items()
-        if path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(MANIFEST_DIR)
+        if path.is_relative_to(GOLDEN_DIR) or path.is_relative_to(FINGERPRINT_DIR)
     }
 
 

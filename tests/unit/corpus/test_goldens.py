@@ -25,7 +25,7 @@ import re
 
 import pytest
 
-from tests.unit.corpus.cases import CASES, GOLDEN_DIR, INPUTS_DIR, MANIFEST_DIR, CorpusCase
+from tests.unit.corpus.cases import CASES, FINGERPRINT_DIR, GOLDEN_DIR, INPUTS_DIR, CorpusCase
 from tests.unit.corpus.compare import assert_golden
 from tests.unit.corpus.conftest import case_ids, iter_cases
 from tests.unit.corpus.pipeline import module_compiles, render_ir_golden
@@ -36,7 +36,7 @@ from tests.unit.corpus.pipeline import module_compiles, render_ir_golden
 ARTIFACT_NAME = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
 
 #: The three directories holding committed corpus data (as opposed to Python modules).
-ARTIFACT_DIRS = (INPUTS_DIR, GOLDEN_DIR, MANIFEST_DIR)
+ARTIFACT_DIRS = (INPUTS_DIR, GOLDEN_DIR, FINGERPRINT_DIR)
 
 
 def artifact_files() -> list[str]:

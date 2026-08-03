@@ -32,7 +32,7 @@ from tests.unit.corpus.cases import (
     all_config_points,
     config_axes,
     config_key,
-    manifest_path,
+    fingerprint_path,
 )
 from tests.unit.corpus.compare import assert_golden
 from tests.unit.corpus.conftest import family_ids, iter_families
@@ -41,7 +41,7 @@ from tests.unit.corpus.pipeline import render_manifest
 
 def manifest_rows(family: InputFamily) -> list[str]:
     """Return a committed manifest's data rows (header comments stripped)."""
-    text = manifest_path(family).read_text(encoding='utf-8')
+    text = fingerprint_path(family).read_text(encoding='utf-8')
     return [line for line in text.splitlines() if line and not line.startswith('#')]
 
 
@@ -55,7 +55,7 @@ class TestManifestMatchesTheSweep:
         # structural counter and every `compiles` verdict, against a committed constant.
         assert_golden(
             render_manifest(family, corpus_emissions[family.family_id]),
-            manifest_path(family),
+            fingerprint_path(family),
             case=family.family_id,
             what='manifest',
         )

@@ -39,8 +39,8 @@ INPUTS_DIR = CORPUS_DIR / 'inputs'
 #: ``tests/unit/corpus/golden/`` — committed IR and emitted-module goldens.
 GOLDEN_DIR = CORPUS_DIR / 'golden'
 
-#: ``tests/unit/corpus/manifest/`` — committed per-config fingerprint manifests.
-MANIFEST_DIR = CORPUS_DIR / 'manifest'
+#: ``tests/unit/corpus/fingerprints/`` — committed per-config fingerprint manifests.
+FINGERPRINT_DIR = CORPUS_DIR / 'fingerprints'
 
 #: The repository root (``tests/unit/corpus`` → ``tests/unit`` → ``tests`` → root).
 REPO_ROOT = CORPUS_DIR.parents[2]
@@ -464,13 +464,13 @@ def case_by_id(case_id: str) -> CorpusCase:
     raise KeyError(f'No corpus case with id {case_id!r}; known ids: {[c.case_id for c in CASES]}')
 
 
-def manifest_path(family: InputFamily) -> Path:
+def fingerprint_path(family: InputFamily) -> Path:
     """Return the fingerprint manifest path for an input family.
 
     Args:
         family: The input family.
 
     Returns:
-        ``manifest/<family_id>.manifest.txt``.
+        ``fingerprints/<family_id>.fingerprints.txt``.
     """
-    return MANIFEST_DIR / f'{family.family_id}.manifest.txt'
+    return FINGERPRINT_DIR / f'{family.family_id}.fingerprints.txt'

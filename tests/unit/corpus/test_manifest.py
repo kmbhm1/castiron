@@ -174,10 +174,13 @@ class TestTheSweepMeasuresWhatItClaims:
     def test_every_row_records_a_compile_verdict(self, family: InputFamily) -> None:
         verdicts = {row.rsplit('  ', 1)[-1] for row in manifest_rows(family)}
         assert verdicts <= {'yes', 'no'}, f'{family.family_id}: bad compiles column {verdicts}'
-        # The torture input is the only one where any config fails to parse, and it fails for
-        # ALL of them -- the defect is in the identifiers, which no emitter toggle sanitizes.
-        expected = {'no'} if family.family_id == 'synthetic-torture' else {'yes'}
-        assert verdicts == expected, (
-            f'{family.family_id}: compile verdicts are {verdicts}, expected {expected}. For the '
-            f'torture input a "yes" means CI-080/CI-085 may be fixed -- see KNOWN_DEFECTS.'
+        # 🔴 **Every reachable emission of every family parses**, flat out. `synthetic-torture`
+        # used to be `{'no'}` on all 128 rows, because CI-080 (enum labels) and then CI-085
+        # (column names) reached the emitter verbatim. Both are fixed, so a `no` here is now a
+        # **regression**, not a characterization -- castiron would be writing a module it cannot
+        # import while `gen` exits 0, which is the failure mode both rows were about.
+        assert verdicts == {'yes'}, (
+            f'{family.family_id}: compile verdicts are {verdicts}, expected only "yes". A "no" '
+            f'means castiron emitted Python that does not parse. On the identifier-hostile input '
+            f'that is CI-080/CI-085 regressing; anywhere else it is new.'
         )

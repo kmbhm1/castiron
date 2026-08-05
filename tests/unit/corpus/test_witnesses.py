@@ -2,8 +2,8 @@
 
 This module is the reason the corpus is not an endorsement of current behaviour.
 
-A golden is a several-thousand-line assertion that today's output is correct. Six open WORKPLAN
-rows produce bytes that reach a committed golden here. Without this module they would be
+A golden is a several-thousand-line assertion that today's output is correct. Open WORKPLAN rows
+produce bytes that reach a committed golden here. Without this module they would be
 cemented as the contract — and worse, on the day one is fixed the golden would go red and the
 cheapest response would be "regenerate it", silently re-endorsing whatever replaced it without
 anyone checking either version.
@@ -397,47 +397,78 @@ class TestCi076FictionalForeignKeyTarget:
 
 
 # ---------------------------------------------------------------------------
-# CI-085 — the column-name half. CI-080 (the enum-member half) is FIXED; see below for why
-# fixing one and not the other is the proof that they really were two defects (CI94-D7).
+# CI-085 — the column-name half — is FIXED. The witness is retired and INVERTED into the
+# regression guard below, following `TestEveryViewIsClassifiedAsAView`'s pattern: the
+# counter-witness is KEPT, because deleting it would throw away the evidence.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestCi085ColumnIdentifiersAreNotSanitized:
-    #: Legal quoted Postgres identifiers that are illegal Python attribute names.
-    HOSTILE_COLUMNS = ('2fast', 'space name', 'kebab-case')
+class TestEveryHostileColumnIsRepairedAndAliased:
+    """The CI-085 witness, read the right way round.
 
-    @pytest.mark.parametrize('column', HOSTILE_COLUMNS)
-    def test_a_hostile_column_name_reaches_the_emitted_module_verbatim(
-        self, column: str, case_modules: dict[str, str]
+    ``TestCi085ColumnIdentifiersAreNotSanitized`` used to assert that ``2fast``, ``space name``
+    and ``kebab-case`` reached the emitted module **verbatim**, and that the module therefore did
+    not parse — at ``castiron gen`` exit 0. CI-085 is fixed
+    (:func:`~castiron.ir.build.column_identifiers` repairs the identifier and
+    :func:`~castiron.ir.build.get_alias` preserves the wire name), so the witness is retired.
+
+    ⚠ **The counter-witness is kept**, exactly as it was for CI-075: without
+    :meth:`test_the_safe_column_alongside_them_is_emitted_normally`, this class cannot tell "the
+    hostile names were repaired" from "the emitter renames everything".
+    """
+
+    #: Legal quoted Postgres identifiers that are illegal — or unusable — Python attribute names,
+    #: paired with the identifier castiron now emits and the alias that carries the wire name.
+    #: ⚠ Spelled out rather than derived: deriving them would re-implement the repair rule inside
+    #: its own test, which is how a test stops being independent evidence.
+    REPAIRED_COLUMNS = (
+        ('2fast', 'field_2fast', 'str = Field(alias="2fast")'),
+        ('space name', 'space_name', 'str | None = Field(default=None, alias="space name")'),
+        ('kebab-case', 'kebab_case', 'str | None = Field(default=None, alias="kebab-case")'),
+    )
+
+    @pytest.mark.parametrize(('wire', 'emitted', 'declaration'), REPAIRED_COLUMNS)
+    def test_a_hostile_column_is_emitted_under_its_repaired_name(
+        self, wire: str, emitted: str, declaration: str, case_modules: dict[str, str]
     ) -> None:
         module = _module('synthetic-torture-default', case_modules)
-        assert f'    {column}: ' in module, witness_failed(
-            'CI-085',
-            'synthetic-torture/default.py.txt',
-            f'the column {column!r} is emitted verbatim as a field name, producing a module that does not parse.',
-            fixed_action=FIX_ACTION,
+        assert f'    {wire}: ' not in module, (
+            f'the column {wire!r} is emitted verbatim again. That is CI-085 regressing: the '
+            f'module will not import, and castiron will still exit 0 while writing it.'
+        )
+        assert f'    {emitted}: {declaration}' in module, (
+            f'{wire!r} should emit as `{emitted}: {declaration}`. The repaired identifier is what '
+            f'makes the module importable; the alias is what keeps the wire name recoverable.'
         )
 
-    def test_the_module_does_not_parse(self, case_modules: dict[str, str]) -> None:
+    def test_the_module_parses_and_the_repair_is_what_makes_it_parse(self, case_modules: dict[str, str]) -> None:
         module = _module('synthetic-torture-default', case_modules)
-        assert not module_compiles(module), witness_failed(
-            'CI-085',
-            'synthetic-torture/default.py.txt',
-            'the emitted module raises SyntaxError. castiron currently emits invalid Python for '
-            'identifier-hostile schemas, and this golden is the static proof of it.',
-            fixed_action=FIX_ACTION,
+        assert module_compiles(module), (
+            'the identifier-hostile golden no longer parses. This is the CI-085 regression guard: '
+            'castiron must never again write a module it cannot import while exiting 0.'
         )
 
     def test_the_safe_column_alongside_them_is_emitted_normally(self, case_modules: dict[str, str]) -> None:
-        # Counter-witness: an ordinary column in the SAME table emits fine, so the defect is
-        # about the identifier and not about the table, the emitter or the document.
-        assert '    ok_column: str | None = Field(default=None)' in _module('synthetic-torture-default', case_modules)
+        # THE COUNTER-WITNESS, kept from the retired witness class and load-bearing in both
+        # directions: before the fix it proved the defect was about the identifier and not about
+        # the table; now it proves the repair is targeted and does not rename what already works.
+        module = _module('synthetic-torture-default', case_modules)
+        assert '    ok_column: str | None = Field(default=None)' in module
+        assert 'alias="ok_column"' not in module, 'a valid column name must not acquire an alias'
 
-    def test_ci_080_and_ci_085_are_distinct_defects(self, case_modules: dict[str, str]) -> None:
+    def test_ci_080_and_ci_085_were_distinct_defects_and_were_fixed_independently(
+        self, case_modules: dict[str, str]
+    ) -> None:
         # CI-085's WORKPLAN row asked whether it is the same defect as CI-080. It is not (CI7-Q4,
-        # re-confirmed as CI94-D7), and this document is now the *demonstration* rather than the
-        # argument: ONE of the two was fixed and the other was not, in the same module.
+        # re-confirmed as CI94-D7). This document was the *demonstration* rather than the
+        # argument: for one PR CI-080 was fixed here and CI-085 was not, in the same module, and
+        # the module still did not parse. That is impossible for one defect.
+        #
+        # The independence claim is preserved now that both are fixed: the two blocks are still
+        # disjoint, and each is repaired by its OWN rule -- the enum path prefixes `_` where the
+        # column path prefixes `field_`, which is the divergence CI85-D2 requires (a leading
+        # underscore is fine on an Enum member and raises NameError on a pydantic field).
         module = _module('synthetic-torture-default', case_modules)
         enum_block = module[module.index('class PublicTaskStateEnum') : module.index('# CUSTOM CLASSES')]
         columns_block = _class_body(module, 'HostileColumnsBaseSchema')
@@ -446,14 +477,21 @@ class TestCi085ColumnIdentifiersAreNotSanitized:
         assert '2fast' not in enum_block, 'the CI-080 evidence must be independent of the CI-085 one'
         assert 'TaskState' not in columns_block, 'the CI-085 witness must be independent of the CI-080 one'
 
-        # CI-080 is FIXED -- every enum member name in that block is now a valid identifier ...
+        # CI-080's repair: every enum member name is a valid identifier, and `2nd pass` took the
+        # ENUM path's leading-underscore prefix.
         member_names = [line.split(' = ')[0].strip() for line in enum_block.splitlines() if ' = "' in line]
         assert member_names == ['IN_PROGRESS', 'DONE', 'N_A', '_2ND_PASS']
         assert all(name.isidentifier() for name in member_names)
 
-        # ... and the module STILL does not parse, because CI-085 is a different call site.
-        # If these two were one defect, that would be impossible.
-        assert not module_compiles(module)
+        # CI-085's repair: the same leading-digit hazard on a COLUMN took `field_`, not `_`.
+        assert '    field_2fast: ' in columns_block
+        assert '    _2fast: ' not in columns_block, (
+            'a pydantic field must not start with an underscore -- it compiles and raises '
+            'NameError at import, which is exactly why the two paths diverge here.'
+        )
+
+        # ... and now the module parses, because both call sites are repaired.
+        assert module_compiles(module)
 
 
 # ---------------------------------------------------------------------------
@@ -508,15 +546,29 @@ class TestSyntheticTortureCoversWhatNothingElseDoes:
                 for label in enum_values:
                     assert label.replace('_', 'x').isalnum(), f'{family.family_id}: enum label {label!r} is hostile'
 
-    def test_the_synthetic_input_is_the_only_source_of_ci_080_and_ci_085(self) -> None:
-        from tests.unit.corpus.cases import CASES
+    def test_the_synthetic_family_now_carries_no_defect_at_all(self) -> None:
+        # ⚠ **Rewritten, not merely left in place.** This used to loop `for row_id in ('CI-085',)`
+        # and assert the synthetic family was that row's only carrier. CI-085 is now fixed, so the
+        # tuple would be **empty** and the test would pass **vacuously** -- a guard that cannot
+        # fail, printing green forever, which is the `CI-083` shape this repository has been bitten
+        # by twice. Its successor asserts the stronger and now-true thing, and it CAN fail: the day
+        # someone adds a defect to this family, or drops the family, it goes red.
+        from tests.unit.corpus.cases import CASES, KNOWN_DEFECTS
 
-        for row_id in ('CI-085',):
-            carriers = {case.family.family_id for case in CASES if row_id in case.defects}
-            assert carriers == {SYNTHETIC_TORTURE.family_id}, (
-                f'{row_id} is now carried by {carriers}. If a capture grew the shape, update this '
-                f'test and reconsider whether the synthetic input is still needed.'
+        synthetic = [case for case in CASES if case.family.family_id == SYNTHETIC_TORTURE.family_id]
+        assert synthetic, 'the synthetic-torture family has vanished from the case table'
+        for case in synthetic:
+            assert case.defects == (), (
+                f'{case.case_id} has grown defect(s) {case.defects}. Both rows this input was '
+                f'built to carry (CI-080, CI-085) are FIXED; it is now a regression guard, not '
+                f'evidence of anything wrong.'
             )
+            assert case.status == 'asserted'
+            assert case.compiles is True
+
+        # And the retired rows are gone from the registry, in both directions.
+        assert 'CI-085' not in KNOWN_DEFECTS
+        assert 'CI-080' not in KNOWN_DEFECTS
 
 
 def _iter_enums(document: dict[str, Any]) -> list[list[str]]:

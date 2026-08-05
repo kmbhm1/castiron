@@ -1,3 +1,4 @@
+import ast
 import itertools
 import keyword
 import os
@@ -408,6 +409,54 @@ class TestEveryMemberNameIsAnIdentifier:
             if ('_' + chr(cp)).isidentifier() and not ('_' + chr(cp).upper()).isidentifier()
         ]
         assert offenders == [], f'upper() breaks identifier-legality for {offenders[:20]}'
+
+
+@pytest.mark.unit
+class TestTheCharacterMapIsSharedWithTheColumnPath:
+    """``CI85-D1``: one algorithm, one set of bugs — asserted by **identity**, not by behaviour.
+
+    CI-080 (enum labels) and CI-085 (column names) are the same defect at two call sites, and the
+    character map was written twice before it was written once. ``CI-085`` moved
+    ``naming._identifier_characters`` into :mod:`castiron.ir.build` as the public
+    :func:`~castiron.ir.build.identifier_characters` and repointed this module at it.
+
+    Comparing the *objects* rather than a handful of outputs is deliberate: a re-divergence
+    (someone re-adding a private copy here "just for the enum path") would keep every behavioural
+    assertion green right up until the two implementations drifted, which is exactly how the
+    duplication arose the first time.
+
+    The direction of the move matters too, and it is not a taste call: ``castiron.utils.naming``
+    already imports ``castiron.ir.build`` (line 21), so putting the shared helper under ``utils``
+    would reverse that edge and leave a partially-initialized-module ``ImportError`` waiting for
+    the first person to add a re-export to ``castiron/utils/__init__.py``.
+    """
+
+    def test_the_enum_path_and_the_column_path_call_the_same_function(self) -> None:
+        import castiron.ir.build
+        import castiron.utils.naming
+
+        assert castiron.utils.naming.identifier_characters is castiron.ir.build.identifier_characters
+
+    def test_the_module_no_longer_defines_a_private_copy(self) -> None:
+        import castiron.utils.naming
+
+        assert not hasattr(castiron.utils.naming, '_identifier_characters')
+
+    def test_the_dependency_edge_still_points_utils_to_ir(self) -> None:
+        # ``castiron.ir.build`` must not IMPORT ``castiron.utils`` -- see the class docstring.
+        # Read off the AST, not the text: the module's own docstrings discuss the edge by name,
+        # and a substring check would assert about prose rather than about imports.
+        source = (Path(__file__).resolve().parents[3] / 'src' / 'castiron' / 'ir' / 'build.py').read_text(
+            encoding='utf-8'
+        )
+        imported: list[str] = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.append(node.module)
+        offenders = [name for name in imported if name.startswith('castiron.utils')]
+        assert offenders == [], f'ir.build now imports {offenders} -- the utils -> ir edge has reversed'
 
 
 @pytest.mark.unit

@@ -1,4 +1,4 @@
-"""The fidelity notices: the identity-PK warning and its sync guard."""
+"""The fidelity notices: the identity-PK warning, the identifier-repair warning, and the sync guard."""
 
 import logging
 from typing import Any
@@ -11,6 +11,8 @@ from castiron.cli.notices import (
     OPENAPI_FIDELITY_NOTE,
     identity_pk_candidates,
     identity_pk_warning,
+    repaired_column_names,
+    repaired_column_warning,
     report,
 )
 from castiron.ir import ColumnInfo, Schema, TableInfo
@@ -96,32 +98,155 @@ class TestIdentityPkWarning:
         assert 'http' not in identity_pk_warning(['a'])
 
 
+def repaired(name: str, alias: str) -> ColumnInfo:
+    """A column whose emitted identifier ``name`` differs from its wire name ``alias``."""
+    return ColumnInfo(name=name, raw_type='text', alias=alias)
+
+
+@pytest.mark.unit
+class TestRepairedColumnNames:
+    """CI-085's discriminator: an identifier repair is noteworthy, the shipped rename is not."""
+
+    def test_it_reports_an_identifier_repair(self) -> None:
+        schema = Schema(tables=[table('t', repaired('field_2fast', '2fast'), repaired('space_name', 'space name'))])
+        assert repaired_column_names(schema, disable_model_prefix_protection=False) == [
+            ('t', '2fast', 'field_2fast'),
+            ('t', 'space name', 'space_name'),
+        ]
+
+    @pytest.mark.parametrize(
+        ('name', 'alias'),
+        [
+            ('field_class', 'class'),  # a keyword -- the shipped path
+            ('field_import', 'import'),
+            ('field_model_config', 'model_config'),  # the model_ protected namespace
+        ],
+    )
+    def test_it_stays_quiet_for_the_shipped_reserved_word_path(self, name: str, alias: str) -> None:
+        # 🔴 A schema whose only aliased column is `class` works today and must NOT grow a new
+        # warning: the behaviour did not change, so there is nothing to tell the user.
+        schema = Schema(tables=[table('t', repaired(name, alias))])
+        assert repaired_column_names(schema, disable_model_prefix_protection=False) == []
+
+    def test_the_model_prefix_flag_makes_a_model_column_noteworthy_again(self) -> None:
+        # With `--no-model-prefix-protection` the source does not rename `model_*` at all, so an
+        # aliased `model_x` could only have come from the identifier repair. The discriminator has
+        # to read the same flag the schema was built with or it mis-classifies exactly here.
+        schema = Schema(tables=[table('t', repaired('field_model_config', 'model_config'))])
+        assert repaired_column_names(schema, disable_model_prefix_protection=True) == [
+            ('t', 'model_config', 'field_model_config')
+        ]
+
+    def test_a_curated_exception_that_was_renamed_is_still_reported(self) -> None:
+        # `id` is exempt from the reserved rule, so an alias on it cannot have come from that
+        # path -- it is an NFKC collision or a repair, and the user should hear about it.
+        schema = Schema(tables=[table('t', repaired('id_2', 'id'))])
+        assert repaired_column_names(schema, disable_model_prefix_protection=False) == [('t', 'id', 'id_2')]
+
+    def test_an_unaliased_column_is_never_reported(self) -> None:
+        schema = Schema(tables=[table('t', ColumnInfo(name='ok_column', raw_type='text'))])
+        assert repaired_column_names(schema, disable_model_prefix_protection=False) == []
+
+    def test_it_reads_the_real_pipeline_end_to_end(self) -> None:
+        # Built through the real source rather than by hand, so the notice cannot drift from what
+        # `castiron gen` actually produces.
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'hostile': {
+                    'type': 'object',
+                    'required': [],
+                    'properties': {
+                        'ok_column': {'type': 'string', 'format': 'text'},
+                        'class': {'type': 'string', 'format': 'text'},
+                        '2fast': {'type': 'string', 'format': 'text'},
+                    },
+                }
+            },
+        }
+        schema = build_schema_from_document(document)
+        assert repaired_column_names(schema, disable_model_prefix_protection=False) == [
+            ('hostile', '2fast', 'field_2fast')
+        ]
+
+
+@pytest.mark.unit
+class TestRepairedColumnWarning:
+    def test_one_column_reads_singular(self) -> None:
+        message = repaired_column_warning([('t', '2fast', 'field_2fast')])
+        assert message.startswith('1 column name is not usable as a Python field name and was renamed')
+
+    def test_it_names_up_to_three_columns(self) -> None:
+        message = repaired_column_warning([('t', f'w{i}', f'p{i}') for i in range(3)])
+        assert '(t.w0 -> p0, t.w1 -> p1, t.w2 -> p2)' in message
+        assert 'more' not in message
+
+    def test_beyond_three_it_collapses_the_tail(self) -> None:
+        message = repaired_column_warning([('t', f'w{i}', f'p{i}') for i in range(5)])
+        assert f'and {5 - MAX_NAMED_TABLES} more)' in message
+        assert 'w3' not in message and 'w4' not in message
+
+    def test_it_says_the_wire_name_is_preserved(self) -> None:
+        # The single most important sentence: the rename is cosmetic at the Python level and the
+        # generated models still read and write the real column.
+        assert 'Field(alias=...)' in repaired_column_warning([('t', '2fast', 'field_2fast')])
+
+    def test_it_carries_no_documentation_url(self) -> None:
+        # House style, matching `identity_pk_warning`: no link to a page that does not exist.
+        assert 'http' not in repaired_column_warning([('t', '2fast', 'field_2fast')])
+
+
 @pytest.mark.unit
 class TestReport:
+    def test_the_repair_warning_fires_once_for_the_whole_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        schema = Schema(
+            tables=[
+                table('a', repaired('field_2fast', '2fast'), repaired('space_name', 'space name')),
+                table('b', repaired('kebab_case', 'kebab-case')),
+            ]
+        )
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(schema, infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False)
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'CI5-D11: one aggregated warning per run, not per column -- got {warnings}'
+        assert warnings[0].startswith('3 column names are not usable')
+
+    def test_the_repair_warning_stays_quiet_for_the_shipped_reserved_path(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        schema = Schema(tables=[table('t', repaired('field_class', 'class'))])
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(schema, infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False)
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
     def test_the_warning_fires_when_the_inference_is_off(self, caplog: pytest.LogCaptureFixture) -> None:
         schema = Schema(tables=[table('users', pk())])
         with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
-            report(schema, infer_generated_primary_keys=False, from_openapi=True)
+            report(schema, infer_generated_primary_keys=False, from_openapi=True, disable_model_prefix_protection=False)
         assert any(record.levelno == logging.WARNING for record in caplog.records)
 
     def test_the_warning_stays_quiet_when_the_inference_is_on(self, caplog: pytest.LogCaptureFixture) -> None:
         schema = Schema(tables=[table('users', pk())])
         with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
-            report(schema, infer_generated_primary_keys=True, from_openapi=True)
+            report(schema, infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False)
         assert [record for record in caplog.records if record.levelno == logging.WARNING] == []
 
     def test_the_warning_stays_quiet_when_no_table_would_change(self, caplog: pytest.LogCaptureFixture) -> None:
         schema = Schema(tables=[table('users', pk(raw_type='uuid'))])
         with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
-            report(schema, infer_generated_primary_keys=False, from_openapi=True)
+            report(schema, infer_generated_primary_keys=False, from_openapi=True, disable_model_prefix_protection=False)
         assert [record for record in caplog.records if record.levelno == logging.WARNING] == []
 
     def test_the_fidelity_note_is_info_level(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.INFO, logger='castiron.cli.notices'):
-            report(Schema(), infer_generated_primary_keys=True, from_openapi=True)
+            report(
+                Schema(), infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False
+            )
         assert [record.getMessage() for record in caplog.records] == [OPENAPI_FIDELITY_NOTE]
 
     def test_the_fidelity_note_is_skipped_for_another_source(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.INFO, logger='castiron.cli.notices'):
-            report(Schema(), infer_generated_primary_keys=True, from_openapi=False)
+            report(
+                Schema(), infer_generated_primary_keys=True, from_openapi=False, disable_model_prefix_protection=False
+            )
         assert caplog.records == []

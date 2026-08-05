@@ -18,13 +18,15 @@ invariant can see an unused import, but it **cannot see ``I001`` at all** -- imp
 pure style and survives any assertion about the tree. The honest oracle is ruff itself.
 
 **What it costs, measured here rather than quoted.** ``CI94-D10`` approved this guard on
-**+62 ms per interpreter leg**. Re-measured on the machine that wrote it: writing the 384
-lintable modules is 24 ms, one ruff pass over them is 88 ms, and the ``python -m`` subprocess
-floor is **33 ms** -- where the approving measurement recorded 10 ms. So the approved single-pass
-design costs **112 ms** here, and this module costs **~165 ms/leg** (0.66 s across the four-leg
-gate) for that pass plus one more that carries both harness self-checks. Everything below is
-structured to keep the number of ruff invocations at **two**: ``CI-095`` records that a gate
-overage was accepted grudgingly, and a budget quietly exceeded is that failure repeating.
+**+62 ms per interpreter leg**. Re-measured after ``CI-085`` widened the sweep from 384 to **512**
+modules: writing them is **28 ms**, one ruff pass over them is **44 ms**, and the ``python -m``
+subprocess floor is **23 ms**. So the single-pass design costs **72 ms** here, and this module
+measures **~0.47 s/leg wall** for that pass plus one more carrying the ``--isolated`` self-check.
+⚠ Widening by a third of a family made it *cheaper*, not dearer, because the earlier figure was
+taken with a cold ruff cache; the honest comparison is that the sweep is not the gate's cost
+centre. Everything below is still structured to keep the number of ruff invocations at **two**:
+``CI-095`` records that a gate overage was accepted grudgingly, and a budget quietly exceeded is
+that failure repeating.
 
 **What castiron promises** (``CI94-Q3(c)``, captain): emitted output is clean under **F**, **UP**
 and **I** with **default** ruff settings. It promises nothing about ``E501`` (the longest emitted
@@ -50,38 +52,15 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.corpus.cases import SYNTHETIC_TORTURE
 from tests.unit.corpus.pipeline import ENCODING
 
 #: The rules castiron's output is promised to be clean under, at ruff's own defaults.
 PROMISED_RULES = 'F,UP,I'
 
-#: ``synthetic-torture`` is excluded **by name and with a reason**, never by filtering out codes
-#: that happen to be inconvenient. Its 128 emissions do not parse at all: ``CI-085`` (column
-#: identifiers are not sanitized) is a known, open, deliberately-out-of-scope defect, and the case
-#: table declares ``compiles=False`` for it. Linting unparseable text would assert nothing about
-#: import hygiene and would hide a real finding behind 960 syntax errors. The day CI-085 lands,
-#: delete this constant and watch the guard widen.
-EXCLUDED_FAMILY = SYNTHETIC_TORTURE.family_id
-
-#: How ruff spells "this file does not parse". ⚠ **Two spellings, and the skew is live.**
-#: `.pre-commit-config.yaml` pins ruff **v0.6.9**, which prints `path:1:7: SyntaxError: ...`;
-#: `uv.lock` resolves **0.16.0**, which prints `invalid-syntax:`. That divergence is filed as
-#: `CI-105` and is still open, and `pyproject.toml`'s floor is only `ruff>=0.6.0` -- so matching
-#: one spelling would make this guard pass vacuously under the other.
-SYNTAX_ERROR_SPELLINGS = ('invalid-syntax', 'SyntaxError')
-
 #: How long a single ruff invocation may take before the gate fails instead of hanging. A hung
 #: subprocess with no timeout blocks all four legs forever, which is a worse failure than a red
 #: test. Generous by two orders of magnitude: the full 384-module sweep measures ~88 ms.
 RUFF_TIMEOUT_SECONDS = 120
-
-#: Why the exclusion is legitimate, quoted into the skip so nobody has to go looking.
-EXCLUSION_REASON = (
-    f'{EXCLUDED_FAMILY} emits deliberately invalid Python (CI-085, open and out of scope for '
-    f'CI-094); the case table declares compiles=False for it.'
-)
-
 
 #: Whether ruff is importable, and therefore whether ``python -m ruff`` can run.
 #:
@@ -175,8 +154,6 @@ def linted_emissions(
     root = tmp_path_factory.mktemp('emissions')
     paths: list[str] = []
     for family_id, emissions in sorted(corpus_emissions.items()):
-        if family_id == EXCLUDED_FAMILY:
-            continue
         for index, (_, text) in enumerate(sorted(emissions.items())):
             paths.append(str(write_as_python(text, root / family_id / f'{index:03d}.py')))
     return paths
@@ -198,19 +175,20 @@ def sweep_findings(linted_emissions: list[str]) -> list[str]:
 
 @pytest.fixture(scope='session')
 def probe_findings(corpus_emissions: dict[str, dict[str, str]], tmp_path_factory: pytest.TempPathFactory) -> list[str]:
-    """The two harness self-checks, folded into **one** ruff invocation.
+    """The harness self-check that keeps ``--isolated`` honest.
 
-    ``torture.py`` is one ``synthetic-torture`` emission (it must still fail to parse, which is
-    what keeps :data:`EXCLUDED_FAMILY` honest); ``long.py`` is a 100-character line, legal under
-    castiron's own 120-column configuration and illegal at ruff's 88-column default (which is what
-    proves ``--isolated`` is still biting). Two claims, two files, one subprocess -- the
-    subprocess floor is 33 ms on this hardware and there are four gate legs.
+    ``long.py`` is a 100-character line: legal under castiron's own 120-column configuration and
+    illegal at ruff's 88-column default, which is what proves ``--isolated`` is still biting.
+
+    ⚠ It used to carry a second probe, ``torture.py`` -- one ``synthetic-torture`` emission,
+    asserted to still fail to parse, which is what kept the family's exclusion from the sweep
+    honest. **CI-085 landed, the exclusion was deleted, and the probe went with it**: the sweep now
+    covers all 512 emissions directly, so there is nothing left to keep honest. That deletion is
+    the self-closing guard doing exactly what it was built to do.
     """
     root = tmp_path_factory.mktemp('probes')
-    text = next(iter(sorted(corpus_emissions[EXCLUDED_FAMILY].items())))[1]
-    write_as_python(text, root / 'torture.py')
     write_as_python(f'x = {"a" * 100!r}\n', root / 'long.py')
-    return lint([str(root / 'torture.py'), str(root / 'long.py')], select=f'{PROMISED_RULES},E501').splitlines()
+    return lint([str(root / 'long.py')], select=f'{PROMISED_RULES},E501').splitlines()
 
 
 @pytest.mark.unit
@@ -224,8 +202,12 @@ class TestEveryReachableEmissionIsLintClean:
     """
 
     def test_the_sweep_covers_every_reachable_emission(self, linted_emissions: list[str]) -> None:
-        assert len(linted_emissions) == 384, (
-            f'expected 3 lintable families × 128 config points, got {len(linted_emissions)}. A '
+        # 384 -> 512 when CI-085 landed: `synthetic-torture` was excluded by name because its 128
+        # emissions did not parse at all, and linting unparseable text asserts nothing about
+        # import hygiene. It parses now, so the exclusion is DELETED rather than left inert, and
+        # the class docstring's "all 512" is finally literal.
+        assert len(linted_emissions) == 512, (
+            f'expected 4 lintable families × 128 config points, got {len(linted_emissions)}. A '
             f'guard that silently narrows is worse than none.'
         )
 
@@ -263,22 +245,6 @@ class TestEveryReachableEmissionIsLintClean:
         for code, symbol in (('F401', 'IPv6Network'), ('UP035', 'Tuple'), ('UP006', 'Tuple')):
             offenders = [line for line in sweep_findings if f' {code} ' in line and symbol in line]
             assert offenders == [], f'CI-092 has regressed ({code} on {symbol}):\n' + '\n'.join(offenders[:10])
-
-    def test_the_excluded_family_is_excluded_by_name_and_still_fails_for_the_stated_reason(
-        self, probe_findings: list[str]
-    ) -> None:
-        # The exclusion is only honest if it is still true. If synthetic-torture ever starts
-        # parsing, CI-085 has been fixed and this guard must widen to cover it -- which is a red
-        # test here rather than a silent 384-instead-of-512 that nobody notices.
-        hits = [
-            line
-            for line in probe_findings
-            if 'torture.py' in line and any(spelling in line for spelling in SYNTAX_ERROR_SPELLINGS)
-        ]
-        assert hits, (
-            f'{EXCLUDED_FAMILY} now parses. {EXCLUSION_REASON} If CI-085 has landed, delete '
-            f'EXCLUDED_FAMILY so the guard covers all 512 emissions.'
-        )
 
     def test_no_emission_imports_field_without_using_it(self, sweep_findings: list[str]) -> None:
         # Stated separately from the sweep because this is the shape CI-094 fixed rather than one

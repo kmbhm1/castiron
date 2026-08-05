@@ -49,7 +49,7 @@ def is_import_statement(text: str) -> bool:
         return False
     # `ast.Import | ast.ImportFrom`, not `(ast.Import, ast.ImportFrom)`: the pre-push hook pins
     # ruff 0.6.9, whose UP038 rejects the tuple form, while the resolved 0.16.0 dropped that rule
-    # and accepts both. Same CI-105 skew as SYNTAX_ERROR_SPELLINGS in test_lint.py -- and it means
+    # and accepts both. The same CI-105 pinned-vs-resolved ruff skew -- and it means
     # a green `make validate` does not imply a green `git push`. PEP 604 isinstance is 3.10+, and
     # 3.10 is the floor.
     return len(tree.body) == 1 and isinstance(tree.body[0], ast.Import | ast.ImportFrom)

@@ -69,6 +69,7 @@ import builtins
 import keyword
 import logging
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -244,6 +245,39 @@ class UserTypeMapping:
 # ---------------------------------------------------------------------------
 
 
+def identifier_characters(text: str) -> str:
+    """Map ``text`` to identifier-legal characters, one character out per character in.
+
+    ``('_' + c).isidentifier()`` is the exact test for "Python allows ``c`` inside an
+    identifier", and it is the reason a leading digit still needs a separate guard:
+    ``'_2'`` is an identifier, ``'2'`` is not.
+
+    ⚠ Unicode identifier characters are **kept**, not folded to ASCII (``CI94-D2``, confirmed by
+    the captain): ``'Ünïcödé'`` survives as ``Ünïcödé`` rather than becoming ``________``.
+    Destroying an international name to satisfy a non-default lint rule is the worse trade.
+
+    No run-collapsing and no stripping: ``'a  b'`` and ``'a b'`` must stay *distinguishable
+    attempts*, and the collision rule -- not this function -- is what resolves them when they are
+    not.
+
+    ⚠ **Two consumers, deliberately one algorithm** (``CI85-D1``): the enum-member path
+    (:func:`~castiron.utils.naming.python_member_names`) and the column path
+    (:func:`standardize_column_name`). One algorithm means one set of bugs. It lives *here*
+    rather than under ``castiron.utils`` because ``castiron.utils.naming`` already imports
+    ``castiron.ir.build`` -- putting the shared helper under ``utils`` would reverse that edge,
+    and it is acyclic today only because ``castiron/utils/__init__.py`` happens to contain no
+    imports. ``ir.build`` is also already the identifier-protection module: it owns
+    :func:`string_is_reserved`, :func:`column_name_is_reserved` and their siblings.
+
+    Args:
+        text: The raw source name (a column name, or an enum label).
+
+    Returns:
+        ``text`` with every non-identifier character replaced by ``'_'``, same length.
+    """
+    return ''.join(c if ('_' + c).isidentifier() else '_' for c in text)
+
+
 def string_is_reserved(value: str) -> bool:
     """Whether ``value`` collides with a Python builtin or keyword."""
     return value in dir(builtins) or value in keyword.kwlist
@@ -262,24 +296,239 @@ def column_name_reserved_exceptions(column_name: str) -> bool:
     return column_name.lower() in exceptions
 
 
+def _repair_column_shape(name: str, disable_model_prefix_protection: bool = False) -> str:
+    """Prefix ``field_`` until ``name`` is usable as a Pydantic v2 model-field name.
+
+    Two guards, in this order, and **the order is load-bearing**:
+
+    1. **Identifier / leading-underscore.** After :func:`identifier_characters` the only ways a
+       name can fail are "empty" and "starts with a continue-but-not-start character", and one
+       prefix covers both. The leading underscore is folded in here for a *measured* reason
+       (``CI85-Q2``, captain-confirmed): a column named ``_private`` **compiles cleanly and dies
+       at import** with ``NameError: Fields must not use names with leading underscores``. It is
+       also not separable -- ``identifier_characters(' x')`` is ``_x``, so the character map
+       itself creates the shape and the map is not injective, which leaves a repair-created
+       ``_x`` indistinguishable from a literal one.
+    2. **Reserved word / ``model_`` prefix.** Unchanged in substance -- this is the shipped
+       ``class`` -> ``field_class`` rule -- but it now runs *after* the identifier repair, so it
+       sees the name that will actually land.
+
+    ⚠ **Every guard tests the NFKC form and the emitted name is the un-normalized string.**
+    CPython normalizes identifiers to NFKC *at compile time*, so the attribute a user really gets
+    is ``NFKC(name)``. Without it, ``'clａss'`` (with a FULLWIDTH LATIN SMALL LETTER A) is not a
+    keyword by inspection and binds a pydantic field **literally named** ``class``, reachable only
+    through ``getattr``. This mirrors :func:`~castiron.utils.naming.python_member_names` exactly,
+    and it is what makes the rule closed under the *mechanism* rather than closed over a list of
+    shapes someone thought of.
+
+    **Termination is a proof, not an observation.** Guard 1 fires at most once: ``field_`` is
+    XID_Start and every character of a mapped name is XID_Continue, so ``field_<mapped>`` is
+    always an identifier and never starts with ``_``. Guard 2 fires at most once: no string
+    beginning ``field_`` is a builtin, is a keyword, or begins ``model_``. Both prepend ASCII
+    ``field_``, which is NFKC-invariant, so prefixing cannot change how the rest normalizes.
+
+    Args:
+        name: A candidate column identifier, already through :func:`identifier_characters`.
+        disable_model_prefix_protection: If ``True``, do not treat ``model_`` as reserved.
+
+    Returns:
+        ``name``, prefixed as many times as it takes (in practice: at most once).
+    """
+    key = unicodedata.normalize('NFKC', name)
+    if not key.isidentifier() or key.startswith('_'):
+        name = f'field_{name}'
+        key = unicodedata.normalize('NFKC', name)
+    if column_name_is_reserved(key, disable_model_prefix_protection) and not column_name_reserved_exceptions(key):
+        name = f'field_{name}'
+    return name
+
+
 def standardize_column_name(column_name: str, disable_model_prefix_protection: bool = False) -> str | None:
-    """Return a safe column identifier, prefixing reserved names with ``field_``."""
-    return (
-        f'field_{column_name}'
-        if column_name_is_reserved(column_name, disable_model_prefix_protection)
-        and not column_name_reserved_exceptions(column_name)
-        else column_name
-    )
+    """Return a column identifier that is usable as a Pydantic v2 field name.
+
+    Widened by ``CI-085`` from "reserved word / ``model_`` prefix" to **"any column name that is
+    not usable as a Pydantic v2 field name"**. A quoted Postgres identifier is legal for almost
+    any string -- ``"2fast"``, ``"space name"``, ``"kebab-case"`` -- and PostgREST carries it
+    verbatim, so before this the emitter wrote it verbatim too and ``castiron gen`` exited **0**
+    on a module that raised ``SyntaxError`` at import.
+
+    **Sanitizing loses no fidelity**, which is the whole reason this is safe: :func:`get_alias`
+    puts the wire name on ``ColumnInfo.alias`` and the emitter renders ``Field(alias="2fast")``,
+    exactly as the shipped reserved-word path has always done for ``class``.
+
+    ⚠ **This is a per-NAME rule and a collision rule is not expressible one name at a time**
+    (``CI94-D1``). Two columns can sanitize to the same identifier (``'space name'`` and
+    ``'space-name'``), and dropping one is the one thing ``CI94-Q1`` rules out outright. Callers
+    that own a whole table must use :func:`column_identifiers`; this function exists for the
+    per-name sites (and as its building block).
+
+    ⚠ **The ``| None`` in the return type is retained deliberately.** It never returns ``None``
+    today and never did; narrowing it is a public-API change with no benefit that would touch four
+    call sites' ``or column_name`` fallbacks (``CI-074``: do not change what you did not intend
+    to change).
+
+    Args:
+        column_name: The wire column name, verbatim.
+        disable_model_prefix_protection: If ``True``, do not rename ``model_``-prefixed columns.
+
+    Returns:
+        The Python identifier castiron will emit for this column.
+    """
+    return _repair_column_shape(identifier_characters(column_name), disable_model_prefix_protection)
+
+
+def _alias_for(source: str, name: str) -> str | None:
+    """Return ``source`` when the attribute Python binds for ``name`` differs from it, else ``None``.
+
+    ⚠ **NFKC is on the LEFT of the comparison, and that is not pedantry.** CPython normalizes
+    identifiers at compile time, so the attribute a user actually gets is ``NFKC(name)``. A column
+    named ``ﬁ`` (U+FB01) is a valid identifier that binds the attribute ``fi``; comparing the raw
+    ``name`` to ``source`` would report "unchanged", emit no alias, and **lose the wire name** --
+    measured on a 15-column table: 15 columns in, 13 ``model_dump(by_alias=True)`` keys out. With
+    the normalization: 15 and 15. It is the identity on every ASCII name, so no committed golden
+    moves.
+
+    Lives in one place because both consumers -- the per-name :func:`get_alias` and the per-table
+    :func:`column_identifiers` -- need exactly this rule, and a duplicated NFKC comparison is the
+    kind of thing that drifts silently.
+
+    Args:
+        source: The wire column name, verbatim.
+        name: The Python identifier castiron will emit for it.
+
+    Returns:
+        ``source`` when the bound attribute differs from it, else ``None``.
+    """
+    return source if unicodedata.normalize('NFKC', name) != source else None
 
 
 def get_alias(column_name: str, disable_model_prefix_protection: bool = False) -> str | None:
-    """Return the original column name as an alias when it had to be renamed, else ``None``."""
-    return (
-        column_name
-        if column_name_is_reserved(column_name, disable_model_prefix_protection)
-        and not column_name_reserved_exceptions(column_name)
-        else None
-    )
+    """Return the original column name as an alias when the emitted attribute differs, else ``None``.
+
+    Defined in terms of :func:`standardize_column_name` rather than restating its condition, so
+    the two can no longer disagree. Equivalent to the shipped behaviour on every currently-valid
+    name: the old rule returned the name iff it was reserved and not exempt, which is exactly the
+    condition under which the repair returns something different.
+
+    ⚠ **This is the per-NAME form and it cannot see a collision.** Callers that own a whole table
+    must read ``ColumnIdentifier.alias`` from :func:`column_identifiers`; the two agree except
+    where a second column forced an ordinal suffix, which is a fact no per-name function has.
+
+    Args:
+        column_name: The wire column name, verbatim.
+        disable_model_prefix_protection: Must match the value used to standardize the name.
+
+    Returns:
+        ``column_name`` when the emitted attribute differs from it, else ``None``.
+    """
+    return _alias_for(column_name, standardize_column_name(column_name, disable_model_prefix_protection) or column_name)
+
+
+@dataclass(frozen=True)
+class ColumnIdentifier:
+    """One column's wire name and the Python identifier castiron derives from it.
+
+    A **build-layer DTO**, exactly as :class:`UserEnumType` and :class:`UserTypeMapping` are, and
+    exactly as ``EnumMember`` is on the enum path (Hard Rule #6). It is a *return type*, not a
+    parallel model shape: it never reaches :meth:`~castiron.ir.Schema.as_dict`, and it adds no
+    field to :class:`~castiron.ir.ColumnInfo` -- which matters concretely, because ``as_dict``
+    walks ``dataclasses.fields``, so one new ``ColumnInfo`` field would rewrite all six committed
+    ``ir.json`` goldens.
+
+    Attributes:
+        source: The wire column name, verbatim -- the ground truth.
+        name: The Python identifier, unique within the table under NFKC.
+        alias: ``source`` when the emitted attribute differs from it, else ``None``.
+    """
+
+    source: str
+    name: str
+    alias: str | None
+
+
+def column_identifiers(
+    source_names: Sequence[str], disable_model_prefix_protection: bool = False
+) -> list[ColumnIdentifier]:
+    """Derive one unique, valid field name per column, in ``source_names`` order.
+
+    The same shape as :func:`~castiron.utils.naming.python_member_names` -- a per-container
+    function returning one frozen record per input, positionally aligned with it -- because a
+    collision rule cannot be expressed one name at a time (``CI94-D1``), and there is no reason
+    for the column path to invent a different shape from the enum path.
+
+    **The collision rule is the one the captain already ruled** (``CI94-Q1``), deliberately
+    identical so a user does not have to learn two: the first occurrence keeps the bare name and
+    each subsequent collider gets ``_2``, ``_3``, … until the **NFKC-normalized** candidate is
+    unused. Its one non-negotiable -- *never silently drop a variant* -- binds here identically.
+
+    ⚠ **The uniqueness key is the NFKC form.** Two distinct strings can be one binding:
+    ``field_＿private`` (U+FF3F) normalizes to ``field__private``, and a raw-string check emits
+    two fields that collapse into one at import. Same mechanism, same fix as the enum path.
+
+    ⚠ **Every suffixed candidate is re-repaired**, not just the bare name. It is idempotent and
+    free, and it closes the axis *structurally* rather than resting on the argument "a ``_2``
+    suffix cannot re-create a hazard" -- an argument that was made on the enum side and was
+    **wrong** (``'_' + '_2'`` is ``'__2'``, which Python name-mangles).
+
+    **Determinism (Hard Rule #9).** The result is a pure function of the ordered ``source_names``
+    list. That order is the row order the source delivered, i.e. pg ``attnum`` / the OpenAPI
+    document's ``properties`` key order, which is contractual and pinned by a committed golden. No
+    set iteration and no dict ordering reaches the output; ``used`` is only ever membership-tested,
+    never iterated, and the collision counter walks ``2, 3, 4, …``.
+
+    Args:
+        source_names: The wire column names, in row order.
+        disable_model_prefix_protection: If ``True``, do not rename ``model_``-prefixed columns.
+
+    Returns:
+        One :class:`ColumnIdentifier` per name, positionally aligned with ``source_names``.
+    """
+    used: set[str] = set()
+    identifiers: list[ColumnIdentifier] = []
+    for source in source_names:
+        name = standardize_column_name(source, disable_model_prefix_protection) or source
+        candidate = name
+        ordinal = 1
+        while unicodedata.normalize('NFKC', candidate) in used:
+            ordinal += 1
+            candidate = _repair_column_shape(f'{name}_{ordinal}', disable_model_prefix_protection)
+        used.add(unicodedata.normalize('NFKC', candidate))
+        identifiers.append(ColumnIdentifier(source=source, name=candidate, alias=_alias_for(source, candidate)))
+    return identifiers
+
+
+def resolved_column_name(table: TableInfo, source_name: str, disable_model_prefix_protection: bool = False) -> str:
+    """Return the Python identifier ``table`` uses for the wire column ``source_name``.
+
+    The FK and constraint marshalers run *after* the tables exist, so they must **look the answer
+    up** rather than recompute it: the collision rule is per-table, so a per-name recomputation
+    cannot see that ``'space-name'`` became ``space_name_2`` here and ``space_name`` there. The
+    docstrings on both callers are explicit that a mismatch silently breaks FK and constraint
+    matching -- ``primary``/``is_unique``/``is_foreign_key`` are simply never set.
+
+    The reconstruction ``column.alias if column.alias is not None else column.name`` recovers the
+    wire name exactly, because :func:`get_alias` sets the alias iff the name differs from it.
+    The linear scan is deliberate: tables are small, and it is order-deterministic where a dict
+    comprehension over a list that is still being mutated is one more thing to keep in sync.
+
+    ⚠ **The fallback is the per-name repair, NOT the raw name.** A constraint or FK row naming a
+    column the table does not have is unreachable from the OpenAPI source but reachable from a
+    live-DB ``LEFT JOIN``, and falling back to the raw name would *change shipped behaviour* for
+    a currently-valid schema -- ``standardize_column_name('class')`` gives ``field_class`` at that
+    site today.
+
+    Args:
+        table: The table whose columns have already been resolved.
+        source_name: The wire column name as the FK/constraint row spells it.
+        disable_model_prefix_protection: Must match the value used to build the columns.
+
+    Returns:
+        The column's Python identifier, or the per-name repair when the table has no such column.
+    """
+    for column in table.columns:
+        if (column.alias if column.alias is not None else column.name) == source_name:
+            return column.name
+    return standardize_column_name(source_name, disable_model_prefix_protection) or source_name
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +546,14 @@ def get_table_details_from_columns(
     recorded on ``ColumnInfo.raw_type`` and the array-element token is preserved.
     ``is_generated`` is computed at build time (identity, or a ``nextval`` default).
 
+    ⚠ **Column naming is resolved per TABLE, in a second pass, and it has to be.** The collision
+    rule (:func:`column_identifiers`) needs the whole table's ordered wire-name list, which the
+    single row loop does not have until it ends. So pass 1 records the wire names in row order
+    and pass 2 assigns ``ColumnInfo.name`` / ``ColumnInfo.alias`` from
+    ``column_identifiers(<that table's wire names>)``. Row order is authoritative: it is pg
+    ``attnum`` / the document's ``properties`` key order, and it is what makes the result
+    deterministic (Hard Rule #9).
+
     Args:
         column_details: The column rows (12-tuple contract).
         disable_model_prefix_protection: If ``True``, do not rename ``model_`` columns.
@@ -305,6 +562,7 @@ def get_table_details_from_columns(
         A mapping of ``(schema, table_name)`` to its :class:`TableInfo`.
     """
     tables: dict[tuple[str, str], TableInfo] = {}
+    wire_names: dict[tuple[str, str], list[str]] = {}
     for row in column_details:
         (
             schema,
@@ -329,9 +587,11 @@ def get_table_details_from_columns(
         is_generated = is_identity or (default is not None and 'nextval' in str(default).lower())
 
         column_info = ColumnInfo(
-            name=standardize_column_name(column_name, disable_model_prefix_protection) or column_name,
+            # Filled in by the per-table pass below; the wire name is the placeholder so that a
+            # partially-built table is never observably wrong.
+            name=column_name,
             raw_type=data_type,
-            alias=get_alias(column_name, disable_model_prefix_protection),
+            alias=None,
             default=default,
             is_nullable=is_nullable == 'YES',
             max_length=max_length,
@@ -341,6 +601,13 @@ def get_table_details_from_columns(
             description=description,
         )
         tables[table_key].add_column(column_info)
+        wire_names.setdefault(table_key, []).append(column_name)
+
+    for table_key, names in wire_names.items():
+        columns = tables[table_key].columns
+        for column, identifier in zip(columns, column_identifiers(names, disable_model_prefix_protection)):
+            column.name = identifier.name
+            column.alias = identifier.alias
 
     return tables
 
@@ -463,10 +730,12 @@ def add_foreign_key_info_to_table_details(
 
         fk_info = ForeignKeyInfo(
             constraint_name=constraint_name,
-            column_name=standardize_column_name(column_name, disable_model_prefix_protection) or column_name,
+            # Resolved through the table rather than recomputed: the collision rule is per-table,
+            # so a per-name recomputation cannot see that this wire name became `space_name_2`.
+            column_name=resolved_column_name(tables[table_key], column_name, disable_model_prefix_protection),
             foreign_table_name=foreign_table_name,
-            foreign_column_name=(
-                standardize_column_name(foreign_column_name, disable_model_prefix_protection) or foreign_column_name
+            foreign_column_name=resolved_column_name(
+                tables[foreign_table_key], foreign_column_name, disable_model_prefix_protection
             ),
             relation_type=relation_type,
             foreign_table_schema=foreign_table_schema,
@@ -565,7 +834,10 @@ def add_constraints_to_table_details(
             constraint = ConstraintInfo(
                 constraint_name=constraint_name,
                 type=normalize_constraint_type(raw_constraint_type),
-                columns=[standardize_column_name(c, disable_model_prefix_protection) or str(c) for c in columns],
+                # Resolved through the table, not recomputed -- see `resolved_column_name`.
+                columns=[
+                    resolved_column_name(tables[table_key], str(c), disable_model_prefix_protection) for c in columns
+                ],
                 constraint_definition=constraint_definition,
                 raw_constraint_type=raw_constraint_type,
             )

@@ -31,13 +31,16 @@ byte-identical to what `ruff check --select I --fix` would have written.
   length is driven by `Field(description=...)` carrying your own SQL comment, and your comments
   are as long as you wrote them. At ruff's 88-column default, a long comment will be flagged.
 - **Nothing about non-default rule sets.** `D`, `ANN`, `PL`, and friends are not considered.
-- **Nothing about a module castiron could not emit validly in the first place** — see
-  [identifier-hostile column names](#column-names-are-not-sanitized-yet) below.
 
 The promise is enforced, not asserted: every reachable emission (4 corpus inputs × 128
-configuration points) is written to disk as `.py` and linted by a real ruff subprocess with
-`--isolated`, on every leg of the test matrix. Adding an allowance list back is a deliberate
-decision, not a way to turn a red test green.
+configuration points = **512 modules**) is written to disk as `.py` and linted by a real ruff
+subprocess with `--isolated`, on every leg of the test matrix. Adding an allowance list back is a
+deliberate decision, not a way to turn a red test green.
+
+That sweep covers **all four** corpus inputs, including the deliberately identifier-hostile one.
+Until `0.1.0` it covered three: the hostile input emitted a module that did not parse, and a
+linter has nothing to say about a file it cannot read. [Column names are now
+repaired](#column-names), so the carve-out is gone rather than merely unused.
 
 ## Enum member names
 
@@ -159,17 +162,78 @@ whose lowercase `num` cannot survive `.upper()`. Reaching it takes deliberately-
 
 It is **filed and pinned by a test, not fixed**, in `0.1.0`.
 
-### Column names are not sanitized yet
+## Column names
 
-Enum *member* names are made identifier-safe; **column names are not**. A column whose name is a
-legal quoted Postgres identifier but not a legal Python one — `2fast`, `space name`,
-`kebab-case` — is emitted verbatim as a field name, producing a module that does not parse. The
-run still exits `0`.
+A column name is a *quoted identifier* in Postgres, which means it can be almost any string —
+`"2fast"`, `"space name"`, `"kebab-case"`, `"_private"` — and PostgREST carries it through
+verbatim. Almost none of those are usable as a Pydantic field name, so castiron repairs the
+**attribute** and keeps the **wire name** on a `Field(alias=...)`.
 
-This is a known, open defect, pinned by a golden that is asserted to *fail* to compile, so it
-cannot be fixed silently or regress unnoticed. Ordinary columns in the same table emit normally;
-a column whose name merely collides with a Python keyword or builtin is handled properly and
-becomes `field_class: str | None = Field(default=None, alias="class")`.
+**The value on the wire is always the real column name.** The generated models read and write the
+column your database actually has; only the attribute you type in Python differs.
 
-Because such a module does not parse, it is also the one thing excluded from the lint promise
-above — a linter has nothing to say about a file it cannot read.
+```python
+class HostileColumnsBaseSchema(CustomModel):
+    """Hostile Columns Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    field_2fast: str = Field(alias="2fast")
+    kebab_case: str | None = Field(default=None, alias="kebab-case")
+    ok_column: str | None = Field(default=None)
+    space_name: str | None = Field(default=None, alias="space name")
+```
+
+### The rule
+
+1. **Sanitize.** Every character Python will not accept inside an identifier becomes `_`, one
+   character out per character in — the same map the enum path uses. There is no run-collapsing
+   and no stripping, so `'a b'` and `'a  b'` stay distinguishable attempts. Non-ASCII identifier
+   characters are **kept**: a column named `Ünïcödé` is already legal Python and comes through
+   untouched, with no alias.
+2. **Prefix `field_` if the result still is not usable.** That covers an empty name, a leading
+   digit (`2fast` → `field_2fast`), and a **leading underscore** (`_private` →
+   `field__private`) — Pydantic reserves leading-underscore names for private attributes and
+   raises `NameError` when the class body runs, so a leading underscore is unusable even though
+   it compiles.
+3. **Prefix `field_` if it is a Python keyword, a builtin, or starts with `model_`.** This is the
+   long-standing rule: `class` → `field_class`. Seven names are exempt and keep their spelling —
+   `id`, `credits`, `copyright`, `license`, `help`, `property`, `sum`.
+4. **Uniquify, per table.** The first column to want a name keeps it; each later collider gets
+   `_2`, `_3`, … `'space name'`, `'space-name'` and `'space_name'` in one table become
+   `space_name`, `space_name_2` and `space_name_3`. **Nothing is ever dropped or merged.**
+
+Ordering is the column order the source reported — Postgres `attnum` — so the result is
+deterministic for a given schema.
+
+!!! note "`ﬁ` and `fi` are the same identifier to Python"
+    CPython normalizes identifiers to NFKC at compile time, so two column names that look
+    different can be one attribute. castiron tests every guard, the uniqueness key **and** the
+    alias rule against the normalized form — the string the compiler will actually see. Without
+    that, a column named `ﬁ` would bind the attribute `fi`, carry no alias, and its wire name
+    would be silently lost.
+
+### castiron tells you when it renames something
+
+A repair changes the attribute you have to type, so `gen` says so — **once per run**, at
+`WARNING`, and the run still exits `0` because the generated code is correct:
+
+```
+castiron: 3 column names are not usable as a Python field name and were renamed
+(t.2fast -> field_2fast, t.space name -> space_name, t.kebab-case -> kebab_case) --
+the original name is preserved on the wire via Field(alias=...), so the generated
+models still read and write the real column; only the attribute you type in Python differs.
+```
+
+The long-standing keyword rename (`class` → `field_class`) does **not** warn: that behaviour has
+not changed, and a schema that worked yesterday should not grow a new warning today.
+
+!!! warning "`field_` and `_2` are part of the public shape"
+    The attribute name is what your code types, so changing this scheme later would be a breaking
+    change. Two consequences worth knowing up front: the `field_` prefix is permanent, and ordinal
+    suffixes are **positional** — adding a column upstream that sorts before an existing collider
+    can renumber the later ones. `ALTER TABLE … ADD COLUMN` appends at the end, so in practice a
+    new column can only take a *higher* ordinal. The alias on each line disambiguates them for a
+    reader either way.

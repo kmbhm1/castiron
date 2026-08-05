@@ -43,8 +43,11 @@ class TestStructuralCounters:
         assert count_structure(text).fields == 1
 
     def test_counters_work_on_a_module_that_does_not_parse(self) -> None:
-        # Load-bearing: the `synthetic-torture` golden is characterized as NOT parsing, so an
-        # ast-based counter would raise exactly where the counters are most needed.
+        # Still load-bearing, for a reason that survived CI-085 fixing the one golden that used
+        # to demonstrate it. Every committed golden parses today, but the counters are what makes
+        # a REGRESSION legible: an ast-based counter would raise on the very diff a reader most
+        # needs to read, and `characterized` cases are allowed to declare `compiles=False` again.
+        # The text below is exactly what castiron emitted before CI-080 and CI-085 landed.
         text = 'class Broken(Base):\n    2fast: str\n    IN PROGRESS = "x"\n'
         assert count_structure(text).classes == 1
         assert count_structure(text).fields == 1

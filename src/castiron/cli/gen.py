@@ -258,6 +258,7 @@ def gen(
             schema_ir,
             infer_generated_primary_keys=infer_generated_primary_keys,
             from_openapi=True,
+            disable_model_prefix_protection=not model_prefix_protection,
         )
 
         base = EmitterConfig(

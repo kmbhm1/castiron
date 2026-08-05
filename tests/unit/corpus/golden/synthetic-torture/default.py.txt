@@ -43,10 +43,10 @@ class HostileColumnsBaseSchema(CustomModel):
     id: int
 
     # Columns
-    2fast: str
-    kebab-case: str | None = Field(default=None)
+    field_2fast: str = Field(alias="2fast")
+    kebab_case: str | None = Field(default=None, alias="kebab-case")
     ok_column: str | None = Field(default=None)
-    space name: str | None = Field(default=None)
+    space_name: str | None = Field(default=None, alias="space name")
 
 
 class HostileEnumLabelsBaseSchema(CustomModel):
@@ -76,12 +76,12 @@ class HostileColumnsInsert(CustomModelInsert):
     id: int
 
     # Required fields
-    2fast: str
+    field_2fast: str = Field(alias="2fast")
 
     # Optional fields
-    kebab-case: str | None = Field(default=None)
+    kebab_case: str | None = Field(default=None, alias="kebab-case")
     ok_column: str | None = Field(default=None)
-    space name: str | None = Field(default=None)
+    space_name: str | None = Field(default=None, alias="space name")
 
 
 class HostileEnumLabelsInsert(CustomModelInsert):
@@ -111,10 +111,10 @@ class HostileColumnsUpdate(CustomModelUpdate):
     id: int | None = Field(default=None)
 
     # Columns
-    2fast: str | None = Field(default=None)
-    kebab-case: str | None = Field(default=None)
+    field_2fast: str | None = Field(default=None, alias="2fast")
+    kebab_case: str | None = Field(default=None, alias="kebab-case")
     ok_column: str | None = Field(default=None)
-    space name: str | None = Field(default=None)
+    space_name: str | None = Field(default=None, alias="space name")
 
 
 class HostileEnumLabelsUpdate(CustomModelUpdate):

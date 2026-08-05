@@ -1027,29 +1027,35 @@ class TestEdgeQuarantine:
         assert edges[0].foreign_table_name in {'parent_a', 'parent_b'}
         assert _column(live_edge_schema, 'dual_fk_child', 'ref_id').is_foreign_key is True
 
-    def test_hostile_identifiers_reach_the_ir_verbatim(self, live_edge_schema: Schema) -> None:
-        assert [c.name for c in _table(live_edge_schema, 'identifier_torture').columns] == [
+    def test_hostile_identifiers_are_repaired_and_the_wire_name_is_aliased(self, live_edge_schema: Schema) -> None:
+        # ⚠ Renamed from `..._reach_the_ir_verbatim`: "verbatim" is no longer what this
+        # demonstrates. CI-085 repairs the identifier and puts the wire name on `alias`, so the
+        # thing the live apparatus now proves is that the repair reaches the REAL capture and not
+        # just the hand-authored synthetic input.
+        columns = _table(live_edge_schema, 'identifier_torture').columns
+        assert [c.name for c in columns] == [
             'id',
-            'column with spaces',
-            '2fast',
+            'column_with_spaces',
+            'field_2fast',
             'Ünïcödé',
             'trailing_underscore_',
         ]
-        assert all(c.alias is None for c in _table(live_edge_schema, 'identifier_torture').columns)
+        # The wire name is preserved on exactly the two columns that were renamed, and on no
+        # others -- `Ünïcödé` and `trailing_underscore_` are already legal Python and must not
+        # acquire an alias (CI94-D2 keeps Unicode; only LEADING underscores are a hazard).
+        assert [c.alias for c in columns] == [None, 'column with spaces', '2fast', None, None]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            'CI-085: the identifier sanitization gap (CI-008 spec §12 F-4). '
-            'standardize_column_name() handles Python keywords and the model_ prefix, but nothing '
-            'rewrites a space, a leading digit or a non-ASCII character, so edge.identifier_torture '
-            'emits a module that does not parse. No golden is built from `edge` (its document form '
-            'is not contractual); CI-007 characterizes the same defect offline instead, from the '
-            'hand-authored tests/unit/corpus/inputs/synthetic-torture.openapi.json.'
-        ),
-    )
-    def test_the_edge_schema_emits_a_module_that_parses(self, live_edge_schema: Schema) -> None:
-        compile(_emit(live_edge_schema), 'schema.py', 'exec')
+    def test_the_edge_schema_emits_a_module_that_imports(self, live_edge_schema: Schema) -> None:
+        # ⚠ Was `@pytest.mark.xfail(strict=True, reason='CI-085: ...')`. CI-085 landed, and a
+        # strict xfail FAILS when it passes, so the marker had to go rather than be relaxed.
+        #
+        # Strengthened from `compile()` to `exec()` while removing it, because `compile()` is not
+        # a sufficient oracle for this defect class: a field named `_private` compiles cleanly and
+        # raises `NameError: Fields must not use names with leading underscores` only when pydantic
+        # builds the class. `tests/unit/ir/test_column_identifiers.py` is the offline version of
+        # this assertion; this is the one that runs it against a real PostgREST capture.
+        module = _emit(live_edge_schema)
+        exec(compile(module, 'schema.py', 'exec'), {})  # noqa: S102 -- executing IS the assertion
 
 
 class TestCommittedCaptureIsStillFaithful:

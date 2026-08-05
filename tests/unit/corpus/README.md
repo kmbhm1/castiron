@@ -41,7 +41,7 @@ regenerate.py  the regeneration entry point (writes nothing by default)
 ## A golden is not an endorsement
 
 A golden is a several-thousand-line assertion that today's output is *correct*. Some of
-castiron's current output is **known wrong** — six open WORKPLAN rows produce bytes that reach a
+castiron's current output is **known wrong** — open WORKPLAN rows produce bytes that reach a
 committed golden here. So every known-wrong region is **named**:
 
 - `KNOWN_DEFECTS` in `cases.py` carries one entry per row, with what correct output would be.
@@ -49,8 +49,10 @@ committed golden here. So every known-wrong region is **named**:
   says what to do if the row was fixed. **A witness going red is usually good news.**
 - Each case declares `status`: `'characterized'` (a known defect reaches its bytes, and
   `defects` names every one) or `'asserted'` (the stronger claim — none does).
-- `compiles` is asserted **exactly**, including `False`. `synthetic-torture` emits a module that
-  does not parse (CI-080/CI-085); the day it does parse, that test goes red and names the rows.
+- `compiles` is asserted **exactly**, including `False`. `synthetic-torture` used to emit a module
+  that did not parse (CI-080's enum labels, then CI-085's column names). **Both are fixed**, so
+  every case now declares `compiles=True` and every one of the 512 reachable emissions parses —
+  a `False` reappearing is a regression, not a characterization.
 
 Bookkeeping closes in both directions, so neither a stale entry nor an unwitnessed one survives.
 

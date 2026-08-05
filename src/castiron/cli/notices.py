@@ -12,11 +12,17 @@ integer primary key with no default, and castiron marks it *required* on the Ins
 The fix is one flag (``--infer-generated-primary-keys``), so the warning fires **once**,
 and only when it would actually change the output — CI5-D11 rejected per-column
 degradation warnings as noise, and this is deliberately not that.
+
+The second notice (CI-085) is a *rename*, not a fidelity loss: a column name that is legal in
+Postgres but unusable as a Pydantic field is repaired, so the attribute the user must type is
+not the column name they know. That is a surprise worth one line — and, following the same
+CI5-D11 rule, it is **one aggregated warning per run**, not one per column.
 """
 
 import logging
 
 from castiron.ir import Schema
+from castiron.ir.build import column_name_is_reserved, column_name_reserved_exceptions
 from castiron.sources.openapi import INTEGER_FAMILY
 
 logger = logging.getLogger(__name__)
@@ -25,7 +31,8 @@ logger = logging.getLogger(__name__)
 #: constant rather than re-listed, so the CLI notice and the inference cannot drift.
 INTEGER_PK_TYPES = INTEGER_FAMILY
 
-#: How many table names the warning spells out before collapsing to "and N more".
+#: How many names a warning spells out before collapsing to "and N more". Shared by both
+#: notices so a wide schema degrades the same way whichever one fires.
 MAX_NAMED_TABLES = 3
 
 #: Shown at INFO (``-v``) once per run when the schema came from the OpenAPI source.
@@ -78,18 +85,79 @@ def identity_pk_warning(tables: list[str]) -> str:
     )
 
 
-def report(schema: Schema, *, infer_generated_primary_keys: bool, from_openapi: bool) -> None:
+def repaired_column_names(schema: Schema, *, disable_model_prefix_protection: bool) -> list[tuple[str, str, str]]:
+    """Return ``(table, wire_name, python_name)`` for every column repaired for identifier legality.
+
+    ⚠ **The discriminator needs no new IR field, and that is deliberate.**
+    :meth:`~castiron.ir.Schema.as_dict` is ``{f.name: … for f in fields(obj)}``, so adding a
+    "why was this renamed" field to :class:`~castiron.ir.ColumnInfo` would rewrite every one of the
+    six committed ``ir.json`` goldens for a CLI cosmetic. The fact is derivable: ``alias`` is set
+    iff the emitted attribute differs from the wire name, and the two shipped predicates say
+    whether the *shipped* reserved-word path is what did it.
+
+    **The shipped reserved-word path is excluded on purpose.** A schema with a column named
+    ``class`` works today and must not grow a new warning for behaviour that has not changed.
+    Only the ``CI-085`` repairs — a leading digit, a space, a hyphen, a leading underscore, an
+    NFKC collision — are reported.
+
+    Args:
+        schema: The schema that was just loaded (treated as read-only).
+        disable_model_prefix_protection: Must match the value the schema was built with, or the
+            reserved-word discriminator will mis-classify every ``model_`` column.
+
+    Returns:
+        One tuple per repaired column, in ``Schema.tables`` then ``TableInfo.columns`` order.
+    """
+    repaired: list[tuple[str, str, str]] = []
+    for table in schema.tables:
+        for column in table.columns:
+            if column.alias is None:
+                continue
+            if column_name_is_reserved(
+                column.alias, disable_model_prefix_protection
+            ) and not column_name_reserved_exceptions(column.alias):
+                continue  # the shipped reserved-word path -- not new, and not noteworthy
+            repaired.append((table.name, column.alias, column.name))
+    return repaired
+
+
+def repaired_column_warning(columns: list[tuple[str, str, str]]) -> str:
+    """Build the identifier-repair warning for ``columns``, naming at most three of them."""
+    named = ', '.join(f'{table}.{wire} -> {python}' for table, wire, python in columns[:MAX_NAMED_TABLES])
+    if len(columns) > MAX_NAMED_TABLES:
+        named = f'{named} and {len(columns) - MAX_NAMED_TABLES} more'
+    subject = 'column name is' if len(columns) == 1 else 'column names are'
+    return (
+        f'{len(columns)} {subject} not usable as a Python field name and {"was" if len(columns) == 1 else "were"} '
+        f'renamed ({named}) -- the original name is preserved on the wire via Field(alias=...), so '
+        f'the generated models still read and write the real column; only the attribute you type '
+        f'in Python differs.'
+    )
+
+
+def report(
+    schema: Schema,
+    *,
+    infer_generated_primary_keys: bool,
+    from_openapi: bool,
+    disable_model_prefix_protection: bool,
+) -> None:
     """Emit the fidelity notices for one ``gen`` run.
 
     Args:
         schema: The schema that was just loaded.
         infer_generated_primary_keys: Whether the identity inference was enabled. When it
-            was, the warning is moot and stays quiet.
+            was, the identity warning is moot and stays quiet.
         from_openapi: Whether the schema came from the OpenAPI source (the only source
             today; the INFO note is specific to its fidelity floor).
+        disable_model_prefix_protection: Whether ``model_`` renaming was disabled. Needed to tell
+            a ``CI-085`` identifier repair from the shipped reserved-word rename.
     """
     if from_openapi:
         logger.info(OPENAPI_FIDELITY_NOTE)
+    repaired = repaired_column_names(schema, disable_model_prefix_protection=disable_model_prefix_protection)
+    if repaired:
+        logger.warning(repaired_column_warning(repaired))
     if infer_generated_primary_keys:
         return
     candidates = identity_pk_candidates(schema)

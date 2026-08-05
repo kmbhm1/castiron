@@ -26,9 +26,9 @@
           "user_defined_values": []
         },
         {
-          "name": "2fast",
+          "name": "field_2fast",
           "raw_type": "text",
-          "alias": null,
+          "alias": "2fast",
           "default": null,
           "max_length": null,
           "is_nullable": false,
@@ -45,9 +45,9 @@
           "user_defined_values": []
         },
         {
-          "name": "space name",
+          "name": "space_name",
           "raw_type": "text",
-          "alias": null,
+          "alias": "space name",
           "default": null,
           "max_length": null,
           "is_nullable": true,
@@ -64,9 +64,9 @@
           "user_defined_values": []
         },
         {
-          "name": "kebab-case",
+          "name": "kebab_case",
           "raw_type": "text",
-          "alias": null,
+          "alias": "kebab-case",
           "default": null,
           "max_length": null,
           "is_nullable": true,

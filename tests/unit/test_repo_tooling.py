@@ -83,12 +83,16 @@ CI_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'ci.yml'
 MAKEFILE = REPO_ROOT / 'Makefile'
 PRE_COMMIT_CONFIG = REPO_ROOT / '.pre-commit-config.yaml'
 UV_LOCK = REPO_ROOT / 'uv.lock'
+PYPROJECT = REPO_ROOT / 'pyproject.toml'
+RELEASE_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'release.yml'
 
 #: Repo-relative names, for failure messages that a reader can act on without decoding a path.
 CI_NAME = '.github/workflows/ci.yml'
 MAKE_NAME = 'Makefile'
 PRE_COMMIT_NAME = '.pre-commit-config.yaml'
 LOCK_NAME = 'uv.lock'
+PYPROJECT_NAME = 'pyproject.toml'
+RELEASE_NAME = '.github/workflows/release.yml'
 
 #: The pre-commit repo whose pin must equal the locked ``ruff``. ruff is coupled this tightly
 #: because it needs no environment at all: it reads ``[tool.ruff]`` and the source and nothing
@@ -131,6 +135,61 @@ LOAD_BEARING_FLAGS = {
 #: Make targets that run the WHOLE suite, and must therefore exclude the live-source half.
 #: ``test-unit`` and ``test-integration`` are deliberately absent -- each selects its own marker.
 WHOLE_SUITE_TARGETS = ('test', 'coverage', 'test-matrix')
+
+#: The extra that carries the release build's ``uv``. Referenced by name rather than spelled into
+#: each assertion so the two ends of the coupling -- the extra and the ``pip install`` that
+#: consumes it -- cannot drift apart silently.
+BUILD_EXTRA = 'build'
+
+#: The action whose Docker image ``[tool.semantic_release].build_command`` executes inside.
+PSR_ACTION = 'python-semantic-release/python-semantic-release'
+
+#: Environment variables ``build_command`` may reference, keyed by the PSR **major** the release
+#: workflow pins. Two sources, both read from the shipped code rather than the docs:
+#:
+#: * the whitelist ``build_distributions`` passes through (``PATH``, ``HOME``, ``VIRTUAL_ENV``,
+#:   and the CI markers) -- identical in v9 and v10, and
+#: * the variables PSR *injects*, which are **not** identical: v9.21.2 injects ``NEW_VERSION``
+#:   alone (``cli/commands/version.py:638``); ``PACKAGE_NAME`` arrived in v10
+#:   (``cli/commands/version.py:672-673`` of the locked 10.6.1).
+#:
+#: That difference is the CI-115 trap. PSR's own uv-integration guide writes
+#: ``uv lock --upgrade-package "$PACKAGE_NAME"``, which under the v9 this repo pins expands to
+#: the empty string -- and ``uv lock --upgrade-package ""`` is a hard error
+#: ("Empty field is not allowed for PEP508", measured), so the build fails and PSR aborts the
+#: release. An unset variable in a shell is silent; only the command it feeds says anything.
+PSR_WHITELISTED_ENV = frozenset(
+    {
+        'PATH',
+        'HOME',
+        'VIRTUAL_ENV',
+        'CI',
+        'GITHUB_ACTIONS',
+        'GITLAB_CI',
+        'GITEA_ACTIONS',
+        'BITBUCKET_CI',
+        'PSR_DOCKER_GITHUB_ACTION',
+    }
+)
+PSR_BUILD_COMMAND_ENV = {
+    9: PSR_WHITELISTED_ENV | {'NEW_VERSION'},
+    10: PSR_WHITELISTED_ENV | {'NEW_VERSION', 'PACKAGE_NAME'},
+}
+
+#: python-semantic-release keys that v8 deleted and that nothing has read since. They are asserted
+#: **absent**, in the CI-093 / CI-097 spirit: the danger is not that they are stale, it is that
+#: ``upload_to_pypi = false`` *reads* like "this project does not publish to PyPI" while the
+#: publish happens anyway, from the explicit ``pypa/gh-action-pypi-publish`` step in the release
+#: workflow. ``RawConfig`` declares no ``model_config``, so pydantic's default ``extra="ignore"``
+#: swallows them without so much as a warning -- there is no version of this trap that announces
+#: itself. Verified dead by whole-tree grep of PSR v9.21.2 (the commit ``@v9`` resolves to) and of
+#: the installed 10.6.1: zero hits outside their own changelogs. The live successor of
+#: ``upload_to_release`` is ``[tool.semantic_release.publish].upload_to_vcs_release``, which
+#: already defaults to ``True``.
+DEAD_SEMANTIC_RELEASE_KEYS = ('branch', 'upload_to_pypi', 'upload_to_release')
+
+#: Matches ``$VAR`` and ``${VAR}`` -- how an unset variable enters a shell command silently.
+ENV_REFERENCE = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?')
 
 
 def command_tokens(line: str) -> list[str]:
@@ -345,6 +404,145 @@ def locked_version(text: str, package: str) -> str | None:
             version: str | None = entry.get('version')
             return version
     return None
+
+
+def build_command_steps(command: str) -> list[str]:
+    """Split a ``build_command`` into the individual commands a shell would run.
+
+    Blank lines and ``#`` comments are dropped; everything else is stripped of the indentation
+    the TOML multi-line string carries for readability. **Order is preserved and load-bearing** --
+    every assertion in ``TestTheReleaseBuildCommandCanRunWhereItRuns`` is about sequence, because
+    python-semantic-release hands this whole block to a single ``sh -c`` (``shell()`` in
+    ``cli/commands/version.py``) rather than running the lines one at a time.
+
+    Args:
+        command: The ``[tool.semantic_release].build_command`` value.
+
+    Returns:
+        The commands, in the order the shell would reach them.
+    """
+    steps = []
+    for raw_line in command.splitlines():
+        stripped = raw_line.strip()
+        if stripped and not stripped.startswith('#'):
+            steps.append(stripped)
+    return steps
+
+
+def first_step_starting_with(steps: list[str], *prefix: str) -> int | None:
+    """Return the index of the first step whose leading tokens are ``prefix``.
+
+    Token-level for the reason ``invokes_pytest`` is: a substring test for ``uv`` matches the word
+    inside ``uv.lock``, inside a path, and inside prose, and this module's whole subject is
+    configuration that lies quietly.
+
+    Args:
+        steps: The steps from ``build_command_steps``.
+        *prefix: The leading tokens to match, e.g. ``'uv', 'build'``.
+
+    Returns:
+        The index, or None if no step starts with those tokens.
+    """
+    for index, step in enumerate(steps):
+        if command_tokens(step)[: len(prefix)] == list(prefix):
+            return index
+    return None
+
+
+def first_step_installing_extra(steps: list[str], extra: str) -> int | None:
+    """Return the index of the first step that installs one of this project's extras.
+
+    Matches any token *ending* in ``[<extra>]``, so it reads ``.[build]``, ``'.[build]'`` and
+    ``cast-iron[build]`` alike -- the installer and the spelling of the target are free to change
+    without turning this guard into a red test about nothing.
+
+    Args:
+        steps: The steps from ``build_command_steps``.
+        extra: The extra's name, e.g. ``'build'``.
+
+    Returns:
+        The index, or None if no step installs it.
+    """
+    marker = f'[{extra}]'
+    for index, step in enumerate(steps):
+        if any(token.endswith(marker) for token in command_tokens(step)):
+            return index
+    return None
+
+
+def flag_argument(steps: list[str], flag: str) -> str | None:
+    """Return the argument given to ``flag`` by the first step that passes it.
+
+    Args:
+        steps: The steps from ``build_command_steps``.
+        flag: The flag, e.g. ``'--upgrade-package'``.
+
+    Returns:
+        The following token, or None if no step passes the flag (or passes it with no argument).
+    """
+    for step in steps:
+        tokens = command_tokens(step)
+        if flag in tokens:
+            position = tokens.index(flag)
+            if position + 1 < len(tokens):
+                return tokens[position + 1]
+    return None
+
+
+def env_references(command: str) -> set[str]:
+    """Return every environment variable a shell command interpolates.
+
+    Args:
+        command: A shell command, or a whole ``build_command`` block.
+
+    Returns:
+        The variable names, without their ``$`` or braces.
+    """
+    return {match.group(1) for match in ENV_REFERENCE.finditer(command)}
+
+
+def pinned_action_major(text: str, action: str) -> int | None:
+    """Return the major version a workflow pins one GitHub Action at.
+
+    Comment lines are skipped for the reason recorded in ``pinned_hook_rev``: the release
+    workflow's header comment names actions in prose, and a parser that matched the first line
+    *containing* the action would read documentation as configuration.
+
+    Args:
+        text: The whole workflow file.
+        action: The ``owner/repo`` of the action, without a ref.
+
+    Returns:
+        The major from an ``@vN`` ref, or None if the action is absent or pinned some other way
+        (a sha, a full ``vN.N.N``, a branch).
+    """
+    pattern = re.compile(rf'uses:\s*{re.escape(action)}@v(\d+)\s*$')
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith('#'):
+            continue
+        match = pattern.search(stripped)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def pyproject_table(*path: str) -> dict[str, object]:
+    """Return one table from ``pyproject.toml``, or an empty dict if it does not exist.
+
+    Args:
+        *path: The table's key path, e.g. ``'tool', 'semantic_release'``.
+
+    Returns:
+        The table. Empty when any key along the path is missing, so callers assert on contents
+        rather than guarding every lookup.
+    """
+    table: object = tomllib.loads(PYPROJECT.read_text(encoding='utf-8'))
+    for key in path:
+        if not isinstance(table, dict) or key not in table:
+            return {}
+        table = table[key]
+    return table if isinstance(table, dict) else {}
 
 
 def ci_pytest_commands() -> list[str]:
@@ -864,4 +1062,223 @@ class TestTheMypyHookAndTheMypyGateCannotDisagree:
             f'pinned_hook_rev read {seen!r} from a config that plainly re-adds {MYPY_MIRROR_REPO} '
             f'at v1.11.2. test_no_hosted_hook_brings_a_second_mypy would therefore pass even with '
             f'the hosted hook restored, which makes it theatre (CI-072).'
+        )
+
+
+@pytest.mark.unit
+class TestTheReleaseBuildCommandCanRunWhereItRuns:
+    """CI-115 -- the release build command, asserted against the environment it actually runs in.
+
+    That environment is not the runner. ``python-semantic-release/python-semantic-release`` is a
+    **Docker** action (``runs: {using: docker, image: Dockerfile}``), and its image is
+    ``FROM python:3.13-bookworm`` with a pip venv at ``/psr/.venv``. It has no ``uv``, and the one
+    ``astral-sh/setup-uv`` installed in the workflow lives on the host and is not mounted in. So
+    ``build_command = "uv build"`` -- which every other file in this repo would suggest is the
+    obvious spelling -- was ``uv: command not found``, and PSR aborts the release on a failed
+    build.
+
+    The second failure was quieter. ``uv.lock`` pins ``cast-iron`` **by version**; PSR rewrites
+    ``[project].version`` and then commits, so the lock disagreed with the project definition
+    from inside the release commit outward. python-semantic-release documents both against
+    itself in ``configuration-guides/uv_integration.rst``.
+
+    ⚠ None of this is reachable by running it: a release run publishes to PyPI. These assertions
+    are therefore the only automated check that exists on the release path, and they are
+    deliberately about **order and environment** rather than about matching a command string --
+    the two things that were wrong, and the two things a reader of the config cannot see.
+    """
+
+    def test_uv_is_installed_before_anything_invokes_it(self) -> None:
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        installs = first_step_installing_extra(steps, BUILD_EXTRA)
+        uses = first_step_starting_with(steps, 'uv')
+        # Anti-vacuity (CI-083): a build_command that never mentions uv would pass an ordering
+        # comparison between two Nones while asserting nothing at all.
+        assert uses is not None, (
+            f'{PYPROJECT_NAME}: `build_command` never invokes `uv`. If the build genuinely moved '
+            f'off uv this whole guard is moot and should go; if it did not, the steps are spelled '
+            f'in a form first_step_starting_with cannot read.'
+        )
+        assert installs is not None, (
+            f'{PYPROJECT_NAME}: `build_command` runs `uv` but never installs it. It executes '
+            f"inside the PSR action's own Docker image (python:3.13-bookworm), which has no uv "
+            f"and cannot see the runner's -- so this is `uv: command not found`, and PSR aborts "
+            f'the release on a failed build. Install it from the `{BUILD_EXTRA}` extra first.'
+        )
+        assert installs < uses, (
+            f'{PYPROJECT_NAME}: `build_command` invokes uv at step {uses} but does not install it '
+            f'until step {installs}:\n  '
+            + '\n  '.join(steps)
+            + '\nThe image has no uv of its own, so the earlier call is `command not found`.'
+        )
+
+    def test_the_command_stops_at_the_first_failure(self) -> None:
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        assert steps and steps[0] == 'set -e', (
+            f'{PYPROJECT_NAME}: `build_command` must begin with `set -e`; it begins with '
+            f'{steps[0] if steps else "nothing"!r}.\n'
+            f'PSR runs this entire block as ONE `sh -c` string (`shell()`, '
+            f'cli/commands/version.py), so without `set -e` the exit status PSR sees is the LAST '
+            f"command's. A failed `uv lock` followed by a successful `uv build` would then exit "
+            f'0 and publish the stale lock this command exists to prevent -- silently, which is '
+            f'strictly worse than the bug it replaced.'
+        )
+
+    def test_the_lock_is_refreshed_and_staged_before_the_distributions_are_built(self) -> None:
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        relock = first_step_starting_with(steps, 'uv', 'lock')
+        stage = first_step_starting_with(steps, 'git', 'add')
+        build = first_step_starting_with(steps, 'uv', 'build')
+        assert relock is not None, (
+            f'{PYPROJECT_NAME}: `build_command` never re-locks. PSR rewrites `[project].version` '
+            f'before this command runs, and {LOCK_NAME} pins `cast-iron` by version -- so the '
+            f'release commit would ship a lock that disagrees with the project definition it '
+            f'sits next to, and the next `uv` run in CI would fail on it.'
+        )
+        assert stage is not None, (
+            f'{PYPROJECT_NAME}: `build_command` re-locks but never stages {LOCK_NAME}. PSR commits '
+            f'with a bare `git commit -m` and NO pathspec (`gitproject.py`), so the refresh rides '
+            f'the version-bump commit only if something put it in the index first.'
+        )
+        assert build is not None, f'{PYPROJECT_NAME}: `build_command` never builds a distribution.'
+        assert relock < stage < build, (
+            f'{PYPROJECT_NAME}: `build_command` must re-lock (step {relock}), stage (step '
+            f'{stage}), then build (step {build}), in that order:\n  ' + '\n  '.join(steps) + '\n'
+            'Staging before the re-lock stages the stale bytes; building before the re-lock puts '
+            'a stale lock inside the sdist that is about to be published.'
+        )
+
+    def test_every_variable_the_command_reads_is_one_the_pinned_psr_major_provides(self) -> None:
+        command = str(pyproject_table('tool', 'semantic_release').get('build_command', ''))
+        major = pinned_action_major(RELEASE_WORKFLOW.read_text(encoding='utf-8'), PSR_ACTION)
+        assert major is not None, (
+            f'{RELEASE_NAME} does not pin {PSR_ACTION} at a bare `@vN`. This guard reads the major '
+            f'to decide which variables `build_command` may reference; teach pinned_action_major '
+            f"the new pin style, or record the exact version's injected set below."
+        )
+        available = PSR_BUILD_COMMAND_ENV.get(major)
+        assert available is not None, (
+            f'{RELEASE_NAME} pins {PSR_ACTION} at v{major}, which PSR_BUILD_COMMAND_ENV does not '
+            f'describe. Bumping the PSR major is exactly when this needs re-checking -- read '
+            f"`build_command_env` in that version's cli/commands/version.py and add the row. "
+            f'(v11 also REMOVES the `angular` commit parser, so check `commit_parser` at the same '
+            f'time.)'
+        )
+        unavailable = env_references(command) - available
+        assert not unavailable, (
+            f'{PYPROJECT_NAME}: `build_command` reads {sorted(unavailable)}, which PSR v{major} '
+            f'does not put in the build environment. PSR passes a WHITELIST, not os.environ -- an '
+            f'unlisted name is simply empty, and a shell says nothing about that.\n'
+            f"`PACKAGE_NAME` is the specific trap: PSR's own uv-integration guide uses it, but it "
+            f'was added in v10, and under v9 `uv lock --upgrade-package ""` fails with "Empty '
+            f'field is not allowed for PEP508". Spell the project name out, or move the action to '
+            f'a major that injects the variable.'
+        )
+
+    def test_the_relocked_package_is_this_project(self) -> None:
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        argument = flag_argument(steps, '--upgrade-package')
+        name = pyproject_table('project').get('name')
+        assert argument is not None, (
+            f'{PYPROJECT_NAME}: `build_command` passes no `--upgrade-package`. A bare `uv lock` is '
+            f'measurably equivalent here (both produce the same one-line lock diff), so if that is '
+            f'the deliberate choice, delete this test with it -- do not leave it asserting a flag '
+            f'nobody passes.'
+        )
+        assert argument == name, (
+            f'{PYPROJECT_NAME}: `build_command` re-locks {argument!r} but this project is {name!r}. '
+            f'The name is spelled out rather than taken from `$PACKAGE_NAME` because the pinned '
+            f'PSR major does not inject that variable (see the test above), which is why the '
+            f'literal has to be tied to `[project].name` here instead of trusted. uv would reject '
+            f'the wrong name outright -- during the release run, after the version bump has '
+            f'already been applied.'
+        )
+
+    def test_the_build_extra_pins_uv_and_never_reaches_the_runtime_set(self) -> None:
+        extras = pyproject_table('project', 'optional-dependencies')
+        requirements = extras.get(BUILD_EXTRA)
+        assert isinstance(requirements, list) and requirements, (
+            f'{PYPROJECT_NAME}: `[project.optional-dependencies].{BUILD_EXTRA}` is missing or '
+            f'empty, but `build_command` installs `.[{BUILD_EXTRA}]` to get its uv.'
+        )
+        specifiers = [str(requirement) for requirement in requirements]
+        assert any(specifier.startswith('uv') for specifier in specifiers), (
+            f'{PYPROJECT_NAME}: the `{BUILD_EXTRA}` extra is {specifiers}, which does not provide '
+            f'uv -- the one thing `build_command` installs it for.'
+        )
+        assert all(re.search(r'[=<>~!]', specifier) for specifier in specifiers), (
+            f'{PYPROJECT_NAME}: the `{BUILD_EXTRA}` extra {specifiers} is unpinned. The release '
+            f'build is the one place a {LOCK_NAME} rewrite is COMMITTED and PUBLISHED, so it is '
+            f'the one place the uv version must not be "whatever shipped this morning".'
+        )
+        # The invariant that actually protects users. Extras are opt-in, so this cannot leak into
+        # `pip install cast-iron` -- measured on the built wheel's METADATA, which carries
+        # `Requires-Dist: uv~=0.11.32; extra == "build"` and leaves the four runtime
+        # `Requires-Dist` lines untouched. Asserted at the source rather than by building a wheel:
+        # the leak this guards against is someone moving the line, and a moved line shows here.
+        runtime = pyproject_table('project').get('dependencies', [])
+        assert isinstance(runtime, list)
+        leaked = [str(requirement) for requirement in runtime if str(requirement).startswith('uv')]
+        assert not leaked, (
+            f'{PYPROJECT_NAME}: {leaked} is in `[project].dependencies`, so `pip install cast-iron` '
+            f"now drags a 20MB build tool into every user's runtime. uv belongs in the "
+            f'`{BUILD_EXTRA}` extra, which nothing installs by accident.'
+        )
+
+    @pytest.mark.parametrize('key', DEAD_SEMANTIC_RELEASE_KEYS)
+    def test_no_dead_semantic_release_key_returns(self, key: str) -> None:
+        table = pyproject_table('tool', 'semantic_release')
+        assert key not in table, (
+            f'{PYPROJECT_NAME}: `[tool.semantic_release].{key}` is a v7-era key that PSR v8 '
+            f"deleted. `RawConfig` declares no `model_config`, so pydantic's default "
+            f'`extra="ignore"` accepts it and does nothing -- no error, no warning.\n'
+            f'`upload_to_pypi = false` is why these are asserted absent rather than left alone: it '
+            f'reads like "this project does not publish to PyPI", and the publish happens anyway '
+            f'from the `pypa/gh-action-pypi-publish` step in {RELEASE_NAME}. A reader who trusts '
+            f'it is wrong about the single most consequential thing this config does. See the '
+            f'same shape in CI-093 and CI-097.\n'
+            f'Live equivalents: `branches` (the table below) and '
+            f'`[tool.semantic_release.publish].upload_to_vcs_release` (already defaults to true).'
+        )
+
+    def test_these_guards_can_still_see_the_original_bugs(self) -> None:
+        """Positive control: prove the assertions above go red on the config CI-115 replaced.
+
+        Without this they assert one thing -- "fine" -- which is also what they would report if
+        ``build_command_steps`` quietly started returning ``[]``, or if every lookup began
+        resolving to None on both sides of a comparison. The pre-CI-115 config is reconstructed
+        and pushed through the same helpers, so a guard that cannot detect the bug it was written
+        for fails here instead of passing forever (CI-072).
+        """
+        # 1. The original one-liner: uv used, never installed.
+        original = build_command_steps('uv build')
+        assert first_step_starting_with(original, 'uv') == 0, 'the control cannot even see `uv build` as a uv call'
+        assert first_step_installing_extra(original, BUILD_EXTRA) is None, (
+            f'first_step_installing_extra claims `uv build` installs the `{BUILD_EXTRA}` extra, so '
+            f'test_uv_is_installed_before_anything_invokes_it would have passed on the exact '
+            f'config that broke the release.'
+        )
+        # 2. The vendor's own recipe, verbatim -- correct for v10, fatal under the v9 pinned here.
+        vendor = 'uv lock --upgrade-package "$PACKAGE_NAME"'
+        assert env_references(vendor) == {'PACKAGE_NAME'}, (
+            f'env_references read {env_references(vendor)} from {vendor!r}. It is what decides '
+            f'whether build_command depends on a variable its PSR major never sets, so a version '
+            f'that cannot see this reference protects nothing.'
+        )
+        assert 'PACKAGE_NAME' not in PSR_BUILD_COMMAND_ENV[9] and 'PACKAGE_NAME' in PSR_BUILD_COMMAND_ENV[10], (
+            'PSR_BUILD_COMMAND_ENV no longer records that PACKAGE_NAME is a v10 addition, which '
+            'is the entire distinction the variable check exists to draw.'
+        )
+        assert flag_argument(build_command_steps(vendor), '--upgrade-package') == '$PACKAGE_NAME', (
+            "flag_argument does not read the vendor recipe's package argument, so "
+            'test_the_relocked_package_is_this_project would pass on a command that re-locks '
+            'nothing.'
+        )
+        # 3. A restored dead key must still be visible. Asserted through a parsed table, because
+        #    the real check is `key not in table` and a parser that dropped unknown keys would
+        #    make every one of those assertions vacuously true.
+        restored = tomllib.loads('[tool.semantic_release]\nupload_to_pypi = false\n')
+        assert 'upload_to_pypi' in restored['tool']['semantic_release'], (
+            'a table that plainly contains `upload_to_pypi` does not read as containing it, so '
+            'test_no_dead_semantic_release_key_returns is theatre.'
         )

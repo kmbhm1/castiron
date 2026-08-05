@@ -55,6 +55,12 @@ These follow the precedent of
 ``tests/unit/corpus/test_goldens.py::TestTheToolingActuallyProtectsTheseBytes``: repository
 configuration that some other file depends on is asserted, because "remember to update the
 config" is not a mechanism.
+
+The file has since grown a second family, on the same principle but a sharper edge: the **release
+path** (CI-115, CI-121, CI-122). Nothing there can be checked by running it -- a release run
+publishes to PyPI -- and each of those rows is a live failure that surfaced only mid-release, after
+the version bump and the tag push had already happened. These assertions are the only automated
+check that path has.
 """
 
 import re
@@ -206,6 +212,17 @@ DEAD_SEMANTIC_RELEASE_KEYS = ('branch', 'upload_to_pypi', 'upload_to_release')
 
 #: Matches ``$VAR`` and ``${VAR}`` -- how an unset variable enters a shell command silently.
 ENV_REFERENCE = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?')
+
+#: Commit types that must reach the changelog: the ones a *user* of the package can observe. This
+#: is the captain's CI-122 ruling, pinned rather than derived, because it is a product decision --
+#: if it changes, that should be a conversation, not a silently drifting release body.
+USER_FACING_COMMIT_TYPES = frozenset({'feat', 'fix', 'perf'})
+
+#: An ``exclude_commit_patterns`` entry that this guard can reason about: ``^`` plus a bare commit
+#: type. PSR applies these with ``re.match`` over the WHOLE commit message
+#: (``changelog/release_history.py:159`` of 9.21.2), so a prefix is all that is needed and ``^ci``
+#: covers the scoped ``ci(release): ...`` spelling too -- verified end to end, not assumed.
+ANCHORED_COMMIT_TYPE = re.compile(r'\^([a-z]+)')
 
 
 def command_tokens(line: str) -> list[str]:
@@ -609,6 +626,42 @@ def pyproject_table(*path: str) -> dict[str, object]:
             return {}
         table = table[key]
     return table if isinstance(table, dict) else {}
+
+
+def pyproject_string_list(table: dict[str, object], key: str) -> list[str]:
+    """Return one TOML array-of-strings from an already-loaded table.
+
+    Args:
+        table: The table to read, as returned by :func:`pyproject_table`.
+        key: The key holding the array.
+
+    Returns:
+        The strings in that array. Empty when the key is missing or is not an array of strings, so
+        the assertions below fail on the contents rather than on a ``TypeError``.
+    """
+    value = table.get(key, [])
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def excluded_commit_types(patterns: list[str]) -> set[str]:
+    """Return the commit types a list of ``exclude_commit_patterns`` actually suppresses.
+
+    Args:
+        patterns: The raw pattern strings from ``[tool.semantic_release.changelog]``.
+
+    Returns:
+        One type per pattern of the form ``^<type>``. A pattern of any other shape contributes
+        nothing -- which is the point: the caller compares this against the parser's own
+        ``allowed_tags`` and so notices a pattern that suppresses nothing.
+    """
+    types = set()
+    for pattern in patterns:
+        match = ANCHORED_COMMIT_TYPE.fullmatch(pattern)
+        if match:
+            types.add(match.group(1))
+    return types
 
 
 def ci_pytest_commands() -> list[str]:
@@ -1508,3 +1561,151 @@ class TestNothingLeaksARunnerVirtualEnvIntoTheReleaseContainer:
             f'the very documentation that explains why it exists -- and the only way to make it '
             f'green again would be to delete the explanation.'
         )
+
+
+@pytest.mark.unit
+class TestTheChangelogExclusionsSuppressTypesTheParserKnows:
+    """CI-122 -- the release body has a size limit, and the config that respects it can go inert.
+
+    GitHub caps a Release body at **125,000 characters**. Undocumented in the REST reference;
+    established by POSTing the oversized body as a *draft*, which answered
+    ``{"field":"body","message":"body is too long (maximum is 125000 characters)"}`` and created
+    nothing. The 0.1.0 run hit it at ``github.create_release`` -- *after* bumping the version,
+    writing the changelog, committing and pushing the tag ``v0.1.0``, leaving a half-released repo
+    to clean up by hand.
+
+    It is a **first-release** problem. With no prior tag the whole history renders under one
+    ``## v0.1.0`` heading; every later release covers only the commits since the previous tag.
+    Measured against ``1197a10`` under PSR 9.21.2 -- the version ``@v9`` resolves to -- capturing
+    the literal ``release_notes`` argument passed to ``Github.create_release``: **169,012 chars**
+    with nothing excluded (over by 44,012, reproducing the 422) against **87,592** with the
+    patterns below (29.9% under). Both compute ``0.1.0``: the exclusions are presentation-only.
+
+    ⚠ **What is asserted here is not the size.** It cannot be: rendering the notes needs PSR 9.21.2,
+    while ``uv.lock`` resolves **10.6.1**, whose ``mask_initial_release`` defaults to ``True`` and
+    would render ``- Initial Release`` -- ~56 characters, passing vacuously and proving nothing
+    about the v9 the action runs. Fetching 9.21.2 instead would put the network in a suite
+    ``TestTheOfflineSuiteIsOfflineByConstruction`` exists to keep offline, and walking the git
+    history would pass vacuously in CI anyway, where ``actions/checkout@v4`` carries no
+    ``fetch-depth`` and clones one commit deep.
+
+    So what is asserted is the failure mode a reader cannot see: that each pattern names a type the
+    **parser** knows. ``^chores`` or ``^doc`` matches nothing, suppresses nothing, and looks
+    entirely correct -- the CI-093 / CI-097 shape, config that reads load-bearing while doing
+    nothing, with a 422 at the end of it.
+    """
+
+    def changelog_patterns(self) -> list[str]:
+        """Return the configured ``exclude_commit_patterns``.
+
+        Returns:
+            The raw pattern strings, in file order.
+        """
+        return pyproject_string_list(
+            pyproject_table('tool', 'semantic_release', 'changelog'), 'exclude_commit_patterns'
+        )
+
+    def test_the_non_user_facing_types_are_excluded_from_the_changelog(self) -> None:
+        patterns = self.changelog_patterns()
+        assert patterns, (
+            f'{PYPROJECT_NAME}: `[tool.semantic_release.changelog].exclude_commit_patterns` is '
+            f'empty or absent, so the FIRST release renders every commit in the history into one '
+            f'GitHub Release body. Measured on this repo that is 169,012 characters against a '
+            f'125,000 cap -- a 422 from `github.create_release`, raised only after the version '
+            f'bump, the changelog, the commit and the tag push have already happened.'
+        )
+
+    def test_every_pattern_names_a_type_the_commit_parser_knows(self) -> None:
+        """The load-bearing one: a pattern that matches nothing suppresses nothing, and looks fine.
+
+        ``exclude_commit_patterns`` is regex, so PSR accepts ``^chores`` without complaint and
+        silently changes nothing -- the config would read as a fix while the next release body
+        stayed exactly as oversized as the one that 422'd.
+        """
+        parser_options = pyproject_table('tool', 'semantic_release', 'commit_parser_options')
+        allowed = set(pyproject_string_list(parser_options, 'allowed_tags'))
+        assert allowed, (
+            f'{PYPROJECT_NAME}: `[tool.semantic_release.commit_parser_options].allowed_tags` is '
+            f'empty or absent, so this test has nothing to compare the exclusions against and the '
+            f'assertion below would pass on any pattern at all.'
+        )
+        for pattern in self.changelog_patterns():
+            match = ANCHORED_COMMIT_TYPE.fullmatch(pattern)
+            assert match is not None, (
+                f'{PYPROJECT_NAME}: exclusion pattern `{pattern}` is not a plain `^<type>`. That '
+                f'may well be deliberate, but this guard can no longer tell whether it suppresses '
+                f'anything -- teach it the new shape rather than deleting the check.'
+            )
+            assert match.group(1) in allowed, (
+                f'{PYPROJECT_NAME}: exclusion pattern `{pattern}` names `{match.group(1)}`, which '
+                f'is not in `allowed_tags` {sorted(allowed)}. It therefore matches no commit and '
+                f'suppresses nothing, while reading exactly like a pattern that works. The release '
+                f'body stays oversized and the next release 422s.'
+            )
+
+    def test_no_excluded_type_is_one_that_cuts_a_release(self) -> None:
+        """Excluding a bump driver would empty the changelog of the reason the release happened.
+
+        PSR half-protects against this itself -- ``release_history.py:175`` skips an excluded commit
+        only when its bump level is ``NO_RELEASE``, so a ``ci!:`` carrying a ``BREAKING CHANGE:``
+        footer survives the filter (verified: it bumped to 1.0.0 and reappeared under its own
+        heading). That carve-out covers the breaking case, not the ordinary one: ``^fix`` here would
+        drop every non-breaking fix from a release those fixes caused.
+        """
+        parser_options = pyproject_table('tool', 'semantic_release', 'commit_parser_options')
+        bump_drivers = set(pyproject_string_list(parser_options, 'minor_tags')) | set(
+            pyproject_string_list(parser_options, 'patch_tags')
+        )
+        assert bump_drivers, (
+            f'{PYPROJECT_NAME}: neither `minor_tags` nor `patch_tags` is set under '
+            f'`commit_parser_options`, so this test compares the exclusions against an empty set '
+            f'and cannot fail.'
+        )
+        overlap = excluded_commit_types(self.changelog_patterns()) & bump_drivers
+        assert not overlap, (
+            f'{PYPROJECT_NAME}: {sorted(overlap)} both cuts a release and is excluded from the '
+            f'changelog, so the release notes would omit the commits that caused the release.'
+        )
+
+    def test_the_types_left_in_the_changelog_are_the_ones_that_were_ruled(self) -> None:
+        """Pins the CI-122 ruling, so a new commit type forces a decision instead of drifting.
+
+        ``mask_initial_release = true`` would also have fit (it collapses the body to
+        ``- Initial Release``) and was rejected: Hard Rule #1 says the changelog *is* the commit
+        history, so the feat/fix narrative stays and only the non-user-facing types go.
+        """
+        parser_options = pyproject_table('tool', 'semantic_release', 'commit_parser_options')
+        allowed = set(pyproject_string_list(parser_options, 'allowed_tags'))
+        included = allowed - excluded_commit_types(self.changelog_patterns())
+        assert included == set(USER_FACING_COMMIT_TYPES), (
+            f'{PYPROJECT_NAME}: the changelog would carry {sorted(included)}, not '
+            f'{sorted(USER_FACING_COMMIT_TYPES)}. A type added to `allowed_tags` lands in the '
+            f'release body by default and every commit of it enlarges a body that has already '
+            f'overflowed once -- decide here whether it is user-facing, and update this test to '
+            f'record the decision.'
+        )
+
+    def test_these_guards_can_still_see_the_original_bug(self) -> None:
+        """Positive control (CI-072): every assertion above is about an absence or a membership.
+
+        That is the shape that passes loudly forever once the reader underneath it stops reading,
+        so the helpers get pushed the configurations that must be rejected.
+        """
+        # 1. The config as it stood when the release 422'd: no exclusions at all.
+        assert not pyproject_string_list({}, 'exclude_commit_patterns'), (
+            'pyproject_string_list invents patterns for a table that has none, so the emptiness '
+            'assertion would have passed on the exact config that overflowed the release body.'
+        )
+        # 2. A typo'd pattern must not be read as suppressing anything -- `^chores` is valid regex
+        #    and matches no commit in a conventional history.
+        assert excluded_commit_types(['^chores', '^doc']) == {'chores', 'doc'}, (
+            'excluded_commit_types silently normalises a typo to the type it resembles, so a '
+            'pattern that suppresses nothing would compare equal to one that works.'
+        )
+        assert not excluded_commit_types(['^chores', '^doc']) & {'chore', 'docs'}
+        # 3. Shapes the type-extractor must refuse rather than guess at, so
+        #    test_every_pattern_names_a_type_the_commit_parser_knows fails loudly on them.
+        assert excluded_commit_types(['chore', '.*', '^chore|^ci', '']) == set()
+        # 4. ...and the real, working spelling must still be read, or every assertion above is
+        #    comparing empty sets and cannot fail.
+        assert excluded_commit_types(['^chore', '^ci']) == {'chore', 'ci'}

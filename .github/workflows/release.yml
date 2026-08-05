@@ -59,14 +59,38 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: '3.12'
-
-      - name: Sync dependencies
-        run: uv sync --group dev
-
+      # ⚠ NOTHING uv-SHAPED BELONGS ON THE RUNNER IN THIS JOB. Two steps used to sit here --
+      # `astral-sh/setup-uv@v5` with `python-version: '3.12'`, then `uv sync --group dev` -- and
+      # together they are what killed the 0.1.0 release run (CI-121).
+      #
+      # `setup-uv` does more than put uv on PATH. Given a `python-version` input it runs
+      # `uv venv --python <ver>` (creating the workspace `.venv` itself, BEFORE any `uv sync`),
+      # prepends `.venv/bin` to PATH, and exports `VIRTUAL_ENV` via `core.exportVariable` --
+      # i.e. through `$GITHUB_ENV`, which makes it JOB-SCOPED and inherits into every later step.
+      # The next step is a Docker container action; the runner translates that value to the
+      # container path, so `build_command` ran with `VIRTUAL_ENV=/github/workspace/.venv` pointing
+      # at a venv whose interpreter symlink resolves only on the runner. Inside the image it is a
+      # broken symlink, and uv treats a broken ACTIVE environment as fatal:
+      #
+      #   error: Failed to build `/github/workspace`
+      #     Caused by: Failed to inspect Python interpreter from active virtual environment ...
+      #
+      # Measured, in the PSR action's own base image: broken `.venv` + `VIRTUAL_ENV` naming it =>
+      # exit 2, no distributions. The SAME broken `.venv` with `VIRTUAL_ENV` unset => exit 0, two
+      # distributions. So the variable, not the directory, is the mechanism -- `uv lock` only warns
+      # about a broken venv it merely discovers.
+      #
+      # Deleting only `uv sync --group dev` would NOT have fixed this: `setup-uv` is what creates
+      # the `.venv` and exports the variable. Both steps go, because nothing here consumes either.
+      # The release job has no `run:` steps; PSR runs in its own container and `build_command`
+      # installs its own dependencies from the `build` extra; `create-github-app-token` is node20;
+      # and `gh-action-pypi-publish` discovers a Python on the runner and INSTALLS one if it finds
+      # none, so it cannot be stranded by the absence of a venv (it is better off -- it no longer
+      # discovers the project venv's interpreter ahead of the system one).
+      #
+      # `build_command` also defends itself with `unset VIRTUAL_ENV` (see pyproject.toml). That is
+      # the belt to this brace, not a duplicate: PSR passes a fixed whitelist rather than the
+      # environment, and `VIRTUAL_ENV` is the ONLY name on it that anything on the runner can set.
       - name: Python Semantic Release (version + changelog + tag)
         id: release
         uses: python-semantic-release/python-semantic-release@v9

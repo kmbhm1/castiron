@@ -80,9 +80,17 @@ jobs:
           packages-dir: dist/
           print-hash: true
 
+      # `publish-action`, NOT `upload-to-gh-release`. The latter is archived+deprecated
+      # upstream (last release v9.8.9, Sept 2024) and — the reason this was a live
+      # first-release failure — publishes NO floating major tag, so the `@v9` that works
+      # for the `python-semantic-release` action two steps above resolves to nothing here.
+      # A `uses:` ref that does not resolve fails the job, and this step is gated on
+      # `released == 'true'`, so it could only ever have fired on the first real release.
+      # `publish-action` does publish `v9`, takes the same inputs, and is what the pinned
+      # v9.21.2 docs prescribe. Keep its major in lockstep with the version step (CI-116).
       - name: Upload artifacts to the GitHub Release
         if: steps.release.outputs.released == 'true'
-        uses: python-semantic-release/upload-to-gh-release@v9
+        uses: python-semantic-release/publish-action@v9
         with:
           github_token: ${{ steps.app-token.outputs.token || github.token }}
           tag: ${{ steps.release.outputs.tag }}

@@ -132,7 +132,7 @@ class UsersBaseSchema(CustomModel):
 
 | Band | Classes | What it is for |
 | --- | --- | --- |
-| Enums | `PublicOrderStatusEnum` | One `str, Enum` per Postgres enum type the schema uses |
+| Enums | `PublicOrderStatusEnum` | One `str, Enum` per Postgres enum type the schema uses ([member naming](../reference/generated-code.md#enum-member-names)) |
 | Base (Row) | `UsersBaseSchema` | Every column, exactly as the row comes back |
 | Insert | `UsersInsert` | Insert payloads: server-defaulted columns are optional |
 | Update | `UsersUpdate` | Update payloads: every field optional |
@@ -216,11 +216,19 @@ no generated-on banner, no source URL in the file, and no post-hoc `ruff`/`black
 whose version could change the output. That is what makes generated models safe to commit
 and diff, and it is the foundation the planned `castiron check` drift-guard will stand on.
 
+Running no formatter afterwards does not mean the output is untidy: it is written clean **as
+emitted**, and castiron promises that it passes ruff's `F`, `UP` and `I` rules at ruff's own
+default settings — so a generated module does not trip the linter of the project you just added
+it to. The promise and its limits (`E501` is explicitly not covered) are on
+[The generated code](../reference/generated-code.md#it-is-clean-as-emitted-not-cleaned-afterwards).
+
 ## Where to go next
 
 - **[What the OpenAPI source can and cannot see](../sources/openapi.md)** — the honest
   fidelity floor of the no-credentials path. Read this before you trust a generated
   constraint.
+- **[The generated code](../reference/generated-code.md)** — what castiron promises about the
+  bytes it writes, how enum member names are derived, and the known limitations.
 - **[CLI reference](../reference/cli.md)** — every flag, generated from the command itself.
 - **[Configuration](../reference/configuration.md)** — the `[tool.castiron]` table and the
   precedence rules.

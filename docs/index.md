@@ -49,7 +49,7 @@ flowchart LR
 | `castiron gen` — the CLI, with a `[tool.castiron]` project config | shipped |
 | OpenAPI/PostgREST source (a Supabase URL, a PostgREST root, or a saved JSON document) | shipped |
 | Pydantic v2 emitter — Row / Insert / Update / operational models, enums, FK relationships | shipped |
-| Byte-stable, deterministic output | shipped |
+| Byte-stable, deterministic output, [lint-clean as emitted](reference/generated-code.md) | shipped |
 | SQL-migration and live-database sources | planned |
 | SQLAlchemy emitter, typed Supabase client | planned |
 | `castiron check` — the drift guard | planned ([exit code `3` is reserved](reference/exit-codes.md)) |

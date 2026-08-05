@@ -35,9 +35,8 @@ from enum import Enum
 from castiron.emitters.base import EmittedFile, Emitter, render_import_block, section_comment
 from castiron.emitters.config import EmitterConfig
 from castiron.ir import ColumnInfo, RelationType, Schema, SortedColumns, TableInfo
-from castiron.ir.build import column_name_reserved_exceptions, string_is_reserved
 from castiron.types import PYDANTIC_TYPE_MAP, resolve_column_type
-from castiron.utils.naming import pluralize, python_class_name, python_member_name, singularize, to_pascal_case
+from castiron.utils.naming import pluralize, python_class_name, python_member_names, singularize, to_pascal_case
 
 #: Indentation unit for generated code (4 spaces -- clean, PEP 8-style output).
 IND = '    '
@@ -334,20 +333,47 @@ class PydanticEmitter(Emitter):
     # ------------------------------------------------------------------ enum classes
 
     def _enum_section(self, schema: Schema) -> str | None:
-        """Render the enum classes from the IR's deduplicated, sorted enum registry."""
+        r"""Render the enum classes from the IR's deduplicated, sorted enum registry.
+
+        The member **name** comes from :func:`~castiron.utils.naming.python_member_names`, which
+        takes the whole enum rather than one label at a time -- a collision rule is not
+        expressible per value (``CI94-D1``). The member **value** is the label rendered through
+        :func:`_py_string` and is always exact, so the name transform is never lossy.
+
+        A comment is emitted only when the name is *not* the straight transform of the label
+        (``CI94-D3``): the value literal sits on the same line and already is the label, so
+        glossing every member would be bytes in every user's file forever. ⚠ The label in that
+        comment goes through :func:`_py_string` too. That is not decoration -- after CI-080 the
+        guards fire on the *sanitized* name, so a label whose raw text carries a newline reaches
+        them: ``'\\n\\ndoc\\n\\n'`` maps to ``__DOC___`` via the enum-shape guard, and two labels
+        that sanitize alike put the newline-bearing one in a collision comment. A raw label would
+        split the ``#`` comment across lines and break the module, which is CI-009's standing
+        lesson: a renderer injecting user text into generated source must be total over its input
+        domain, not over its best-behaved caller.
+        """
         if not self.config.generate_enums or not schema.enums:
             return None
 
         classes = []
         for enum in schema.enums:
             lines = [f'class {python_class_name(enum)}(str, Enum):']
-            for value in enum.values:
-                member = python_member_name(value).upper()
+            members = python_member_names(enum)
+            for member in members:
                 comment = ''
-                if string_is_reserved(member.lower()) or column_name_reserved_exceptions(member.lower()):
-                    member = f'{member}_'
-                    comment = f'  # original name was {value} (reserved keyword)'
-                lines.append(f'{IND}{member} = {_py_string(value)}{comment}')
+                if member.note is not None:
+                    comment = f'  # original name was {_py_string(member.label)} ({member.note})'
+                lines.append(f'{IND}{member.name} = {_py_string(member.label)}{comment}')
+            if not members:
+                # ⚠ `CREATE TYPE t AS ENUM ()` is legal Postgres and PostgREST reports it as
+                # `"enum": []`, which reached here and emitted a class header with NO BODY --
+                # an `IndentationError`, at exit 0, taking the whole module with it. Same class
+                # of defect as CI-080 and reachable through the real source path.
+                #
+                # `pass` rather than skipping the class: the column that carries the type still
+                # annotates itself with this name, so omitting it would trade an
+                # `IndentationError` for a `NameError`. An empty `Enum` subclass is valid and is
+                # the honest rendering of an empty Postgres enum.
+                lines.append(f'{IND}pass')
             classes.append('\n'.join(lines))
 
         comment = section_comment('Enum Types', ['These are generated from Postgres user-defined enum types.'])

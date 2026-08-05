@@ -15,8 +15,15 @@ supabase-pydantic's ``udt_name`` resolution (see the CI4-Q3 parity test).
 
 supabase-pydantic's fidelity choices are ported verbatim -- ``float`` -> ``Decimal``,
 ``json``/``jsonb`` -> the ``dict | list[dict] | list[Any] | Json`` union, ``uuid`` ->
-``UUID4``, ``point`` -> ``Tuple[float, float]``, other geometrics -> ``Any``. Quirks are
-carried, not "fixed", in this row.
+``UUID4``, other geometrics -> ``Any``. Those quirks were carried, not "fixed", in CI-004.
+
+⚠ **Two entries are deliberate divergences from upstream's resolution string, and they are the
+only two** (CI-092, an enumerated sweep of all 65 entries): ``point`` and ``cidr``. Both were
+putting a ruff finding into the user's repository -- a deprecated ``typing`` alias and an import
+of a name the resolution never uses. Neither changes the *shape* castiron reports, only its
+spelling; see each entry's comment. castiron promises its output is clean under **F**, **UP** and
+**I** at ruff's defaults (``CI94-Q3(c)``), and a type map that ships ``F401``/``UP035`` cannot
+keep that promise.
 
 This module defines type *strings* only; it does not import ``pydantic``.
 """
@@ -87,7 +94,15 @@ PYDANTIC_TYPE_MAP: TypeMap = {
     # Enum sentinel (columns overlay their enum class from ColumnInfo.enum_info)
     'enum': TypeResolution('str'),
     # Geometric types
-    'point': TypeResolution('Tuple[float, float]', ('from typing import Tuple',)),
+    # ⚠ CI-092: upstream resolves this to ``Tuple[float, float]`` + ``from typing import Tuple``,
+    # which puts ``UP035`` (deprecated alias) and three ``UP006`` findings into every user's
+    # repository. The PEP 585 builtin is a valid *runtime* expression on Python 3.9+, so it needs
+    # **no import and no** ``from __future__ import annotations`` -- which matters, because
+    # castiron emits that future import only conditionally (``emitter.py``, on foreign keys). The
+    # emitted module already requires >=3.10 to execute regardless: every nullable field is
+    # ``X | None`` and ``json`` resolves to ``dict | list[dict] | list[Any] | Json``, both bare
+    # PEP 604/585 forms. Same shape, current spelling.
+    'point': TypeResolution('tuple[float, float]'),
     'line': TypeResolution('Any', _ANY),
     'lseg': TypeResolution('Any', _ANY),
     'box': TypeResolution('Any', _ANY),
@@ -95,7 +110,12 @@ PYDANTIC_TYPE_MAP: TypeMap = {
     'polygon': TypeResolution('Any', _ANY),
     'circle': TypeResolution('Any', _ANY),
     # Network address types
-    'cidr': TypeResolution('IPv4Network', ('from ipaddress import IPv4Network, IPv6Network',)),
+    # ⚠ CI-092: the import used to name ``IPv6Network`` as well, which the resolution never
+    # references -- a live ``F401`` in the emitted module. Narrowed to what is used. Widening the
+    # *resolution* to ``IPv4Network | IPv6Network`` was the other way to close it and is NOT what
+    # this row does: that would change the reported type, which is a fidelity decision, not a lint
+    # fix. (``inet`` below imports both names and **uses both** -- it is correct as it stands.)
+    'cidr': TypeResolution('IPv4Network', ('from ipaddress import IPv4Network',)),
     'inet': TypeResolution('IPv4Address | IPv6Address', ('from ipaddress import IPv4Address, IPv6Address',)),
     'macaddr': TypeResolution('str'),
     'macaddr8': TypeResolution('str'),

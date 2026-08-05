@@ -7,10 +7,10 @@ from pydantic import BaseModel, Field
 
 
 class PublicTaskStateEnum(str, Enum):
-    IN PROGRESS = "in progress"
+    IN_PROGRESS = "in progress"
     DONE = "done"
-    N/A = "n/a"
-    2ND PASS = "2nd pass"
+    N_A = "n/a"
+    _2ND_PASS = "2nd pass"
 
 
 # CUSTOM CLASSES

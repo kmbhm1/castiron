@@ -34,14 +34,6 @@ from tests.integration.conftest import DocumentLoader
 
 pytestmark = pytest.mark.integration
 
-#: The reason string shared by every assertion CI-075 blocks. One constant so the WORKPLAN row is
-#: named identically everywhere and a single grep finds all of them at fix time.
-CI_075 = (
-    'CI-075: classify_table_type() infers a relation kind from its path verbs, but PostgREST '
-    'emits post/patch/delete for any AUTO-UPDATABLE relation regardless of write privileges. A '
-    'SELECT-only simple view therefore reports as a BASE TABLE. Delete this marker with the fix.'
-)
-
 #: The relationship marker ``makeProperty`` writes into a column description. Spelled out here
 #: rather than imported from ``parse`` on purpose: a test that reused the parser's own pattern
 #: would pass even if that pattern stopped matching what PostgREST actually emits.
@@ -542,12 +534,16 @@ class TestDefaultsAndIdentity:
 
 
 class TestViewClassification:
-    """``table_type`` is a heuristic, and the real apparatus shows it is a weak one.
+    """``table_type`` is inferred, and the real apparatus is what showed the old inference wrong.
 
     ⚠ The CI-008 spec's version of this class is **wrong** and must not be restored from it. The
     spec predicted that ``active_customers``/``ledger_summary`` classify correctly and that
     ``all_nullable_readonly`` misclassifies. Measured on PostgREST v14.14 (and reproduced on a
-    pinned v12.2.3 by the testbed dispatch), the truth is the opposite on all three counts.
+    pinned v12.2.3 by the testbed dispatch), the truth was the opposite on all three counts.
+
+    **CI-075 is now fixed** and this class records the result: the verb signal is gone, all five
+    views classify as VIEW, and the single residual (``all_nullable_readonly``) is the known,
+    ruled, accepted cost of ``CI94-Q2``.
     """
 
     def test_path_verbs_track_auto_updatability_not_write_privileges(
@@ -566,24 +562,45 @@ class TestViewClassification:
         assert verbs['/order_report'] == ['get']
         assert verbs['/mv_customer_spend'] == ['get']
 
-    def test_non_updatable_relations_classify_correctly(self, live_public_schema: Schema) -> None:
-        assert _table(live_public_schema, 'order_report').table_type == 'VIEW'
-        assert _table(live_public_schema, 'mv_customer_spend').table_type == 'VIEW'
+    @pytest.mark.parametrize(
+        'view_name',
+        [
+            # Not auto-updatable: a JOIN view and a materialized view. These classified correctly
+            # even under the old verb heuristic, which is what made them its counter-witness.
+            'order_report',
+            'mv_customer_spend',
+            # ⚠ AUTO-UPDATABLE, and therefore writable through the API. These three carried a
+            # strict `xfail` naming CI-075 until CI-094: the verb signal read them as base tables.
+            # The marker is deleted, not relaxed, and so is the reason constant it shared.
+            'active_customers',
+            'ledger_summary',
+            'writable_customer_view',
+        ],
+    )
+    def test_every_view_classifies_as_a_view(self, live_public_schema: Schema, view_name: str) -> None:
+        assert _table(live_public_schema, view_name).table_type == 'VIEW'
 
-    def test_a_read_only_all_nullable_base_table_is_not_misread_as_a_view(self, live_public_schema: Schema) -> None:
-        # The spec predicted this one WOULD misclassify (both heuristic signals were expected to
-        # fire). It does not: the write verbs are emitted for it too, so the first signal never
-        # fires and the bias toward BASE TABLE holds. Pinned so the prediction is not re-adopted.
-        assert _table(live_public_schema, 'all_nullable_readonly').table_type == 'BASE TABLE'
+    def test_a_read_only_all_nullable_base_table_is_read_as_a_view(self, live_public_schema: Schema) -> None:
+        """⚠ The one KNOWN, RULED, ACCEPTED miss -- pinned so it stays a decision, not a surprise.
+
+        ``all_nullable_readonly`` is a BASE TABLE with no NOT NULL column, which is genuinely
+        indistinguishable from a view in this document: PostgREST emits write verbs for it (it is
+        auto-updatable) and an empty ``required``. ``CI5-D6`` biased that cell toward BASE TABLE;
+        ``CI94-Q2`` reversed the bias, because ``CI5-D6``'s justification -- "misreading a table as
+        a view empties its primary key" -- is void here. A base table lands in this cell only if it
+        has no NOT NULL column, and a Postgres PRIMARY KEY column *is* NOT NULL, so it has no
+        primary key to empty. Asserted below rather than argued.
+
+        The trade: 3 real views fixed for 1 inert miss, 23/26 -> 25/26 on this capture.
+        """
+        table = _table(live_public_schema, 'all_nullable_readonly')
+        assert table.table_type == 'VIEW'
+        assert table.primary_key() == [], 'the miss is only inert while there is no key to lose'
+        assert all(c.primary is False for c in table.columns)
 
     def test_real_base_tables_stay_base_tables(self, live_public_schema: Schema) -> None:
         for name in ('customers', 'orders', 'products', 'rls_locked_notes', 'partially_visible'):
             assert _table(live_public_schema, name).table_type == 'BASE TABLE', name
-
-    @pytest.mark.xfail(strict=True, reason=CI_075)
-    @pytest.mark.parametrize('view_name', ['active_customers', 'ledger_summary', 'writable_customer_view'])
-    def test_an_auto_updatable_view_is_still_a_view(self, live_public_schema: Schema, view_name: str) -> None:
-        assert _table(live_public_schema, view_name).table_type == 'VIEW'
 
 
 class TestViewKeyDowngrade:

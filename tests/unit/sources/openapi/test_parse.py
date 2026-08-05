@@ -5,6 +5,9 @@ mocks HTTP**, which is the whole point of the fetch/parse split.
 """
 
 import copy
+import itertools
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,6 +27,25 @@ from castiron.sources.openapi.parse import (
 # ---------------------------------------------------------------------------
 # Helpers.
 # ---------------------------------------------------------------------------
+
+#: The committed corpus documents (real PostgREST captures + the synthetic torture input).
+CORPUS_INPUTS = Path(__file__).parents[3] / 'unit' / 'corpus' / 'inputs'
+
+#: CI-005's hand-authored fixture, referenced rather than copied.
+FIXTURE_DOCUMENT = Path(__file__).parent / 'fixtures' / 'postgrest_openapi.json'
+
+#: The write verbs PostgREST can expose. ``_all_verb_subsets`` yields the 7 non-empty ones; the
+#: parametrization adds the empty (GET-only) case, for **8** in total.
+WRITE_VERBS = ('post', 'patch', 'delete')
+
+
+def _all_verb_subsets() -> list[tuple[str, ...]]:
+    """Every non-empty subset of ``{post, patch, delete}``, enumerated (``CI-072``)."""
+    return [
+        combination
+        for size in range(1, len(WRITE_VERBS) + 1)
+        for combination in itertools.combinations(WRITE_VERBS, size)
+    ]
 
 
 def column(rows: Any, table: str, name: str) -> Row:
@@ -462,19 +484,26 @@ class TestEnums:
 
 @pytest.mark.unit
 class TestTableClassification:
+    """CI-075: ONE signal -- a non-empty ``required`` array. The write verbs are not evidence.
+
+    They used to be the first signal, on the assumption that PostgREST exposes
+    ``post``/``patch``/``delete`` only where the API role may write. Measured against real
+    PostgREST v14.14 **and** pinned v12.2.3 (CI-008), it exposes them for any **auto-updatable**
+    relation regardless of privilege, so a ``GRANT SELECT``-only simple view is writable through
+    the API and used to classify as a base table.
+    """
+
     @pytest.mark.parametrize(
-        ('path_item', 'definition', 'expected'),
+        ('definition', 'expected'),
         [
-            ({'get': {}, 'post': {}}, {'required': ['id']}, 'BASE TABLE'),
-            ({'get': {}, 'post': {}}, {}, 'BASE TABLE'),
-            ({'get': {}}, {'required': ['id']}, 'BASE TABLE'),
-            ({'get': {}}, {}, 'VIEW'),
+            ({'required': ['id']}, 'BASE TABLE'),
+            ({'required': ['id', 'name']}, 'BASE TABLE'),
+            ({}, 'VIEW'),
+            ({'required': []}, 'VIEW'),
         ],
     )
-    def test_only_read_only_and_all_nullable_is_a_view(
-        self, path_item: dict[str, Any], definition: dict[str, Any], expected: str
-    ) -> None:
-        assert classify_table_type('t', definition, {'/t': path_item}) == expected
+    def test_a_non_empty_required_array_is_the_whole_decision(self, definition: dict[str, Any], expected: str) -> None:
+        assert classify_table_type('t', definition, {'/t': {'get': {}, 'post': {}}}) == expected
 
     def test_an_empty_required_array_does_not_count_as_a_signal(self) -> None:
         assert classify_table_type('t', {'required': []}, {'/t': {'get': {}}}) == 'VIEW'
@@ -482,15 +511,155 @@ class TestTableClassification:
     def test_a_missing_path_item_is_treated_as_read_only(self) -> None:
         assert classify_table_type('t', {}, {}) == 'VIEW'
 
-    @pytest.mark.parametrize('method', ['post', 'patch', 'delete'])
-    def test_any_write_method_proves_a_base_table(self, method: str) -> None:
-        assert classify_table_type('t', {}, {'/t': {'get': {}, method: {}}}) == 'BASE TABLE'
+    @pytest.mark.parametrize('verbs', [(), *_all_verb_subsets()], ids=lambda v: '+'.join(v) or 'get-only')
+    @pytest.mark.parametrize('required', [None, [], ['id']], ids=['absent', 'empty', 'present'])
+    def test_a_write_method_proves_nothing_about_the_relation_kind(
+        self, verbs: tuple[str, ...], required: list[str] | None
+    ) -> None:
+        """⚠ Enumerated, not sampled (``CI-072``): **all 8 verb subsets × 3 `required` states**.
+
+        This test's predecessor was named ``test_any_write_method_proves_a_base_table`` and
+        asserted the false premise *in its own name*. A parametrized sample of two would not be
+        evidence that the verb signal is gone; the full cross-product is.
+        """
+        definition: dict[str, Any] = {} if required is None else {'required': required}
+        path_item = {'get': {}, **{verb: {} for verb in verbs}}
+        expected = 'BASE TABLE' if required else 'VIEW'
+        assert classify_table_type('t', definition, {'/t': path_item}) == expected
 
     def test_the_fixture_classifies_the_view_and_the_read_only_table(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert column(rows, 'active_users_view', 'id')[7] == 'VIEW'
-        # GET-only but has NOT NULL columns -> stays a BASE TABLE (biased heuristic).
+        # GET-only, but it declares NOT NULL columns -> a BASE TABLE. Unaffected by CI-075: the
+        # deciding signal was already `required` for this one.
         assert column(rows, 'restricted_table', 'id')[7] == 'BASE TABLE'
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            # The five real views of the testbed capture. Three of them (the auto-updatable ones)
+            # were BASE TABLE before this fix -- that IS CI-075.
+            ('active_customers', 'VIEW'),
+            ('ledger_summary', 'VIEW'),
+            ('writable_customer_view', 'VIEW'),
+            ('order_report', 'VIEW'),
+            ('mv_customer_spend', 'VIEW'),
+            # Real base tables, unchanged.
+            ('customers', 'BASE TABLE'),
+            ('orders', 'BASE TABLE'),
+            ('products', 'BASE TABLE'),
+            ('rls_locked_notes', 'BASE TABLE'),
+            ('partially_visible', 'BASE TABLE'),
+            # ⚠ The one KNOWN, ACCEPTED residual miss (`CI94-Q2`): a base table whose every column
+            # is nullable is indistinguishable from a view in this document, and the tie is now
+            # broken toward VIEW. It is inert -- no NOT NULL column means no primary key, so
+            # `primary_key()` was already `[]` and there is nothing for the VIEW reading to empty.
+            # Measured: flipping it changes one IR field and zero emitted bytes.
+            ('all_nullable_readonly', 'VIEW'),
+        ],
+    )
+    def test_the_real_capture_classifies_25_of_26_correctly(self, name: str, expected: str) -> None:
+        document = json.loads(
+            (CORPUS_INPUTS / 'testbed-public.openapi.json').read_text(encoding='utf-8'),
+        )
+        definition = document['definitions'][name]
+        assert classify_table_type(name, definition, document['paths']) == expected
+
+
+@pytest.mark.unit
+class TestThePremiseTheClassifierRestsOn:
+    """The fact that licenses reading ``required`` alone, asserted over every committed document.
+
+    A ``<pk/>``-marked column outside a **non-empty** ``required`` implies the relation is a VIEW.
+    Measured 6/6 with **0 exceptions** across all four corpus inputs plus the CI-005 fixture. It
+    is deliberately **not** a branch in :func:`classify_table_type`: it is *provably equivalent* to
+    the one-signal rule on any document PostgREST can emit (it could only differ where ``required``
+    is non-empty *and* a PK column is nullable, which Postgres cannot produce), so encoding it
+    would be dead logic that reads as live (``CI94-Q2``, ruled). Asserting it here is what keeps
+    the justification falsifiable: if a future capture violates it, this goes red and the model's
+    basis is gone.
+    """
+
+    #: Every committed OpenAPI document, enumerated from the tree rather than listed by hand.
+    DOCUMENTS = sorted(CORPUS_INPUTS.glob('*.openapi.json')) + [FIXTURE_DOCUMENT]
+
+    def test_the_sweep_covers_every_committed_document(self) -> None:
+        assert len(self.DOCUMENTS) == 4, [p.name for p in self.DOCUMENTS]
+
+    #: Per-document count of relations carrying a ``<pk/>`` outside a non-empty ``required``.
+    #: Spelled out per document, because the class claims "**6/6**, 0 exceptions" and a claim
+    #: that is never counted is a claim nobody is checking. ``testbed-inventory`` and
+    #: ``synthetic-torture`` legitimately have none -- every relation in them is a base table --
+    #: and asserting **zero** for those is what makes the other two numbers mean something.
+    EXPECTED_WITNESSES = {
+        # active_customers, ledger_summary, writable_customer_view, order_report, mv_customer_spend
+        'testbed-public.openapi': 5,
+        'postgrest_openapi': 1,  # active_users_view
+        'testbed-inventory.openapi': 0,
+        'synthetic-torture.openapi': 0,
+    }
+
+    @staticmethod
+    def _witnesses(document: dict[str, Any]) -> list[tuple[str, dict[str, Any], list[str]]]:
+        """Relations whose ``<pk/>`` marker falls outside a non-empty ``required``."""
+        found = []
+        for name, definition in document.get('definitions', {}).items():
+            required = definition.get('required') or []
+            marked = [
+                column
+                for column, prop in definition.get('properties', {}).items()
+                if isinstance(prop, dict) and '<pk/>' in str(prop.get('description', ''))
+            ]
+            outside = [column for column in marked if column not in required]
+            if outside:
+                found.append((name, definition, outside))
+        return found
+
+    @pytest.mark.parametrize('path', DOCUMENTS, ids=lambda p: p.stem)
+    def test_a_pk_marker_outside_a_non_empty_required_means_view(self, path: Path) -> None:
+        document = json.loads(path.read_text(encoding='utf-8'))
+        witnesses = self._witnesses(document)
+
+        # ⚠ The count is asserted FIRST. Without it this test passes vacuously on a document with
+        # no witnessing relation -- which is two of the four -- and the loop below would be a
+        # guard that cannot fail (`CI-072`, `CI-091`).
+        assert len(witnesses) == self.EXPECTED_WITNESSES[path.stem], (
+            f'{path.name}: expected {self.EXPECTED_WITNESSES[path.stem]} relation(s) with a <pk/> '
+            f'outside a non-empty `required`, found {[name for name, _, _ in witnesses]}. The '
+            f"premise's evidence has moved; do not adjust the number without re-deriving it."
+        )
+        for name, definition, outside in witnesses:
+            assert classify_table_type(name, definition, document.get('paths', {})) == 'VIEW', (
+                f'{path.name}:{name} carries a <pk/> on {outside} outside a non-empty `required`, '
+                f'so the premise says VIEW. If a real capture now violates this, the one-signal '
+                f'model of CI-075 has lost its justification -- do not "fix" this test.'
+            )
+
+    def test_the_premise_totals_six_across_every_committed_document(self) -> None:
+        # The number the class docstring claims, asserted as a total rather than left as prose.
+        total = sum(len(self._witnesses(json.loads(path.read_text(encoding='utf-8')))) for path in self.DOCUMENTS)
+        assert total == 6, total
+        assert sum(self.EXPECTED_WITNESSES.values()) == 6
+
+    def test_a_non_empty_required_always_contains_every_pk_marker(self) -> None:
+        # The other half, and the stronger claim: over the 26 definitions of the real capture,
+        # 20 carry `required` and ALL 20 carry a <pk/> that is inside it -- 0 exceptions.
+        document = json.loads((CORPUS_INPUTS / 'testbed-public.openapi.json').read_text(encoding='utf-8'))
+        with_required = 0
+        for name, definition in document['definitions'].items():
+            required = definition.get('required') or []
+            if not required:
+                continue
+            with_required += 1
+            marked = [
+                column
+                for column, prop in definition['properties'].items()
+                if isinstance(prop, dict) and '<pk/>' in str(prop.get('description', ''))
+            ]
+            assert marked, f'{name} declares NOT NULL columns but carries no <pk/> marker'
+            assert set(marked) <= set(required), f'{name}: {marked} not all inside {required}'
+        assert with_required == 20, with_required
+        assert len(document['definitions']) == 26
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,8 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 from enum import Enum
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
-from typing import Any, Tuple
+from ipaddress import IPv4Address, IPv4Network, IPv6Address
+from typing import Any
 
 from pydantic import UUID4, BaseModel, Field, Json
 
@@ -54,13 +54,11 @@ class CustomModelUpdate(CustomModel):
 class ActiveCustomersBaseSchema(CustomModel):
     """ActiveCustomers Base Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -180,11 +178,9 @@ class LedgerRefsBaseSchema(CustomModel):
 class LedgerSummaryBaseSchema(CustomModel):
     """LedgerSummary Base Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Columns
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendBaseSchema(CustomModel):
@@ -369,7 +365,7 @@ class TypeMenagerieBaseSchema(CustomModel):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -393,11 +389,9 @@ class TypeMenagerieBaseSchema(CustomModel):
 class WritableCustomerViewBaseSchema(CustomModel):
     """WritableCustomerView Base Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 
@@ -408,13 +402,11 @@ class WritableCustomerViewBaseSchema(CustomModel):
 class ActiveCustomersInsert(CustomModelInsert):
     """ActiveCustomers Insert Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Optional fields
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -542,11 +534,9 @@ class LedgerRefsInsert(CustomModelInsert):
 class LedgerSummaryInsert(CustomModelInsert):
     """LedgerSummary Insert Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Optional fields
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendInsert(CustomModelInsert):
@@ -741,7 +731,7 @@ class TypeMenagerieInsert(CustomModelInsert):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -765,11 +755,9 @@ class TypeMenagerieInsert(CustomModelInsert):
 class WritableCustomerViewInsert(CustomModelInsert):
     """WritableCustomerView Insert Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Optional fields
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 
@@ -780,13 +768,11 @@ class WritableCustomerViewInsert(CustomModelInsert):
 class ActiveCustomersUpdate(CustomModelUpdate):
     """ActiveCustomers Update Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     created_at: datetime.datetime | None = Field(default=None)
     display_name: str | None = Field(default=None)
     email: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     signup_status: PublicStatusEnum | None = Field(default=None)
 
 
@@ -906,11 +892,9 @@ class LedgerRefsUpdate(CustomModelUpdate):
 class LedgerSummaryUpdate(CustomModelUpdate):
     """LedgerSummary Update Schema."""
 
-    # Primary Keys
-    id: int | None = Field(default=None)
-
     # Columns
     amount: Decimal | None = Field(default=None)
+    id: int | None = Field(default=None)
 
 
 class MvCustomerSpendUpdate(CustomModelUpdate):
@@ -1095,7 +1079,7 @@ class TypeMenagerieUpdate(CustomModelUpdate):
     c_numeric: Decimal | None = Field(default=None)
     c_numeric_plain: Decimal | None = Field(default=None)
     c_percentage: Decimal | None = Field(default=None)
-    c_point: Tuple[float, float] | None = Field(default=None)
+    c_point: tuple[float, float] | None = Field(default=None)
     c_polygon: Any | None = Field(default=None)
     c_real: float | None = Field(default=None)
     c_smallint: int | None = Field(default=None)
@@ -1119,11 +1103,9 @@ class TypeMenagerieUpdate(CustomModelUpdate):
 class WritableCustomerViewUpdate(CustomModelUpdate):
     """WritableCustomerView Update Schema."""
 
-    # Primary Keys
-    id: UUID4 | None = Field(default=None)
-
     # Columns
     display_name: str | None = Field(default=None)
+    id: UUID4 | None = Field(default=None)
     is_active: bool | None = Field(default=None)
 
 

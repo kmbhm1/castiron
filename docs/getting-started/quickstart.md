@@ -139,8 +139,10 @@ class UsersBaseSchema(CustomModel):
 | Operational | `Users` | The Base model plus nested foreign-key relationship fields — extend this one |
 
 Column comments become `description=`, a table comment (`COMMENT ON TABLE`) becomes the
-model docstring on every class generated for that table, a reserved word like `class`
-becomes `field_class` with `alias="class"`, and a foreign key becomes a real nested model:
+model docstring on every class generated for that table, a column name Python cannot use —
+a reserved word like `class`, but also `2fast` or `space name` — becomes a safe attribute with
+the real name kept on `alias=` ([column names](../reference/generated-code.md#column-names)),
+and a foreign key becomes a real nested model:
 
 ```python
 class Orders(OrdersBaseSchema):

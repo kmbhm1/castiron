@@ -67,6 +67,7 @@ nav:
       - OpenAPI / PostgREST: sources/openapi.md
   - Reference:
       - CLI: reference/cli.md
+      - Generated code: reference/generated-code.md
       - Configuration: reference/configuration.md
       - Environment variables: reference/environment-variables.md
       - Exit codes: reference/exit-codes.md

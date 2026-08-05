@@ -34,10 +34,13 @@ plausible-looking lie in your models.
 
 Two further consequences of reading an API description rather than a catalogue:
 
-- **You see what your API role sees.** The document is filtered by privileges and RLS.
-  Tables your key cannot read are not "hidden" — they are absent, indistinguishable from
+- **You see what your API role sees — object by object, not column by column.** Tables and
+  functions your key cannot access are not "hidden": they are absent, indistinguishable from
   not existing. This is why the run summary prints the counts it read; `read 2 tables`
-  when you expected 20 is your signal.
+  when you expected 20 is your signal. **Column-level privileges are a different matter —
+  PostgREST does not apply them to the document at all**, so castiron emits fields for
+  columns your key cannot read. See
+  [Privileges filter objects, not columns](#privileges-filter-objects-not-columns).
 - **One schema per document.** PostgREST serves one schema at a time, selected by
   `Accept-Profile` (castiron's `--schema`). Cross-schema foreign keys are not resolvable
   from a single run.
@@ -45,7 +48,7 @@ Two further consequences of reading an API description rather than a catalogue:
 ## The full picture
 
 Legend: **✅ full** — the fact is exact. **⚠ partial** — something survives, degraded.
-**❌ absent** — not in the document at all.
+**❌ absent** — not in the document at all. **n/a** — the comparison does not apply.
 
 ### Tables, views and columns
 
@@ -53,7 +56,7 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | --- | --- | --- | --- |
 | Table/view names, columns | ✅ full | ✅ | `definitions` |
 | Column nullability | ✅ full for tables; ⚠ **every view column is reported nullable** | ✅ | `required` lists exactly the NOT NULL columns; PostgREST reports view columns nullable |
-| Table vs view | ⚠ **heuristic** — no view marker is emitted, so castiron infers it (biased toward `BASE TABLE`) | ✅ `relkind` | the document carries no marker |
+| Table vs view | ⚠ **inferred from one signal** — no view marker is emitted, so a non-empty `required` list means `BASE TABLE` and anything else means `VIEW`; see [below](#table-or-view-is-inferred-from-one-signal) | ✅ `relkind` | the document carries no marker |
 | Column type | ⚠ **`smallint` and `integer` both arrive as `int32`**; `bigint` survives as `int64`; every other type keeps its Postgres name | ✅ exact | PostgREST's `toSwaggerFormat` |
 | Numeric precision/scale, `varchar(n)` typmod | ❌ lost (`maxLength` survives, but see [below](#string-lengths-survive-but-do-not-become-constraints)) | ✅ | `format_type(atttypid, NULL)` erases them |
 | Domain types | ❌ collapse to their base type | ✅ | resolved before the document is built |
@@ -61,7 +64,8 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Identity / generated columns | ❌ **always false** — see [below](#identity-and-generated-columns) | ✅ | no `nextval` reaches the document |
 | Column comments | ✅ full | ✅ | `description` |
 | Table comments | ✅ full | ✅ | `definitions.<t>.description` → the model docstring |
-| Objects the API role cannot see | ❌ **invisible** — RLS and privileges silently shrink the schema | ✅ | PostgREST's default openapi-mode |
+| Objects (tables, views, functions) the API role cannot see | ❌ **invisible** — RLS and privileges silently shrink the schema | ✅ | PostgREST's default openapi-mode |
+| Columns the API role cannot `SELECT` | ⚠ **still described, and still emitted** — column privileges are not applied to the document; see [below](#privileges-filter-objects-not-columns) | n/a | PostgREST filters relations, not columns — a generated model is not a privilege boundary |
 
 ### Keys and constraints
 
@@ -230,9 +234,77 @@ constraint. That is a deliberate downgrade rather than a discard: it keeps the f
 document actually stated, and it is what tells a foreign key pointing *at* the view that
 the relationship is many-to-one rather than many-to-many.
 
-There is also no view marker in the document at all, so "is this a table or a view?" is a
-two-signal heuristic (writable methods, and whether anything is NOT NULL), biased toward
-`BASE TABLE`.
+### Table or view is inferred from one signal
+
+The document carries **no view marker at all** — PostgREST computes `relkind IN ('v','m')`
+internally and never writes it down — so castiron infers the relation kind, and it infers it
+from exactly one thing: the definition's `required` array.
+
+```
+required is non-empty  →  BASE TABLE
+anything else          →  VIEW
+```
+
+That is the whole rule. It rests on a Postgres catalogue fact rather than on a PostgREST
+behaviour: `required` is exactly the NOT NULL set, and a view column's
+`pg_attribute.attnotnull` is always false, so **a view never carries `required`**.
+
+**Both directions of the inference can be wrong, and it is worth knowing how:**
+
+- A **base table whose every column is nullable** is classified as a `VIEW`. Nothing in the
+  document distinguishes it from one.
+- A **view with at least one column reported NOT NULL** would be classified as a
+  `BASE TABLE`. Postgres does not produce that shape today, which is why the rule is worth
+  making, but the inference is what it is — the document is not being read for a fact it
+  states, it is being read for a fact that correlates.
+
+Misreading a table as a view has a bounded cost: a view has no primary key in castiron's IR,
+so a `<pk/>` marker on it is retained one step down as a UNIQUE constraint (above). A base
+table that lands in the ambiguous cell has no NOT NULL column at all, and a Postgres PRIMARY
+KEY column is NOT NULL — so it has no primary key to lose.
+
+**Write verbs are not a signal.** An earlier release also read `post`/`patch`/`delete` on the
+relation's path as evidence of table-ness. Measured against PostgREST v12.2.3 and v14.14, the
+verbs track Postgres *auto-updatability*, not relation kind: a `GRANT SELECT`-only simple view
+is auto-updatable and gets all three. On the captured 26-relation schema the verb signal was
+present on 24 relations including 3 of the 5 views. It was noise, and it is gone.
+
+### Privileges filter objects, not columns
+
+This one runs in the unsafe direction, so read it even if you skip the rest.
+
+PostgREST's default `openapi-mode` hides *relations* the API role cannot reach: a table your
+key cannot read is absent from `definitions`, and a function it cannot execute has no
+`/rpc/` path. **That filtering stops at the relation boundary.** A column carrying a
+column-level `REVOKE` is still described in its table's `properties` — measured against
+PostgREST v12.2.3 and v14.14, and still present when `openapi-mode = ignore-privileges` is
+set, so its presence is not an artifact of the privilege filter. It is simply not filtered.
+
+```sql
+REVOKE ALL ON public.partially_visible FROM anon;
+GRANT SELECT (id, title) ON public.partially_visible TO anon;
+```
+
+`secret_body` is not readable by `anon`. It arrives in the document anyway, so castiron emits
+a field for it:
+
+```python
+class PartiallyVisibleBaseSchema(CustomModel):
+    """PartiallyVisible Base Schema."""
+
+    # Primary Keys
+    id: int
+
+    # Columns
+    secret_body: str
+    title: str
+```
+
+**A generated model is not a privilege boundary.** It describes the schema PostgREST
+published, not the subset of it your key may read — so a model can name a column that fails
+with a permission error the moment you select it. Treat the models as a description of the
+schema's *shape*; get "what may this role read?" from `information_schema.column_privileges`,
+never from generated code.
 
 ### Integer widths
 
@@ -261,6 +333,9 @@ Reach for a live-database source when any of these are load-bearing for you:
 - anything your API role cannot see
 
 The live-database source is on the roadmap and is not shipped yet. Until it lands, this
-page is the complete list of what a generated model can and cannot be trusted to know —
-and every line of it is asserted by a test in `tests/unit/sources/openapi/`, so the floor
-cannot move quietly.
+page is the complete list of what a generated model can and cannot be trusted to know.
+Every claim above about *castiron's* behaviour is asserted by a test under `tests/unit/`
+(`sources/openapi/` for the parser, `corpus/` for the emitted bytes), so the floor cannot
+move quietly; the claims about *PostgREST's* behaviour were measured against a live
+Postgres + PostgREST apparatus on two versions, because no test castiron owns can pin
+somebody else's server.

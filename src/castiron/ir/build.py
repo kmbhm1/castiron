@@ -244,6 +244,39 @@ class UserTypeMapping:
 # ---------------------------------------------------------------------------
 
 
+def identifier_characters(text: str) -> str:
+    """Map ``text`` to identifier-legal characters, one character out per character in.
+
+    ``('_' + c).isidentifier()`` is the exact test for "Python allows ``c`` inside an
+    identifier", and it is the reason a leading digit still needs a separate guard:
+    ``'_2'`` is an identifier, ``'2'`` is not.
+
+    ⚠ Unicode identifier characters are **kept**, not folded to ASCII (``CI94-D2``, confirmed by
+    the captain): ``'Ünïcödé'`` survives as ``Ünïcödé`` rather than becoming ``________``.
+    Destroying an international name to satisfy a non-default lint rule is the worse trade.
+
+    No run-collapsing and no stripping: ``'a  b'`` and ``'a b'`` must stay *distinguishable
+    attempts*, and the collision rule -- not this function -- is what resolves them when they are
+    not.
+
+    ⚠ **Two consumers, deliberately one algorithm** (``CI85-D1``): the enum-member path
+    (:func:`~castiron.utils.naming.python_member_names`) and the column path
+    (:func:`standardize_column_name`). One algorithm means one set of bugs. It lives *here*
+    rather than under ``castiron.utils`` because ``castiron.utils.naming`` already imports
+    ``castiron.ir.build`` -- putting the shared helper under ``utils`` would reverse that edge,
+    and it is acyclic today only because ``castiron/utils/__init__.py`` happens to contain no
+    imports. ``ir.build`` is also already the identifier-protection module: it owns
+    :func:`string_is_reserved`, :func:`column_name_is_reserved` and their siblings.
+
+    Args:
+        text: The raw source name (a column name, or an enum label).
+
+    Returns:
+        ``text`` with every non-identifier character replaced by ``'_'``, same length.
+    """
+    return ''.join(c if ('_' + c).isidentifier() else '_' for c in text)
+
+
 def string_is_reserved(value: str) -> bool:
     """Whether ``value`` collides with a Python builtin or keyword."""
     return value in dir(builtins) or value in keyword.kwlist

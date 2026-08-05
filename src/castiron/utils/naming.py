@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import inflection
 
 from castiron.ir import EnumInfo
-from castiron.ir.build import column_name_reserved_exceptions, string_is_reserved
+from castiron.ir.build import column_name_reserved_exceptions, identifier_characters, string_is_reserved
 
 
 def to_pascal_case(value: str) -> str:
@@ -114,29 +114,11 @@ class EnumMember:
     note: str | None = None
 
 
-def _identifier_characters(label: str) -> str:
-    """Map ``label`` to identifier-legal characters, one character out per character in.
-
-    ``('_' + c).isidentifier()`` is the exact test for "Python allows ``c`` inside an
-    identifier", and it is the reason a leading digit still needs :func:`python_member_names`'
-    separate guard: ``'_2'`` is an identifier, ``'2'`` is not.
-
-    ⚠ Unicode identifier characters are **kept**, not folded to ASCII (``CI94-D2``, confirmed by
-    the captain): ``'Ünïcödé'`` becomes ``ÜNÏCÖDÉ`` rather than ``________``. Destroying an
-    international label to satisfy a non-default lint rule (``PLC2401``) is the worse trade.
-
-    No run-collapsing and no stripping: ``'a  b'`` and ``'a b'`` must stay *distinguishable
-    attempts*, and the collision rule -- not this function -- is what resolves them when they are
-    not.
-    """
-    return ''.join(c if ('_' + c).isidentifier() else '_' for c in label)
-
-
 def _is_enum_reserved_shape(name: str) -> bool:
     """Whether ``name`` is unusable as an ``Enum`` member, even though it is a valid identifier.
 
     ``str.isidentifier()`` is necessary and **not sufficient**. Three *shapes* are reserved on
-    top of Python's identifier rules, and :func:`_identifier_characters` produces all three
+    top of Python's identifier rules, and :func:`~castiron.ir.build.identifier_characters` produces all three
     freely -- from labels as ordinary as a **trailing space** nobody noticed in a ``CREATE TYPE``:
 
     * ``_sunder_`` (``'(none)'`` -> ``_NONE_``) -- ``ValueError`` when the class body runs, so
@@ -167,7 +149,7 @@ def _is_enum_reserved_shape(name: str) -> bool:
     compile time**, so the name ``Enum`` actually receives is ``NFKC(name)``, not what castiron
     wrote. **Seven** identifier-continue codepoints normalize to ``'_'`` and six of them are
     non-ASCII (``U+FF3F`` FULLWIDTH LOW LINE, ``U+FE33``, ``U+FE34``, ``U+FE4D``, ``U+FE4E``,
-    ``U+FE4F``); ``_identifier_characters`` **keeps** them by ``CI94-D2`` and ``str.upper()``
+    ``U+FE4F``); ``identifier_characters`` **keeps** them by ``CI94-D2`` and ``str.upper()``
     leaves them alone. So ``'_x＿'`` -> ``_X＿``, which is not sunder by inspection and
     *is* sunder to the compiler -- it raised ``ValueError: _sunder_ names, such as '_X_'``,
     printing the **normalized** name, which is the interpreter telling us plainly which string it
@@ -242,7 +224,9 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
 
     The algorithm, in this order. **The order is load-bearing.**
 
-    1. Map every character to an identifier-legal one (:func:`_identifier_characters`).
+    1. Map every character to an identifier-legal one
+       (:func:`~castiron.ir.build.identifier_characters`, **shared** with the column path --
+       ``CI85-D1`` moved it there so one algorithm serves both).
     2. Uppercase, which is what keeps ``PENDING``/``ACTIVE``/``OK`` byte-identical to what
        castiron has always emitted.
     3. Empty guard -- ``CREATE TYPE t AS ENUM ('')`` is legal Postgres; it becomes ``_``.
@@ -294,7 +278,7 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     members: list[EnumMember] = []
 
     for label in enum.values:
-        name = _identifier_characters(label).upper()
+        name = identifier_characters(label).upper()
         if not name:
             name = '_'
         if not name.isidentifier():

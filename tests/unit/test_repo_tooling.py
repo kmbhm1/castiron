@@ -176,6 +176,22 @@ PSR_BUILD_COMMAND_ENV = {
     10: PSR_WHITELISTED_ENV | {'NEW_VERSION', 'PACKAGE_NAME'},
 }
 
+#: The one name on ``PSR_WHITELISTED_ENV`` that a step on the RUNNER can set, which is what makes
+#: it the whole attack surface between the two halves of the release job (CI-121). ``UV_PYTHON``
+#: and ``UV_CACHE_DIR`` are exported by the same action and are harmless precisely because they are
+#: **not** whitelisted -- they never reach ``build_command``.
+POISONED_ENV = 'VIRTUAL_ENV'
+
+#: The action that set it. ``astral-sh/setup-uv`` does more than put uv on ``PATH``: given a
+#: ``python-version`` input its ``setupPython()`` runs ``uv venv --python <ver>`` -- creating the
+#: workspace ``.venv`` **itself**, before any ``uv sync`` -- and then calls
+#: ``core.exportVariable('VIRTUAL_ENV', path.resolve('.venv'))``. ``exportVariable`` writes to
+#: ``$GITHUB_ENV``, so the value is JOB-scoped and inherits into the ``python-semantic-release``
+#: **container** action, with the path translated to ``/github/workspace/.venv``. That venv's
+#: interpreter symlink resolves only on the runner, so uv sees a broken *active* environment and
+#: ``uv build`` fails hard. Read from the shipped ``dist/setup/index.js`` of ``@v5``, not the docs.
+SETUP_UV_ACTION = 'astral-sh/setup-uv'
+
 #: python-semantic-release keys that v8 deleted and that nothing has read since. They are asserted
 #: **absent**, in the CI-093 / CI-097 spirit: the danger is not that they are stale, it is that
 #: ``upload_to_pypi = false`` *reads* like "this project does not publish to PyPI" while the
@@ -487,6 +503,56 @@ def flag_argument(steps: list[str], flag: str) -> str | None:
             if position + 1 < len(tokens):
                 return tokens[position + 1]
     return None
+
+
+def first_step_unsetting(steps: list[str], variable: str) -> int | None:
+    """Return the index of the first step that clears one environment variable.
+
+    Token-level, like every other reader in this module: a substring test for ``VIRTUAL_ENV``
+    matches the name inside a comment, inside an ``export``, and inside the prose of a neighbouring
+    command, none of which clear anything.
+
+    Args:
+        steps: The steps from ``build_command_steps``.
+        variable: The variable name, e.g. ``'VIRTUAL_ENV'``.
+
+    Returns:
+        The index, or None if no step unsets it.
+    """
+    for index, step in enumerate(steps):
+        tokens = command_tokens(step)
+        if tokens and tokens[0] == 'unset' and variable in tokens[1:]:
+            return index
+    return None
+
+
+def uses_action(text: str, action: str) -> bool:
+    """Report whether a workflow *invokes* one action, as opposed to merely naming it.
+
+    Distinct from ``pinned_action_major``, which answers None both for "absent" and for "pinned in
+    some other way" -- a distinction that does not matter when reading a pin and matters entirely
+    when asserting an absence, where the second case would pass vacuously.
+
+    Comment lines are skipped, and that is load-bearing rather than tidy here: the release workflow
+    carries a comment block explaining why this very action was removed, which names it and quotes
+    its ``python-version`` input. A parser that matched the first line *containing* the action would
+    read that warning as the thing it warns about.
+
+    Args:
+        text: The whole workflow file.
+        action: The ``owner/repo`` of the action, without a ref.
+
+    Returns:
+        True if some non-comment line invokes it at any ref.
+    """
+    pattern = re.compile(rf'^uses:\s*{re.escape(action)}(@|\s*$)')
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip().lstrip('-').strip()
+        if raw_line.strip().startswith('#'):
+            continue
+        if pattern.search(stripped):
+            return True
+    return False
 
 
 def env_references(command: str) -> set[str]:
@@ -1281,4 +1347,164 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
         assert 'upload_to_pypi' in restored['tool']['semantic_release'], (
             'a table that plainly contains `upload_to_pypi` does not read as containing it, so '
             'test_no_dead_semantic_release_key_returns is theatre.'
+        )
+
+
+@pytest.mark.unit
+class TestNothingLeaksARunnerVirtualEnvIntoTheReleaseContainer:
+    """CI-121 -- the release job runs in two places, and one of them poisoned the other.
+
+    The ``0.1.0`` release run died in ``build_command`` at ``uv build``::
+
+        error: Failed to build `/github/workspace`
+          Caused by: Failed to inspect Python interpreter from active virtual environment at
+                     `.venv/bin/python3`
+          Caused by: Broken symlink at `.venv/bin/python3`, was the underlying Python interpreter
+                     removed?
+
+    The chain, reproduced end to end in the PSR action's own base image (``python:3.13-bookworm``)
+    rather than argued:
+
+    1. ``astral-sh/setup-uv@v5`` with a ``python-version`` input runs ``uv venv`` -- so the
+       workspace ``.venv`` is created by *that* action, not by the ``uv sync`` step that followed
+       it -- and exports ``VIRTUAL_ENV`` through ``$GITHUB_ENV``, making it job-scoped.
+    2. The next step is a Docker container action. The runner translates the value to
+       ``/github/workspace/.venv``, and the mounted venv's interpreter symlink points into the
+       runner's toolcache, which does not exist inside the image.
+    3. PSR passes ``VIRTUAL_ENV`` straight through to ``build_command`` (see
+       ``PSR_WHITELISTED_ENV``), and uv treats a broken **active** environment as fatal.
+
+    ⚠ The measurement that matters is the negative one, because the obvious diagnosis is wrong: a
+    broken ``.venv`` **alone does not fail**. Same workspace, same image, same command --
+
+        ``VIRTUAL_ENV`` set   -> exit 2, zero distributions
+        ``VIRTUAL_ENV`` unset -> exit 0, two distributions
+
+    -- and the ``warning: Ignoring existing virtual environment ...`` line appears in *both*, so
+    the warning in the failure log is not the cause it looks like. The variable is the mechanism;
+    the directory is a bystander. Both ends of that are asserted here, because the fix has two
+    halves that protect different things: removing the producer keeps the runner clean, and
+    ``unset VIRTUAL_ENV`` keeps the build correct if a producer ever comes back.
+
+    ⚠ Like the class above, none of this is reachable by running it -- a release run publishes to
+    PyPI and claims a name. These assertions and that container harness are the only checks the
+    release path has.
+    """
+
+    def test_the_build_command_clears_the_variable_before_it_invokes_uv(self) -> None:
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        cleared = first_step_unsetting(steps, POISONED_ENV)
+        uses = first_step_starting_with(steps, 'uv')
+        # Anti-vacuity (CI-083): a build_command that never invokes uv would pass an ordering
+        # comparison between two Nones while asserting nothing at all.
+        assert uses is not None, (
+            f'{PYPROJECT_NAME}: `build_command` never invokes `uv`, so this guard is comparing '
+            f'nothing. If the build genuinely moved off uv, delete this class with it.'
+        )
+        assert cleared is not None, (
+            f'{PYPROJECT_NAME}: `build_command` invokes uv without clearing `{POISONED_ENV}`:\n  '
+            + '\n  '.join(steps)
+            + f'\nPSR hands this command a fixed WHITELIST rather than os.environ, and '
+            f'`{POISONED_ENV}` is the one name on it that a step on the runner can set. When it '
+            f'points at a venv built on the runner, uv inside the container sees a broken ACTIVE '
+            f'environment and `uv build` fails hard -- which is exactly how the 0.1.0 release '
+            f'aborted, after the version had already been computed. Add `unset {POISONED_ENV}`.'
+        )
+        assert cleared < uses, (
+            f'{PYPROJECT_NAME}: `build_command` clears `{POISONED_ENV}` at step {cleared} but '
+            f'already invoked uv at step {uses}:\n  '
+            + '\n  '.join(steps)
+            + '\nToo late; the failing call is the earlier one.'
+        )
+
+    def test_clearing_it_never_displaces_the_error_trap(self) -> None:
+        # `set -e` must stay first no matter what gets prepended for CI-121's sake. Asserted here
+        # as well as in the class above because THIS is the change that made the first line movable
+        # -- and PSR runs the whole block as one `sh -c`, so a lost `set -e` means a failed re-lock
+        # exits 0 and publishes a stale uv.lock silently.
+        steps = build_command_steps(str(pyproject_table('tool', 'semantic_release').get('build_command', '')))
+        cleared = first_step_unsetting(steps, POISONED_ENV)
+        assert steps and steps[0] == 'set -e' and cleared != 0, (
+            f'{PYPROJECT_NAME}: `build_command` begins with {steps[0] if steps else "nothing"!r}. '
+            f'`unset {POISONED_ENV}` belongs immediately AFTER `set -e`, never before it.'
+        )
+
+    def test_the_release_workflow_puts_no_uv_on_the_runner(self) -> None:
+        assert not uses_action(RELEASE_WORKFLOW.read_text(encoding='utf-8'), SETUP_UV_ACTION), (
+            f'{RELEASE_NAME} uses {SETUP_UV_ACTION} again. With a `python-version` input that '
+            f'action creates the workspace `.venv` AND exports `{POISONED_ENV}` job-wide, which is '
+            f'what aborted the 0.1.0 release (CI-121).\n'
+            f'Nothing in this job consumes it: the job has no `run:` steps, PSR runs in its own '
+            f'container and `build_command` installs its own dependencies from the `build` extra, '
+            f'`create-github-app-token` is node20, and `gh-action-pypi-publish` discovers a Python '
+            f'on the runner and installs one itself if it finds none.\n'
+            f'If some future step genuinely needs uv on the runner, it must not carry '
+            f'`python-version` -- and change this guard deliberately, with a measurement, not to '
+            f'make a red test go away.'
+        )
+
+    def test_psr_really_does_forward_the_variable_this_class_is_about(self) -> None:
+        # The two assertions above are only worth having because PSR passes this name through. If
+        # it ever stops, they are guarding a channel that no longer exists -- and the whitelist is
+        # recorded in this file precisely so that is checkable rather than remembered.
+        assert POISONED_ENV in PSR_WHITELISTED_ENV, (
+            f'PSR_WHITELISTED_ENV no longer lists `{POISONED_ENV}`, so `build_command` cannot '
+            f'inherit it and this whole class is moot. Re-read `build_distributions()` in the '
+            f'pinned PSR before deleting it -- or before trusting that it still matters.'
+        )
+
+    def test_these_guards_can_still_see_the_original_bug(self) -> None:
+        """Positive control: prove the assertions above go red on the config CI-121 replaced.
+
+        Each asserts an absence or an ordering, which is the shape that passes loudly forever once
+        the reader underneath it quietly stops reading. So the pre-CI-121 ``build_command`` and the
+        pre-CI-121 workflow step are both pushed back through the same helpers (CI-072).
+        """
+        # 1. The build_command as it stood when the release failed: uv invoked, nothing cleared.
+        original = build_command_steps(
+            "set -e\npython -m pip install -e '.[build]'\nuv lock --upgrade-package cast-iron\n"
+            'git add uv.lock\nuv build\n'
+        )
+        assert first_step_starting_with(original, 'uv') is not None, (
+            'the control cannot even see `uv lock` as a uv call, so the ordering assertion it controls proves nothing.'
+        )
+        assert first_step_unsetting(original, POISONED_ENV) is None, (
+            f'first_step_unsetting claims the pre-CI-121 build_command cleared `{POISONED_ENV}`. '
+            f'It did not -- that is why the release failed -- so '
+            f'test_the_build_command_clears_the_variable_before_it_invokes_uv would have passed on '
+            f'the exact config that broke the release.'
+        )
+        # A near-miss that must NOT count as clearing: naming the variable is not unsetting it.
+        assert first_step_unsetting(build_command_steps(f'export {POISONED_ENV}=/tmp/v'), POISONED_ENV) is None
+        assert first_step_unsetting(build_command_steps(f'unset {POISONED_ENV}'), POISONED_ENV) == 0
+
+        # 2. The removed workflow step must still be visible to the absence check.
+        restored = '\n'.join(
+            [
+                '      - name: Install uv',
+                f'        uses: {SETUP_UV_ACTION}@v5',
+                '        with:',
+                "          python-version: '3.12'",
+            ]
+        )
+        assert uses_action(restored, SETUP_UV_ACTION), (
+            f'uses_action cannot see a plainly restored `uses: {SETUP_UV_ACTION}@v5` step, so '
+            f'test_the_release_workflow_puts_no_uv_on_the_runner would stay green with the trap '
+            f'back in place -- theatre (CI-072).'
+        )
+        # 3. ...and the comment block that now explains the removal must NOT be read as a use.
+        #    This is the real file's shape, not a hypothetical: release.yml names the action, its
+        #    `python-version` input and the error it caused, in prose, right where it used to sit.
+        commented_out = '\n'.join(
+            [
+                f'      # `{SETUP_UV_ACTION}@v5` with `python-version` created the .venv AND',
+                f'      # exported {POISONED_ENV}. Do not restore:',
+                f'      #   uses: {SETUP_UV_ACTION}@v5',
+            ]
+        )
+        assert not uses_action(commented_out, SETUP_UV_ACTION), (
+            f'uses_action reads a COMMENT naming {SETUP_UV_ACTION} as an invocation. '
+            f'{RELEASE_NAME} carries exactly that comment, so the guard would fail permanently on '
+            f'the very documentation that explains why it exists -- and the only way to make it '
+            f'green again would be to delete the explanation.'
         )

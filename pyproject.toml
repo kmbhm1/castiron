@@ -223,8 +223,30 @@ major_on_zero = true
 # pathspec, `gitproject.py`), so the refreshed lock rides the version-bump commit. The action
 # sets `safe.directory "*"` in the SYSTEM gitconfig, so this `git` call is not blocked by the
 # container's root-vs-runner ownership mismatch.
+#
+# `unset VIRTUAL_ENV` is what CI-121 added, and it is the second line rather than the first
+# because `set -e` has to stay first (see above). PSR does not pass `os.environ` to this command --
+# it builds a fixed WHITELIST (`build_distributions()`, cli/commands/version.py) of `PATH`, `HOME`,
+# `VIRTUAL_ENV`, the CI markers and `NEW_VERSION`. `VIRTUAL_ENV` is the only name on that list any
+# runner-side step can set, and `astral-sh/setup-uv` set it: given a `python-version` input it runs
+# `uv venv`, then exports `VIRTUAL_ENV` through `$GITHUB_ENV`, which is job-scoped and reaches this
+# container action with the path translated to `/github/workspace/.venv`. That venv's interpreter
+# symlink resolves only on the runner, so inside the image uv found a BROKEN ACTIVE environment and
+# `uv build` failed hard -- aborting the 0.1.0 release after the version had already been computed.
+#
+# Measured in the PSR action's own base image, with the real command: broken `.venv` + that
+# variable => exit 2, zero distributions; the same broken `.venv` with the variable unset => exit
+# 0, two distributions. `rm -rf .venv` also measures green, and was rejected: it deletes a
+# directory this job did not create, and it only works while the poison happens to be spelled
+# `.venv` -- it would do nothing at all if `VIRTUAL_ENV` ever named some other path. `unset` names
+# the mechanism instead of a symptom.
+#
+# It cannot itself abort the build: `unset` returns 0 on an already-unset variable, and that exact
+# case (no `VIRTUAL_ENV`, no `.venv`) was executed under `set -e` -- it is the post-fix CI state,
+# now that release.yml no longer installs uv on the runner at all.
 build_command = """
     set -e
+    unset VIRTUAL_ENV
     python -m pip install -e '.[build]'
     uv lock --upgrade-package cast-iron
     git add uv.lock

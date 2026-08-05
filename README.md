@@ -4,9 +4,9 @@
 
 Point castiron at a schema source — a Supabase URL, your SQL migrations, or a
 live database — and get typed models (and, soon, a typed client for tables,
-views, and RPCs). A `check` mode fails CI when your application code drifts from
-the schema. **No database connection required** for the OpenAPI and migrations
-sources.
+views, and RPCs). A `check` mode will fail CI when your application code drifts
+from the schema. **No database connection required** for the OpenAPI and
+migrations sources.
 
 > _"It's cast-iron. It doesn't care."_ — and neither should your types drift.
 
@@ -68,7 +68,10 @@ class Orders(OrdersBaseSchema):
     order_items: list[OrderItems] | None = Field(default=None)
 ```
 
-Output is deterministic — the same schema and options produce the same bytes, every time.
+Output is deterministic — the same schema and options produce the same bytes, every time — and
+lint-clean as emitted, under ruff's `F`, `UP` and `I` rules at ruff's own defaults. See
+**[The generated code](https://kmbhm1.github.io/castiron/reference/generated-code/)** for that
+promise, its limits, and how enum member names are derived.
 
 Put your settings in `pyproject.toml` and the flags go away (the API key is deliberately
 **rejected** there — that file gets committed):
@@ -98,8 +101,8 @@ flowchart LR
 ```
 
 Pluggable **sources** parse a schema into one formalized **Schema IR**; pluggable
-**emitters** turn the IR into typed code. **`check`** re-emits in memory and fails
-if the committed output has drifted.
+**emitters** turn the IR into typed code. **`check`** — planned, not yet a command —
+will re-emit in memory and fail if the committed output has drifted.
 
 ## Honest about what it knows
 

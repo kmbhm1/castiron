@@ -278,6 +278,69 @@ changelog_file = "CHANGELOG.md"
 # is `[tool.semantic_release.publish].upload_to_vcs_release`, which already defaults to `true`,
 # so removing it changes nothing. Guarded by `tests/unit/test_repo_tooling.py`.
 
+# ⚠ THIS TABLE MUST STAY BELOW EVERY BARE KEY OF `[tool.semantic_release]` — a sub-table header
+# ends the parent table in TOML, so moving it up silently reparents `changelog_file`, `tag_format`
+# and friends into it, where nothing reads them.
+#
+# WHY IT EXISTS: GitHub caps a Release body at **125,000 characters**, and the 0.1.0 run died
+# there — after it had already bumped the version, written the CHANGELOG, committed, and pushed the
+# tag:
+#
+#   [github.create_release] Creating release for tag v0.1.0
+#   ERROR 422 Client Error: Unprocessable Entity ... /repos/kmbhm1/castiron/releases
+#
+# The cap is not documented in GitHub's REST reference; it was established by POSTing the oversized
+# body as a *draft*, which answered `{"resource":"Release","code":"custom","field":"body",
+# "message":"body is too long (maximum is 125000 characters)"}` and created nothing.
+#
+# This is a FIRST-RELEASE problem specifically. With no prior tag the entire history lands under one
+# `## v0.1.0` heading; every later release covers only the commits since the previous tag.
+#
+# MEASURED against `1197a10` under PSR **9.21.2** (what the `@v9` action resolves to — see the skew
+# note below), capturing the literal `release_notes` argument handed to `Github.create_release`:
+#
+#     nothing set (as it ran)      169,012 chars   -> over by 44,012, reproduces the 422
+#     these patterns                87,592 chars   -> 29.9% under the cap
+#
+# Both rows compute `0.1.0`: exclusions are presentation-only and never change the bump.
+#
+# `mask_initial_release = true` would also fit (it collapses the whole thing to `- Initial Release`,
+# 56 chars) and was REJECTED by captain ruling — Hard Rule #1 says the changelog *is* the commit
+# history, so the feat/fix narrative stays and only the non-user-facing types go.
+#
+# SEMANTICS, read from the shipped 9.21.2 rather than the docs (`changelog/release_history.py`):
+#
+# * `pattern.match(commit_message)` (:159) — `re.match` anchors at the start and needs only a
+#   PREFIX, so `^ci` matches `ci(release): …` as well as `ci: …`. Verified end-to-end: every scoped
+#   spelling in this history (`ci(release)`, `docs(reference)`, `refactor(ir)`, `test(emitters)`, …)
+#   is present in the unfiltered body and absent from the filtered one.
+# * Merge commits never depended on this list. `ignore_merge_commits` (:169) `continue`s before the
+#   exclusion filter is consulted — all 24 `Merge pull request …` commits score zero in BOTH bodies.
+# * An excluded type that CAUSES A BUMP is deliberately kept (:175 skips only when the commit's
+#   bump level is `NO_RELEASE`). Falsified rather than assumed: a synthetic `ci(release): …` with a
+#   `BREAKING CHANGE:` footer bumped to 1.0.0 and reappeared under its own heading. These patterns
+#   therefore cannot silence the commit that caused the release.
+#
+# WHY NOTHING LOCAL CAUGHT IT — the same v9/v10 skew as CI-115, on a new key. 9.21.2 defaults
+# `mask_initial_release = False` (`cli/config.py`, above a `# TODO: Breaking Change v10` comment);
+# the 10.6.1 that `uv.lock` resolves defaults it to `True`, where this could not have happened. Every
+# local path (`make check-next-version`, the dev group) runs 10.x, so no local gate can observe a
+# v9-only default. Keep this in mind when the action is pinned to v10+ (CI-116) — at that point the
+# masking default changes underneath this config.
+#
+# Guarded by `tests/unit/test_repo_tooling.py`, which asserts these patterns actually name types the
+# parser knows: `^chores` would match nothing and leave the fix silently inert.
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+    "^chore",
+    "^ci",
+    "^build",
+    "^style",
+    "^test",
+    "^docs",
+    "^refactor",
+]
+
 [tool.semantic_release.branches.main]
 match = "(main|master)"
 prerelease = false

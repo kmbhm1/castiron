@@ -6,9 +6,8 @@ over HTTPS, so there is no connection string, no driver, and nothing to open in 
 firewall.
 
 !!! warning "Pre-alpha"
-    castiron is not yet published to PyPI, so today the only way to run it is
-    [from a checkout](#from-a-checkout). The install block is the one forward-looking
-    thing on this page; everything else is the CLI as it ships.
+    castiron is on PyPI and the install below works, but it is young and moving fast —
+    APIs may change between releases. Everything on this page is the CLI as it ships.
 
 ## Install
 
@@ -31,15 +30,14 @@ castiron supports Python 3.10–3.13 and pulls in three runtime dependencies (`c
 
 ### From a checkout
 
+You do not need this to use castiron — it is how you run the code you are editing when
+you work on castiron itself:
+
 ```bash
 git clone https://github.com/kmbhm1/castiron.git
 cd castiron
 uv sync
 uv run castiron --version
-```
-
-```
-castiron 0.0.0
 ```
 
 Every `castiron ...` command below works as `uv run castiron ...` from a checkout.

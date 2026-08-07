@@ -29,9 +29,12 @@ points. **You do not need it to contribute.**
 - **Conventional Commits.** `type(scope): summary` — `feat`, `fix`, `docs`,
   `refactor`, `test`, `chore`, `perf`, `build`, `ci`, `style`. The commit type
   drives the release: `fix:`/`perf:` → patch, `feat:` → minor, a `!` or
-  `BREAKING CHANGE:` footer → major. Releases are cut automatically by
-  `python-semantic-release` on merge to `main` — **never hand-edit the version in
-  `pyproject.toml` or `CHANGELOG.md`.**
+  `BREAKING CHANGE:` footer → major. `python-semantic-release` computes that bump and
+  cuts the release — but **while castiron is pre-alpha the release workflow is gated to
+  a manual `workflow_dispatch`**, so merging to `main` publishes nothing; a maintainer
+  triggers the release by hand from the Actions tab. Your commit type still decides the
+  version that release carries, so choose it deliberately — and **never hand-edit the
+  version in `pyproject.toml` or `CHANGELOG.md`.**
 - **Typing is the contract.** `mypy --strict` over `src/`; every public function
   is fully typed.
 - **Style.** `ruff` with single quotes, 120 columns, Google-convention

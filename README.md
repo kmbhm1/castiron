@@ -14,22 +14,23 @@ migrations sources.
 
 ---
 
-> 🚧 **Status: pre-alpha.** castiron is under active development and is **not yet
-> released**. The pipeline, sources, and emitters are being built out — see the
-> roadmap. It is the successor to
+> 🚧 **Status: pre-alpha.** castiron is on PyPI and installable, but it is young and
+> moving fast: the pipeline, sources, and emitters are still being built out, and APIs
+> may change between releases. It is the successor to
 > [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic), carrying
 > forward its schema-fidelity engine on a source-agnostic architecture.
 
 ## Quickstart
 
-Until the first release, run castiron from a checkout:
-
 ```bash
-git clone https://github.com/kmbhm1/castiron.git
-cd castiron
-uv sync
-uv run castiron --version
+uv add cast-iron       # or: pip install cast-iron
+castiron --version     # the command has no hyphen
 ```
+
+You install the hyphenated **`cast-iron`** and run the unhyphenated **`castiron`**. PyPI
+does not allow `castiron` as a distribution name, so the hyphen belongs to the
+distribution and nothing else — the command, the import package (`import castiron`), and
+this repository all stay unhyphenated.
 
 Generate typed Pydantic models from a Supabase project — one command, no database
 connection, no driver, no connection string:

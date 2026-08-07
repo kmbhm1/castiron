@@ -20,10 +20,10 @@ No database connection. No driver. No connection string.
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
 
 !!! warning "Pre-alpha"
-    castiron is under active development and **not yet released to PyPI**. What is
-    documented here is what ships in the repository today: the `gen` command, the
-    OpenAPI/PostgREST source, and the Pydantic emitter. It is the successor to
-    [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic).
+    castiron is on PyPI and installable, but it is young and moving fast — APIs may
+    change between releases. What is documented here is what ships today: the `gen`
+    command, the OpenAPI/PostgREST source, and the Pydantic emitter. It is the successor
+    to [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic).
 
 ## Architecture
 
@@ -79,7 +79,8 @@ castiron --version     # the command has no hyphen
     `pip install scikit-learn` → `import sklearn`. PyPI does not allow `castiron` as a
     distribution name, so this is permanent rather than a stopgap.
 
-Until the first release, [run it from a checkout](getting-started/quickstart.md#from-a-checkout).
+Working on castiron itself? [Run it from a checkout](getting-started/quickstart.md#from-a-checkout)
+instead.
 
 ## Why "castiron"
 

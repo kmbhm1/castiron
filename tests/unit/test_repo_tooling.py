@@ -261,6 +261,23 @@ SETUP_UV_ACTION = 'astral-sh/setup-uv'
 #: already defaults to ``True``.
 DEAD_SEMANTIC_RELEASE_KEYS = ('branch', 'upload_to_pypi', 'upload_to_release')
 
+#: The same trap from the other direction (CI-119), and the reason it needs its own entry: these
+#: keys are **real**, just not at this level. A bare ``changelog_file = "CHANGELOG.md"`` under
+#: ``[tool.semantic_release]`` sat directly beneath ``version_toml`` and ``version_variables``,
+#: which really do decide where the version is written, and read exactly like the line that names
+#: the changelog. It named nothing: ``'changelog_file' in RawConfig.model_fields`` is ``False`` on
+#: **both** PSR majors this repo touches -- 9.21.2 (what the ``@v9`` action runs) and 10.6.1 (what
+#: ``uv.lock`` resolves) -- so ``extra="ignore"`` dropped it, silently, through two shipped
+#: releases that wrote ``CHANGELOG.md`` anyway.
+#:
+#: Mapped to the **live** table rather than merely listed, because "move it there" is the obvious
+#: fix and the obvious target is the wrong one: ``[tool.semantic_release.changelog].changelog_file``
+#: exists but is deprecated in 9.21.2's own source ("Deprecated! Moved to
+#: 'default_templates.changelog_file'", with a ``field_validator`` that logs "compatibility will
+#: break in v10" on every load). The live spelling is one table deeper, where the default is
+#: already ``CHANGELOG.md``, so the key was deleted instead of moved.
+MISPLACED_SEMANTIC_RELEASE_KEYS = {'changelog_file': 'tool.semantic_release.changelog.default_templates'}
+
 #: Matches ``$VAR`` and ``${VAR}`` -- how an unset variable enters a shell command silently.
 ENV_REFERENCE = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?')
 
@@ -1855,6 +1872,21 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
             f'`[tool.semantic_release.publish].upload_to_vcs_release` (already defaults to true).'
         )
 
+    @pytest.mark.parametrize(('key', 'live_table'), sorted(MISPLACED_SEMANTIC_RELEASE_KEYS.items()))
+    def test_no_bare_key_belongs_to_a_sub_table_instead(self, key: str, live_table: str) -> None:
+        table = pyproject_table('tool', 'semantic_release')
+        assert key not in table, (
+            f'{PYPROJECT_NAME}: `[tool.semantic_release].{key}` is not a field of `RawConfig` at '
+            f'this level -- on either PSR major this repo runs -- so `extra="ignore"` drops it '
+            f'without an error or a warning. It is worse than a stale key: it sits next to '
+            f'`version_toml` and `version_variables`, which ARE read, so it reads as the line that '
+            f'configures the changelog while configuring nothing.\n'
+            f'The live spelling is `[{live_table}].{key}`, whose default is already the value this '
+            f'line was setting -- which is why CI-119 deleted it rather than moving it. Moving it '
+            f'one table up instead, to `[tool.semantic_release.changelog].{key}`, would land on a '
+            f'field PSR itself marks deprecated and slates for removal.'
+        )
+
     def test_these_guards_can_still_see_the_original_bugs(self) -> None:
         """Positive control: prove the assertions above go red on the config CI-115 replaced.
 
@@ -1896,6 +1928,21 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
             'a table that plainly contains `upload_to_pypi` does not read as containing it, so '
             'test_no_dead_semantic_release_key_returns is theatre.'
         )
+        # 4. And a restored MISPLACED key -- same mechanism, different species (CI-119). Spelled
+        #    out separately because this one is a bare key sharing its name with a real field in a
+        #    nested table, which is exactly the shape a lookup that walked into sub-tables would
+        #    report as "present" no matter where it sat.
+        for key in MISPLACED_SEMANTIC_RELEASE_KEYS:
+            misplaced = tomllib.loads(f'[tool.semantic_release]\n{key} = "CHANGELOG.md"\n')
+            assert key in misplaced['tool']['semantic_release'], (
+                f'a table whose only key is `{key}` does not read as containing it, so '
+                f'test_no_bare_key_belongs_to_a_sub_table_instead is theatre.'
+            )
+            nested = tomllib.loads(f'[tool.semantic_release.changelog]\n{key} = "CHANGELOG.md"\n')
+            assert key not in nested['tool']['semantic_release'], (
+                f'`{key}` inside `[tool.semantic_release.changelog]` reads as a bare key of '
+                f'`[tool.semantic_release]`, so the guard would go red on config that is fine.'
+            )
 
 
 @pytest.mark.unit

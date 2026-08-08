@@ -338,7 +338,27 @@ version_toml = ["pyproject.toml:project.version"]
 # `castiron --version` prints and what the outbound PostgREST User-Agent carries. Without this
 # line the first release would leave both reporting 0.0.0 against a published 0.1.0.
 version_variables = ["src/castiron/__init__.py:__version__"]
-changelog_file = "CHANGELOG.md"
+
+# ⚠ A FOURTH key was removed here (CI-119): a bare `changelog_file = "CHANGELOG.md"`, which sat
+# directly under `[tool.semantic_release]` and was read by nobody. `changelog_file` is not a field
+# of `RawConfig` at this level in EITHER PSR this repo touches -- measured, `'changelog_file' in
+# RawConfig.model_fields` is False on both 9.21.2 (what the `@v9` action runs) and 10.6.1 (what
+# `uv.lock` resolves) -- so the same `extra="ignore"` described below swallowed it. It is the
+# CI-093 / CI-097 shape again: it reads like the line that names the changelog, next to
+# `version_toml` and `version_variables`, which really are load-bearing.
+#
+# Deleted rather than relocated, because BOTH relocations are worse:
+#   * `[tool.semantic_release.changelog].changelog_file` is real but DEPRECATED -- 9.21.2's own
+#     field docstring reads "Deprecated! Moved to 'default_templates.changelog_file'" and a
+#     `field_validator` logs "compatibility will break in v10" on every load. That trades a silent
+#     no-op for a warning-emitting key already scheduled for removal.
+#   * `[tool.semantic_release.changelog.default_templates].changelog_file` is the live spelling,
+#     and its default is already `"CHANGELOG.md"` -- verbatim what this line said. Restating a
+#     default is new config surface for zero behaviour, and it would have to thread past the
+#     sub-table ordering hazard flagged below.
+# Nothing changes either way: the effective value was, and remains, `CHANGELOG.md` -- which is the
+# file v0.1.0 and v0.1.1 actually wrote with this key being ignored. Guarded by
+# `tests/unit/test_repo_tooling.py`.
 
 # ⚠ Three v7-era keys were removed here: `branch = "main"`, `upload_to_pypi = false`,
 # `upload_to_release = true`. All three were DEAD — `RawConfig` declares no `model_config`, so
@@ -352,8 +372,10 @@ changelog_file = "CHANGELOG.md"
 # so removing it changes nothing. Guarded by `tests/unit/test_repo_tooling.py`.
 
 # ⚠ THIS TABLE MUST STAY BELOW EVERY BARE KEY OF `[tool.semantic_release]` — a sub-table header
-# ends the parent table in TOML, so moving it up silently reparents `changelog_file`, `tag_format`
-# and friends into it, where nothing reads them.
+# ends the parent table in TOML, so moving it up silently reparents `commit_parser`, `tag_format`
+# and friends into it, where nothing reads them. (This sentence used to cite `changelog_file` as
+# its example; CI-119 deleted that key precisely because it was already reparented in effect —
+# ignored where it sat — which made it the one bad illustration of the hazard.)
 #
 # WHY IT EXISTS: GitHub caps a Release body at **125,000 characters**, and the 0.1.0 run died
 # there — after it had already bumped the version, written the CHANGELOG, committed, and pushed the

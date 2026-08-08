@@ -1,6 +1,199 @@
 # CHANGELOG
 
 
+## v0.1.1 (2026-08-08)
+
+### Bug Fixes
+
+- **emitters**: Disambiguate colliding enum classes
+  ([`495fe3f`](https://github.com/kmbhm1/castiron/commit/495fe3f911cb11854ecb8f356e17e7657c8be8f5))
+
+`python_class_name` is not injective and never was: `order_status`, `orderStatus`, `OrderStatus`,
+  `Order_Status`, `_order_status` and `ORDER_STATUS` are six legal, distinct Postgres types that all
+  map to `PublicOrderStatusEnum`. Driven through the real emitter with two of them present, the
+  module carried two identical `class PublicOrderStatusEnum(str, Enum):` definitions -- it compiled,
+  it imported, and the second silently won the binding. CI94-Q1 forbids that: never drop or merge a
+  variant.
+
+The domain is the module's whole top-level namespace, not the enum registry. Measured:
+  `EnumInfo('status', schema='order')` and `TableInfo('order_status_enum')` both want
+  `OrderStatusEnum`, and the model won -- `OrderStatusEnum('open')` returned a pydantic model.
+  Neither name is exotic.
+
+Add `EnumClass` + `python_class_names(enums, reserved)`, a naming-layer DTO and per-container
+  allocator modelled on `column_identifiers`: one entry per input, positionally aligned, `_2`/`_3`
+  suffixes spelled as the two shipped collision rules already spell them, keyed on the NFKC form
+  because two distinct strings can be one binding at compile time (`PublicXﬁEnum`/`PublicXfiEnum` is
+  a real, constructible witness).
+
+Unrepaired names are allocated FIRST (captain ruling on CI-128-Q1, Option B). `schema.enums` is
+  sorted and ' ' and '-' sort before '_', so plain first-come would hand a hostile `order status`
+  the clean class name and rename the well-behaved `order_status` a user already imports -- which
+  `check` mode would then report as drift. Determinism is preserved: two passes over the input by
+  index, a holder map read by key and membership only, never iterated.
+
+The emitter seeds the allocator with every other top-level name the module binds -- the import block
+  (derived from PYDANTIC_TYPE_MAP, not hand-listed, so it cannot rot), the CustomModel bases, and
+  all four class variants per table regardless of config, so an unrelated flag cannot rename a
+  user's enum. The seed is built by calling `_class_name`/`_write_name`, so CI-130's table-stem
+  sanitization will flow into it automatically.
+
+The resolved names are computed ONCE in `_write` and threaded to both consumers -- the class header
+  and the column annotation -- because two independent derivations of one name is exactly CI-114.
+
+`python_member_names` gains an optional `class_name`. CI-113 argued that deriving it internally
+  makes a wrong class name impossible; a collision falsifies that, and measured, the derived default
+  silently drops a crafted label the resolved name keeps.
+
+Repairs and collisions are surfaced to the user (captain ruling on CI-128-Q4) through the two
+  mechanisms castiron already has: an aggregated `castiron: ...` stderr notice alongside the CI-085
+  column one, and an `# original name was ...` comment above the class. The suffixed case names what
+  took the bare name.
+
+No golden moved; coverage 100%.
+
+Refs: CI-128
+
+- **emitters**: Exempt the curated reserved names
+  ([`0f49821`](https://github.com/kmbhm1/castiron/commit/0f49821e2de20630a552dc2b9ecf7f8f9b3ebefe))
+
+Step 6 of `python_member_names` read the curated exemption list with `or`:
+
+string_is_reserved(name.lower()) or column_name_reserved_exceptions(...)
+
+`column_name_reserved_exceptions` is an EXEMPTION list -- names that need NOT be renamed -- and the
+  column path reads it that way (`ir/build.py:341`, as `and not`). Applying it with `or` inverted
+  its meaning for the enum path, so the label `id` emitted
+
+ID_ = "id" # original name was "id" (reserved keyword)
+
+a rename the list explicitly exempts, carrying a comment that states the opposite of the intent. One
+  boolean, and the two paths now agree.
+
+⚠ Note what the `or` did NOT do, because the row's phrasing ("behaved as an addition list") is true
+  of the intent and not of the measured effect: every name on the exemption list is already a
+  builtin -- `credits`, `copyright`, `license` and `help` come from `site` -- so the `or` never
+  actually ADDED anything. Its only observable effect was the missing exemption.
+
+The guard itself is KEPT, per the captain's ruling of 2026-08-08: this is a boolean correction, not
+  a removal. `class` and `import` are still renamed, and a counter-witness test pins that, so
+  deleting the guard cannot pass silently.
+
+Dropping the note on an exempted label is correct under CI94-D3: `ID` IS the straight transform of
+  `id`, so there is nothing to gloss.
+
+Behaviour change is bounded to seven labels (`id`, `credits`, `copyright`, `license`, `help`,
+  `property`, `sum`). No golden moves -- no committed golden carries an exempted label.
+
+Refs: CI-100, CI94-Q4
+
+- **emitters**: Import Enum from the enum registry
+  ([`23adadc`](https://github.com/kmbhm1/castiron/commit/23adadc3d17787ff33b5fca297950d7d5dfc1f06))
+
+`_imports` gated `from enum import Enum` on a COLUMN carrying `enum_info`, while `_enum_section`
+  renders from `schema.enums`. Two sources of truth for one import: an enum reachable only through
+  the registry emitted its class with no import, so the generated module raised `NameError: name
+  'Enum' is not defined` at import -- while `castiron gen` exited 0. Same defect class as CI-080 and
+  CI-110: output that does not run, reported as success, which is the highest-severity class now
+  that 0.1.0 is on PyPI.
+
+Replace both conditions with one `_emits_enums(schema)` predicate read by the import block and the
+  section alike. Fixing the duplicated condition in place would only have reset the clock.
+
+Not user-reachable through the shipped OpenAPI source today -- `_collect_enum_registry` builds
+  `schema.enums` from columns -- but reachable by constructing the IR directly (castiron's own suite
+  already does) and ordinary the moment `sources/ddl/` lands, where a `CREATE TYPE` with no column
+  using it is normal.
+
+The new tests EXECUTE the module rather than `compile()` it, which is the assertion that would have
+  caught this: `TestCi080TheCommentIsTotalOverItsInput` builds exactly this shape and stayed green
+  because a missing import is invisible to a parse. Counter-witness included over both suppressing
+  axes (`generate_enums=False`, empty registry); mutation-checked in both directions.
+
+Refs: CI-114
+
+- **emitters**: Sanitize the enum class name
+  ([`1d8a42f`](https://github.com/kmbhm1/castiron/commit/1d8a42fff49fbc14d7fefb959ceb2682e582e8b8))
+
+PostgREST reports a Postgres type name in `format` verbatim, and the OpenAPI source splits it on the
+  last '.' keeping both halves byte-for-byte. Neither the schema nor the type name was sanitized
+  before being PascalCase-assembled into the enum class header, so `CREATE TYPE "order status"`
+  emitted
+
+class PublicOrder statusEnum(str, Enum):
+
+-> SyntaxError, with `castiron gen` exiting 0. The same is true of a hyphen, a newline (which splits
+  the header across two lines), a quote, an emoji, and of the *schema* half: `CREATE SCHEMA "2fa"`
+  produced the leading-digit name `2faMoodEnum`. Same emit-invalid-Python-at-exit-0 family as
+  CI-080, CI-085 and CI-110, and equally source-reachable.
+
+Add `python_identifier`, the shared repair primitive: the character map from
+  `ir/build.py::identifier_characters` (CI85-D1 -- one algorithm, now three consumers, Unicode kept
+  per CI94-D2) plus a single leading-position `_` prefix, tested on the NFKC form because CPython
+  normalizes identifiers at compile time. It is total (`''` -> `'_'`) and is deliberately the only
+  place the repair is written, so CI-130 (table class names, the same defect family) can call it
+  rather than fork it.
+
+`python_class_name` now sanitizes both inputs and repairs the assembly. The PascalCase transform
+  itself is extracted verbatim into `_assemble_class_name` so the sanitizing wrapper and the
+  forthcoming "was this repaired?" predicate share one assembly rather than each carrying a copy.
+
+The transform is the IDENTITY on every name that already produced a valid identifier, so no
+  committed golden moves; the five pre-existing `TestPythonClassName` cases are kept unedited as the
+  byte-stability pins.
+
+Refs: CI-128
+
+- **emitters**: See Enum's class-name clause
+  ([`e82708a`](https://github.com/kmbhm1/castiron/commit/e82708a861be392fbf809155bdd5dfa444f728d9))
+
+`_is_enum_reserved_shape` received only the member name, so it could not test CPython's FOURTH
+  reserved shape: `EnumMeta` calls `_is_private(cls_name, name)`, which swallows a member already
+  spelled `_<ClassName>__x`. A crafted label was therefore emitted unrepaired, and the generated
+  module SILENTLY DROPPED it on py3.11+ while py3.10 kept it under the mangled name -- `castiron
+  gen` exiting 0 either way.
+
+That breached two rules at once: CI94-Q1's one non-negotiable ("never drop a variant"), and Hard
+  Rule #9, because the emitted module's MEANING depended on which interpreter imported it. All four
+  gate legs now agree.
+
+Thread a REQUIRED `class_name` into `_is_enum_reserved_shape` and `_repair_enum_shape`; a default
+  would let a future call site silently reacquire the blindness this row exists to remove. The
+  clause is CPython's `_is_private` restated, never imported (CI94-D8) -- measured equivalent on
+  3.10-3.13, the 3.13 delta being behaviourally inert because it compares a `str` to a `list`.
+
+`python_member_names(enum)` keeps its signature and derives the class name via
+  `python_class_name(enum)`. The WORKPLAN row proposed a parameter; deriving it internally is
+  strictly better, because the class name is a pure function of the `EnumInfo` already in hand and
+  `_enum_section` renders the header from that same call -- so a caller CANNOT supply a class name
+  the emitter will not use.
+
+The <=3-append repair bound is unchanged and still a proof: the new clause is false as soon as the
+  NFKC form ends in two underscores, weaker than the three the other clauses need, so it can never
+  bind. Measured max_append == 3 on every leg, before and after.
+
+Tests. The interpreter cross-check sweep was the file's stated authority and was structurally blind
+  here: it executed under `class E`, and NAME_ALPHABET cannot spell `_E__`. It now sweeps under
+  `'A'`, which the alphabet does contain -- 8 predicate-vs-interpreter disagreements before the fix,
+  0 after, and the reserved count moves 184 -> 192. "Survived" now also requires the class body to
+  have warned about NOTHING, which is load-bearing rather than tidy: py3.10 KEEPS a class-private
+  member and announces it only by DeprecationWarning, so without that clause the sweep would pass on
+  main and fail after the fix on 3.10 alone.
+
+Every helper that executes members built by `python_member_names` now runs them under
+  `python_class_name` of the same `EnumInfo` (FIXTURE_CLASS) instead of a `class E` stand-in --
+  members checked against a class the emitter would never write is exactly how this survived. An
+  emitter-level test drives the crafted label through PydanticEmitter, because a naming.py test
+  cannot prove the emitter passes the class name it renders. Verified by mutation: removing the
+  fourth clause reddens 4 tests on all four interpreters.
+
+TestCi113TheClassNameAxisIsOpen was pinned-as-present by design and is replaced by
+  TestCi113TheClassNameAxisIsClosed. The disappearance of its `sys.version_info` branch is itself
+  the Hard Rule #9 result.
+
+Refs: CI-113, CI94-D8, CI94-Q1
+
+
 ## v0.1.0 (2026-08-07)
 
 ### Bug Fixes

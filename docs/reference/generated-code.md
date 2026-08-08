@@ -69,7 +69,7 @@ The rule, in order:
 | `"a""b"` | `AB` |
 | `"Ünïcödé"` | `Ünïcödé` |
 
-!!! warning "Until `0.1.1` these emitted a module that did not parse"
+!!! warning "Until `0.1.2` these emitted a module that did not parse"
     `"order lines"` emitted `class Order linesBaseSchema(CustomModel):` — a `SyntaxError`, with
     `castiron gen` exiting `0` — and the bad stem reached all five class headers, every relationship
     field pointing at that table, and each class's docstring. **No name that was already valid
@@ -188,7 +188,7 @@ paths use, so a name that is repaired one way in one place is repaired the same 
 | `"my schema".order_status` | `My_schemaOrderStatusEnum` |
 | `"2fa".mood` | `_2faMoodEnum` |
 
-!!! warning "Until `0.1.0` these emitted a module that did not parse"
+!!! warning "Until `0.1.1` these emitted a module that did not parse"
     `public."order status"` emitted `class PublicOrder statusEnum(str, Enum):` — a `SyntaxError`,
     with `castiron gen` exiting `0`. A type name containing a newline split the header across two
     lines. The bad name also propagated into every column annotation referencing the type, so a

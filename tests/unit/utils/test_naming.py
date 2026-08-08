@@ -1,5 +1,6 @@
 import ast
 import itertools
+import json
 import keyword
 import os
 import subprocess
@@ -14,10 +15,13 @@ from castiron.ir import EnumInfo
 from castiron.utils.naming import (
     EnumMember,
     _is_enum_reserved_shape,
+    class_stem_reason,
     enum_class_reason,
     pluralize,
     python_class_name,
     python_class_names,
+    python_class_stem,
+    python_class_stems,
     python_identifier,
     python_member_names,
     singularize,
@@ -1331,3 +1335,239 @@ class TestCi128TheMemberGuardSeesTheResolvedClassName:
         # published 0.1.x, and the derived default is correct for every existing caller.
         enum = EnumInfo(name='order_status', values=['pending', 'in progress'], schema='public')
         assert python_member_names(enum) == python_member_names(enum, python_class_name(enum))
+
+
+@pytest.mark.unit
+class TestPythonClassStem:
+    """``CI-130``: the per-name table stem, the last unrepaired identifier surface.
+
+    ``to_pascal_case`` splits on ``'_'`` and capitalizes; it never removes a character. A table
+    name is a quoted Postgres identifier that PostgREST carries verbatim as a ``definitions`` key,
+    so ``CREATE TABLE "order lines"`` reached ``class Order linesBaseSchema(CustomModel):`` and the
+    module did not parse -- at ``castiron gen`` exit **0**.
+    """
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            # 🔴 BYTE-STABILITY PINS -- every shape that already produced a valid identifier before
+            # `CI-130` sanitized this transform. They are what proves the sanitizer is the IDENTITY
+            # on valid input, which is what the four committed module goldens depend on.
+            ('order_lines', 'OrderLines'),
+            ('users', 'Users'),
+            ('a_b_c', 'ABC'),
+            ('Ünïcödé', 'Ünïcödé'),
+            ('ORDER_LINES', 'OrderLines'),
+        ],
+    )
+    def test_it_is_the_identity_on_a_name_that_already_worked(self, name: str, expected: str) -> None:
+        assert python_class_stem(name) == expected
+        assert to_pascal_case(name) == expected, 'the pin must match the UNsanitized transform too'
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            ('order lines', 'OrderLines'),
+            ('order-lines', 'OrderLines'),
+            ('2fast', '_2fast'),
+            ('a"b', 'AB'),
+            ('a\nb', 'AB'),
+            # `to_pascal_case` splits on `_`, so the `_` the map leaves behind becomes a (empty)
+            # word boundary rather than a character in the name.
+            ('emoji\U0001f642', 'Emoji'),
+            ('', '_'),
+            (' ', '_'),
+        ],
+    )
+    def test_it_repairs_a_hostile_table_name(self, name: str, expected: str) -> None:
+        assert python_class_stem(name) == expected
+        assert unicodedata.normalize('NFKC', python_class_stem(name)).isidentifier()
+
+    def test_the_character_map_runs_before_the_pascal_assembly(self) -> None:
+        # The repair ORDER is the observable choice, and it is the enum path's: mapping first turns
+        # a space into a word boundary `to_pascal_case` can use. Mapping afterwards is also legal
+        # and gives `Order_lines` -- an underscore inside a PascalCase class name, and a different
+        # answer from the one `CREATE TYPE "order status"` already gets.
+        assert python_class_stem('order lines') == 'OrderLines'
+        assert python_class_name(EnumInfo(name='order status', values=[], schema='public')) == ('PublicOrderStatusEnum')
+
+    def test_singular_names_is_applied_before_the_repair(self) -> None:
+        assert python_class_stem('orders', singular_names=True) == 'Order'
+        assert python_class_stem('order lines', singular_names=True) == 'OrderLine'
+        assert python_class_stem('orders') == 'Orders', 'the default must not singularize'
+
+    def test_it_is_not_injective_which_is_why_the_container_form_exists(self) -> None:
+        collapsing = ['order_lines', 'ORDER_LINES', 'order lines', 'order-lines']
+        assert {python_class_stem(name) for name in collapsing} == {'OrderLines'}
+        # ...and `singularize` collapses two names that are distinct even after PascalCasing. That
+        # one has no enum analogue at all.
+        assert python_class_stem('orders', True) == python_class_stem('order', True) == 'Order'
+
+    def test_camel_case_is_NOT_special_cased_the_way_the_enum_path_does_it(self) -> None:
+        # ⚠ A pre-existing asymmetry, pinned rather than fixed. `python_class_name` has a camelCase
+        # branch (`thirdType` -> `PublicThirdTypeEnum`); `to_pascal_case` has none, so `.capitalize()`
+        # lowercases the tail and `orderLines` becomes `Orderlines`. That is what castiron has
+        # always emitted for tables, and changing it would move bytes for schemas nobody complained
+        # about -- out of scope for a row about output that does not parse.
+        assert python_class_stem('orderLines') == 'Orderlines'
+        assert python_class_name(EnumInfo(name='orderLines', values=[], schema='public')) == 'PublicOrderLinesEnum'
+
+
+@pytest.mark.unit
+class TestPythonClassStems:
+    """``CI-130``: the stem allocator -- a name allocator would not be enough.
+
+    One table stem binds **five** top-level classes, so a stem is free only when all five derived
+    names are. Measured on ``main``, the tables ``order`` and ``order_insert`` emit two
+    ``class OrderInsert`` definitions while their stems look perfectly distinct.
+    """
+
+    #: The five suffixes the Pydantic emitter derives from one stem. Restated here so this module
+    #: does not import the emitter; ``test_emitter.py`` asserts the emitter's own list matches.
+    SUFFIXES = ('', 'BaseSchema', 'Parent', 'Insert', 'Update')
+
+    def test_one_entry_per_table_positionally_aligned(self) -> None:
+        # `CI94-Q1`'s one non-negotiable: nothing dropped, nothing merged, order preserved.
+        names = ['order lines', 'order-lines', 'order_lines', 'users']
+        resolved = python_class_stems(names)
+        assert [entry.source for entry in resolved] == names
+        assert len({entry.name for entry in resolved}) == len(names)
+
+    def test_an_empty_schema_returns_an_empty_list(self) -> None:
+        assert python_class_stems([]) == []
+
+    def test_the_unrepaired_name_is_allocated_first(self) -> None:
+        # 🔴 The captain's ruling on `CI-128-Q1` (Option B), carried to tables unchanged: adding
+        # `CREATE TABLE "order lines"` to a database that already had `order_lines` must not
+        # rename the class the user already imports.
+        resolved = python_class_stems(['order lines', 'order-lines', 'order_lines'])
+        assert [entry.name for entry in resolved] == ['OrderLines_2', 'OrderLines_3', 'OrderLines']
+        assert [entry.note for entry in resolved] == ['name collision', 'name collision', None]
+
+    def test_a_renamed_stem_names_the_table_that_took_its_name(self) -> None:
+        first, second, _ = python_class_stems(['order lines', 'order-lines', 'order_lines'])
+        assert first.taken_by == 'order_lines'
+        assert second.taken_by == 'order_lines', 'the BARE name holder is the informative one, not `_2`'
+        assert class_stem_reason(first, str) == 'name collision, OrderLines is taken by order_lines'
+
+    def test_two_well_behaved_colliders_fall_back_to_input_order(self) -> None:
+        # Phase 1 is plain first-come internally -- Option B only reorders REPAIRED against
+        # unrepaired, exactly as it does for enums.
+        resolved = python_class_stems(['ORDER_LINES', 'order_lines'])
+        assert [entry.name for entry in resolved] == ['OrderLines', 'OrderLines_2']
+        assert resolved[1].taken_by == 'ORDER_LINES'
+
+    def test_singularize_can_collapse_two_distinct_tables(self) -> None:
+        # 🔴 The table↔table collision with no enum analogue. Measured on `main`, `--singular-names`
+        # over `orders` + `order` emitted TWO `class OrderBaseSchema` and TWO `class Order`
+        # definitions into one module, and the second silently won every binding.
+        resolved = python_class_stems(['orders', 'order'], singular_names=True)
+        assert [entry.name for entry in resolved] == ['Order', 'Order_2']
+        assert resolved[1].taken_by == 'orders'
+        # ...and without the flag they do not collide at all, so the flag is what creates it.
+        assert [entry.name for entry in python_class_stems(['orders', 'order'])] == ['Orders', 'Order']
+
+    def test_a_stem_is_free_only_when_every_DERIVED_name_is(self) -> None:
+        # 🔴 The stem-vs-name distinction, and the reason `suffixes` exists. `Order` and
+        # `OrderInsert` are distinct stems; `Order` + `Insert` is not distinct from `OrderInsert`.
+        resolved = python_class_stems(['order', 'order_insert'], suffixes=self.SUFFIXES)
+        assert [entry.name for entry in resolved] == ['Order', 'OrderInsert_2']
+        assert resolved[1].taken_by == 'order'
+        # The same two names do NOT collide when a stem binds only itself -- which is what makes
+        # this an assertion about the suffixes rather than about the two names.
+        assert [entry.name for entry in python_class_stems(['order', 'order_insert'])] == ['Order', 'OrderInsert']
+
+    @pytest.mark.parametrize(
+        ('table_name', 'suffix'),
+        [
+            ('order_base_schema', 'BaseSchema'),
+            ('order_parent', 'Parent'),
+            ('order_insert', 'Insert'),
+            ('order_update', 'Update'),
+        ],
+    )
+    def test_every_derived_suffix_is_load_bearing(self, table_name: str, suffix: str) -> None:
+        # The counter-witness for the case above, one row per suffix: drop any one of them from
+        # `SUFFIXES` and a real pair of table names starts emitting two classes under one name.
+        assert python_class_stem(table_name) == f'Order{suffix}', 'the fixture must actually derive that name'
+        resolved = python_class_stems(['order', table_name], suffixes=self.SUFFIXES)
+        assert [entry.name for entry in resolved] == ['Order', f'Order{suffix}_2']
+        assert resolved[1].taken_by == 'order'
+
+    def test_a_reserved_name_forces_an_ordinal(self) -> None:
+        # A table named `custom_model` rebinds castiron's own shared base on `main`.
+        resolved = python_class_stems(['custom_model'], suffixes=self.SUFFIXES, reserved={'CustomModel'})
+        assert resolved[0].name == 'CustomModel_2'
+        assert resolved[0].note == 'name collision'
+        assert resolved[0].taken_by is None, 'a reserved name is not another table'
+        assert class_stem_reason(resolved[0], str) == (
+            'name collision, CustomModel is taken by another class in this module'
+        )
+
+    def test_a_derived_name_can_be_blocked_by_a_reserved_name(self) -> None:
+        # `CustomModelInsert` is bound by the module, and the table `custom_model` would derive it.
+        resolved = python_class_stems(['custom_model'], suffixes=self.SUFFIXES, reserved={'CustomModelInsert'})
+        assert resolved[0].name == 'CustomModel_2'
+
+    def test_the_uniqueness_key_is_the_nfkc_form(self) -> None:
+        first, second = (python_class_stem(name) for name in NFKC_COLLIDING_TYPE_NAMES)
+        assert first != second
+        assert unicodedata.normalize('NFKC', first) == unicodedata.normalize('NFKC', second)
+        resolved = python_class_stems(list(NFKC_COLLIDING_TYPE_NAMES))
+        assert [entry.name for entry in resolved] == ['Xﬁ', 'Xfi_2']
+
+    def test_it_is_a_pure_function_of_the_ordered_input(self) -> None:
+        # Determinism (Hard Rule #9). `reserved` is passed four ways: if anything iterated it, the
+        # answers would differ.
+        names = ['order lines', 'order-lines', 'order_lines', 'users']
+        reserved = ['Users', 'OrderLines']
+        answers = {
+            tuple(entry.name for entry in python_class_stems(names, suffixes=self.SUFFIXES, reserved=container))
+            for container in (set(reserved), frozenset(reserved), list(reserved), tuple(reserved))
+        }
+        assert len(answers) == 1
+        assert python_class_stems(names) == python_class_stems(names)
+
+    def test_an_unrenamed_stem_has_no_reason_to_explain(self) -> None:
+        # The counter-witness (`CI94-D3`): without it, "always comment" would satisfy everything
+        # above -- and a comment above five classes per table is bytes in every user's file forever.
+        resolved = python_class_stems(['order_lines'])
+        assert resolved[0].note is None
+        assert resolved[0].taken_by is None
+        assert class_stem_reason(resolved[0], str) is None
+
+    def test_the_reason_renders_the_holder_through_the_callers_escaper(self) -> None:
+        # `render` is REQUIRED, not defaulted, because a generated `#` comment and a log line need
+        # different answers: a table name carrying a newline would split the comment.
+        first, _ = python_class_stems(['order lines', 'a\nb'], reserved={'OrderLines'})
+        assert first.name == 'OrderLines_2'
+        resolved = python_class_stems(['a\nb', 'order lines'])
+        assert resolved[1].name == 'OrderLines'
+        collided = python_class_stems(['a\nb', 'a b'])[1]
+        assert collided.taken_by == 'a\nb'
+        assert '\n' not in class_stem_reason(collided, lambda text: json.dumps(text))  # type: ignore[arg-type]
+
+    def test_every_resolved_stem_is_a_valid_unique_identifier(self) -> None:
+        # The sweep. Every generated label is also a plausible TABLE name, so reuse the corpus --
+        # and assert over every DERIVED name, which is the property the module actually needs.
+        names = _generated_labels(max_length=3)
+        assert len(names) == 155, 'the sweep was narrowed; a narrowed sweep passes vacuously'
+        resolved = python_class_stems(names, suffixes=self.SUFFIXES, reserved=_IMPORTLIKE_RESERVED)
+        assert len(resolved) == len(names)
+        bound = [
+            unicodedata.normalize('NFKC', f'{entry.name}{suffix}') for entry in resolved for suffix in self.SUFFIXES
+        ]
+        assert all(name.isidentifier() for name in bound)
+        assert len(set(bound)) == len(bound), 'two classes would collapse onto one binding at import'
+        assert not (set(bound) & _IMPORTLIKE_RESERVED)
+
+    def test_the_sweep_is_also_clean_under_singular_names(self) -> None:
+        # `singularize` is the axis that can merge two distinct names, so the sweep has to run on
+        # both settings or it misses the one collision source tables have and enums do not.
+        names = _generated_labels(max_length=3)
+        resolved = python_class_stems(names, singular_names=True, suffixes=self.SUFFIXES)
+        bound = [
+            unicodedata.normalize('NFKC', f'{entry.name}{suffix}') for entry in resolved for suffix in self.SUFFIXES
+        ]
+        assert all(name.isidentifier() for name in bound)
+        assert len(set(bound)) == len(bound)

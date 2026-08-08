@@ -13,8 +13,9 @@ below is castiron's own (CI-080).
 """
 
 import unicodedata
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import inflection
 
@@ -24,6 +25,12 @@ from castiron.ir.build import column_name_reserved_exceptions, identifier_charac
 
 def to_pascal_case(value: str) -> str:
     """Convert a snake_case (or single-word) string to PascalCase.
+
+    ⚠ **This is an assembly, not a repair, and it must stay that way.** It splits on ``'_'`` and
+    capitalizes; it never removes a character, so a table name containing a space, a hyphen or a
+    leading digit passes straight through (``'order lines'`` -> ``'Order lines'``). Callers that
+    need a name Python will accept wrap it in :func:`python_identifier` --
+    :func:`python_class_stem` is the composition, and it is the one every emitter should use.
 
     Args:
         value: The string to convert, e.g. ``'order_status'``.
@@ -182,10 +189,159 @@ def _class_name_is_repaired(enum: EnumInfo) -> bool:
     return python_identifier(assembled) != assembled
 
 
-#: ``EnumClass.note`` when the emitted name is not the straight transform of the Postgres type name.
+#: ``note`` when the emitted name is not the straight transform of the source name.
 _REPAIR_NOTE = 'identifier repair'
-#: ``EnumClass.note`` when an ordinal suffix fired because the natural name was already taken.
+#: ``note`` when an ordinal suffix fired because the natural name was already taken.
 _COLLISION_NOTE = 'name collision'
+
+
+class _Allocation(NamedTuple):
+    """One resolved top-level class name, before it is wrapped in a caller-facing DTO.
+
+    Attributes:
+        name: The allocated name.
+        note: :data:`_REPAIR_NOTE`, :data:`_COLLISION_NOTE`, or ``None``.
+        taken_by: The source that holds the name this one would naturally have taken, ``None``
+            when nothing was taken **or** when the holder is a module-level binding rather than
+            another allocated source.
+    """
+
+    name: str
+    note: str | None
+    taken_by: str | None
+
+
+def _first_holder(candidate: str, suffixes: Sequence[str], holders: Mapping[str, str | None]) -> str | None:
+    """Return the first already-held key ``candidate`` would rebind, or ``None`` when it is free.
+
+    🔴 **A candidate is judged by every name it binds, not only by itself**, which is the whole
+    difference between allocating an enum class name and allocating a **table class stem**. One
+    table stem produces five top-level classes (``Order``, ``OrderBaseSchema``, ``OrderParent``,
+    ``OrderInsert``, ``OrderUpdate``), so two stems can look distinct and still collide in a
+    derived class: measured on ``main``, tables ``order`` and ``order_insert`` emit **two**
+    ``class OrderInsert`` definitions -- the insert model of one and the operational class of the
+    other -- and the second silently wins the binding.
+
+    Args:
+        candidate: The stem being tested.
+        suffixes: Every suffix the caller will append to the stem. ``('',)`` for an atomic name.
+        holders: The allocation state, keyed on the NFKC form.
+
+    Returns:
+        The blocking key, or ``None``.
+    """
+    for suffix in suffixes:
+        key = unicodedata.normalize('NFKC', f'{candidate}{suffix}')
+        if key in holders:
+            return key
+    return None
+
+
+def _allocate_class_names(
+    naturals: Sequence[str],
+    repaired: Sequence[bool],
+    sources: Sequence[str],
+    suffixes: Sequence[str],
+    reserved: Collection[str],
+) -> list[_Allocation]:
+    """Allocate one unique top-level name per input -- the **single** collision mechanism.
+
+    Shared by :func:`python_class_names` (enum classes, atomic) and :func:`python_class_stems`
+    (table class stems, five derived names each). ``CI-128`` shipped the rule for enums and
+    ``CI-130`` reuses it rather than writing a second one: a user who has learned "unrepaired names
+    go first, colliders take ``_2``" should not discover that model classes arbitrate differently.
+
+    The rule, clause by clause:
+
+    1. **One entry per input, positionally aligned.** Nothing dropped, nothing merged (``CI94-Q1``).
+    2. **Two phases: unrepaired names claim their name FIRST** (captain's ruling on ``CI-128-Q1``,
+       2026-08-08). Under plain first-come, adding a hostile ``CREATE TABLE "order lines"`` to a
+       database that already had ``order_lines`` would hand the hostile name ``OrderLines`` and
+       rename the well-behaved table's class -- an unrelated schema addition silently renaming a
+       class the user imports, which ``check`` mode (CI-021) would then report as drift.
+    3. **Suffix** ``_2``, ``_3``, ... -- the spelling ``column_identifiers`` and
+       :func:`python_member_names` already use.
+    4. **The uniqueness key is the NFKC form**, because CPython normalizes identifiers at compile
+       time and ``str.capitalize()`` performs some of that folding itself (``'ﬁ'.capitalize()`` is
+       ``'Fi'``). A raw-string check would emit two classes that collapse into one at import.
+    5. **Every suffixed candidate is re-repaired** through :func:`python_identifier` -- provably a
+       no-op for an ASCII ``_<digits>`` suffix, kept structurally because the identical "a ``_2``
+       suffix cannot re-create a hazard" argument was made on the member path and was wrong.
+    6. **``reserved`` seeds the allocation**, so the domain is the module's whole top-level
+       namespace rather than one private registry.
+
+    **Determinism (Hard Rule #9).** A pure function of the ordered inputs plus the *membership* of
+    ``reserved``. Both phases walk by index; the ordinal counter walks ``2, 3, 4, …``; ``holders``
+    is read by key and never iterated into the output; the result is materialized in input index
+    order. No set iteration and no dict ordering can reach the emitted bytes.
+
+    Args:
+        naturals: The straight (already identifier-repaired) name each input wants, in order.
+        repaired: Whether each input's natural name needed repair -- the phase predicate.
+            Positionally aligned with ``naturals``.
+        sources: The human-readable source name of each input, recorded as the holder of whatever
+            it is allocated so a later collider can say who took its name. Positionally aligned.
+        suffixes: Every suffix appended to an allocated name by the caller. ``('',)`` when the
+            allocated name is the whole binding.
+        reserved: Names already bound by the module. Membership-tested only, never iterated into
+            the output; each entry is NFKC-normalized on the way in.
+
+    Returns:
+        One :class:`_Allocation` per input, positionally aligned with ``naturals``.
+    """
+    # `None` marks a name held by something that is not one of `sources` -- an import, or a
+    # module-level class castiron always writes.
+    holders: dict[str, str | None] = {unicodedata.normalize('NFKC', name): None for name in reserved}
+    resolved: dict[int, _Allocation] = {}
+
+    for phase in (False, True):
+        for index, natural in enumerate(naturals):
+            if repaired[index] != phase:
+                continue
+            note: str | None = _REPAIR_NOTE if phase else None
+            taken_by: str | None = None
+            candidate = natural
+            ordinal = 1
+            while (blocked := _first_holder(candidate, suffixes, holders)) is not None:
+                if ordinal == 1:
+                    # The holder of the name the input NATURALLY wanted is the informative one --
+                    # `_3` is blocked by `_2`, but what the user needs told is who has the bare name.
+                    taken_by = holders[blocked]
+                ordinal += 1
+                candidate = python_identifier(f'{natural}_{ordinal}')
+                note = _COLLISION_NOTE
+            for suffix in suffixes:
+                holders[unicodedata.normalize('NFKC', f'{candidate}{suffix}')] = sources[index]
+            resolved[index] = _Allocation(candidate, note, taken_by)
+
+    return [resolved[index] for index in range(len(naturals))]
+
+
+def _rename_reason(
+    note: str | None, name: str, natural: str, taken_by: str | None, render: Callable[[str], str]
+) -> str | None:
+    """Compose the human-readable reason an allocated name is not the straight transform.
+
+    **One sentence, four destinations** -- the ``# original name was …`` comment above an enum
+    class and above a model class, and the ``castiron: …`` stderr notice for each. They must say
+    the same thing, and writing the sentence twice per namespace is how they would stop.
+
+    Args:
+        note: The allocation note, or ``None`` when nothing changed.
+        name: The allocated name.
+        natural: The name the input would have taken had nothing been in the way.
+        taken_by: The source holding ``natural``, or ``None`` for a module-level binding.
+        render: How to render the holder's source name -- see :func:`enum_class_reason`.
+
+    Returns:
+        The reason, or ``None`` when there is nothing to explain (``CI94-D3``).
+    """
+    if note is None:
+        return None
+    if name == natural:
+        return note
+    holder = render(taken_by) if taken_by is not None else 'another class in this module'
+    return f'{note}, {natural} is taken by {holder}'
 
 
 @dataclass(frozen=True)
@@ -240,47 +396,20 @@ def python_class_names(enums: Sequence[EnumInfo], reserved: Collection[str] = ()
     outright: **every enum gets its own class**; one that cannot keep its natural name gets a
     suffixed one.
 
-    The rule, clause by clause. Each is deliberately the clause the two shipped collision rules
-    (``python_member_names`` and ``ir/build.py``'s ``column_identifiers``) already use, so a user
-    learns it once:
+    **The rule itself lives in** :func:`_allocate_class_names` **and is shared with**
+    :func:`python_class_stems` (``CI-130``) -- two allocation phases with unrepaired names first,
+    ``_2``/``_3`` ordinals, an NFKC uniqueness key, and a ``reserved`` seed that makes the domain
+    the module's whole top-level namespace. Read it there; a second copy of a collision rule is
+    exactly what ``CI-128``'s interface contract exists to prevent. What is specific to enums:
 
-    1. **One entry per input, positionally aligned with** ``enums``. Nothing dropped, nothing
-       merged, order preserved.
-    2. **🔴 Two allocation phases: unrepaired names claim their class name FIRST** (captain's
-       ruling on ``CI-128-Q1``, 2026-08-08). Phase 1 walks ``enums`` in order allocating every enum
-       whose class name needed no identifier repair; phase 2 then walks it again for the rest.
-
-       *Why not plain first-come, which is what the other two rules do.* ``schema.enums`` is sorted
-       on ``(schema, name)`` and ``' '`` (0x20) and ``'-'`` (0x2D) sort **before** ``'_'`` (0x5F).
-       Under first-come, adding ``CREATE TYPE "order status"`` to a database that already had
-       ``order_status`` would hand the hostile name ``PublicOrderStatusEnum`` and rename the
-       well-behaved type to ``PublicOrderStatusEnum_3`` -- an unrelated schema addition silently
-       renaming a class the user already imports. ``check`` mode (CI-021) re-emits and diffs, so it
-       would report that rename as **drift**. Phase order makes the well-behaved name the stable
-       anchor and the hostile one yield.
-    3. **Suffix** ``_2``, ``_3``, ... -- identical in spelling to the other two rules. A user who
-       has seen ``space_name_2`` reads ``PublicOrderStatusEnum_2`` without a manual.
-    4. **The uniqueness key is the NFKC form.** Two distinct strings can be one binding at compile
-       time (``ﬁ``/``fi``, ``＿``/``_``), and ``str.capitalize()`` already performs some of that
-       folding (``'ﬁ'.capitalize() == 'Fi'``). A raw-string check would emit two classes that
-       collapse into one at import -- ``CI-080``'s failure mode in a new costume.
-    5. **Every suffixed candidate is re-repaired** through :func:`python_identifier`. That is
-       provably a no-op here (appending ASCII ``_<digits>`` to an identifier keeps it one) and is
-       kept **structurally anyway**: the identical "a ``_2`` suffix cannot re-create a hazard"
-       argument was made on the enum member path and was **wrong** (``'_' + '_2'`` is ``'__2'``,
-       which Python name-mangles).
-    6. **``reserved`` seeds the allocation**, which is how the enum namespace stops being a private
-       one. An enum class name can equal a **table model** class name -- ``EnumInfo('status',
-       schema='order')`` and ``TableInfo('order_status_enum')`` both want ``OrderStatusEnum``, and
-       measured on ``main`` the module-level name bound the *model*, so ``OrderStatusEnum('open')``
-       returned a pydantic model. Neither name is exotic. The domain of this rule is therefore the
-       module's **whole top-level namespace**, not the enum registry.
-
-    **Determinism (Hard Rule #9).** The result is a pure function of the ordered ``enums`` list plus
-    the *membership* of ``reserved``. Both phases walk ``enums`` by index; the ordinal counter walks
-    ``2, 3, 4, …``; the internal holder map is read by key and tested for membership only and is
-    **never iterated** into the output; the result list is materialized in input index order. No set
-    iteration and no dict ordering can reach the emitted bytes, at any ``PYTHONHASHSEED``.
+    * **``reserved`` is how the enum namespace stops being a private one.** An enum class name can
+      equal a **table model** class name -- ``EnumInfo('status', schema='order')`` and
+      ``TableInfo('order_status_enum')`` both want ``OrderStatusEnum``, and measured on ``main`` the
+      module-level name bound the *model*, so ``OrderStatusEnum('open')`` returned a pydantic model.
+      Neither name is exotic.
+    * **Table stems are allocated first and enums yield to them** -- the emitter resolves its class
+      stems, then seeds this call with them. A table's model is the stable thing a user's imports
+      point at.
 
     Args:
         enums: The enum registry, in emission order. ``ir/build.py``'s ``_collect_enum_registry``
@@ -292,32 +421,19 @@ def python_class_names(enums: Sequence[EnumInfo], reserved: Collection[str] = ()
         One :class:`EnumClass` per input, positionally aligned with ``enums``, with no name
         repeated and no name equal to a ``reserved`` entry.
     """
-    # `None` marks a name held by something that is not an enum -- a model class or an import.
-    holders: dict[str, str | None] = {unicodedata.normalize('NFKC', name): None for name in reserved}
-    needs_repair = [_class_name_is_repaired(enum) for enum in enums]
-    resolved: dict[int, EnumClass] = {}
-
-    for phase in (False, True):
-        for index, enum in enumerate(enums):
-            if needs_repair[index] != phase:
-                continue
-            natural = python_class_name(enum)
-            note: str | None = _REPAIR_NOTE if phase else None
-            taken_by: str | None = None
-            candidate = natural
-            ordinal = 1
-            while (key := unicodedata.normalize('NFKC', candidate)) in holders:
-                if ordinal == 1:
-                    # The holder of the name the enum NATURALLY wanted is the informative one --
-                    # `_3` is blocked by `_2`, but what the user needs told is who has the bare name.
-                    taken_by = holders[key]
-                ordinal += 1
-                candidate = python_identifier(f'{natural}_{ordinal}')
-                note = _COLLISION_NOTE
-            holders[unicodedata.normalize('NFKC', candidate)] = f'{enum.schema}.{enum.name}'
-            resolved[index] = EnumClass(enum=enum, name=candidate, note=note, taken_by=taken_by)
-
-    return [resolved[index] for index in range(len(enums))]
+    allocations = _allocate_class_names(
+        [python_class_name(enum) for enum in enums],
+        [_class_name_is_repaired(enum) for enum in enums],
+        [f'{enum.schema}.{enum.name}' for enum in enums],
+        # An enum class name is atomic: the emitted header is the whole binding, so the only
+        # derived name is the name itself. Table stems pass five suffixes here instead.
+        ('',),
+        reserved,
+    )
+    return [
+        EnumClass(enum=enum, name=entry.name, note=entry.note, taken_by=entry.taken_by)
+        for enum, entry in zip(enums, allocations)
+    ]
 
 
 def enum_class_reason(entry: EnumClass, render: Callable[[str], str]) -> str | None:
@@ -340,13 +456,219 @@ def enum_class_reason(entry: EnumClass, render: Callable[[str], str]) -> str | N
         The reason, or ``None`` when ``entry`` kept the straight transform of its type name and
         there is nothing to explain (``CI94-D3``: never gloss a name that was not changed).
     """
-    if entry.note is None:
-        return None
-    natural = python_class_name(entry.enum)
-    if entry.name == natural:
-        return entry.note
-    holder = render(entry.taken_by) if entry.taken_by is not None else 'another class in this module'
-    return f'{entry.note}, {natural} is taken by {holder}'
+    return _rename_reason(entry.note, entry.name, python_class_name(entry.enum), entry.taken_by, render)
+
+
+def _processed_table_name(table_name: str, singular_names: bool) -> str:
+    """Apply the emitter's ``--singular-names`` policy, the one step that precedes sanitization."""
+    return singularize(table_name) if singular_names else table_name
+
+
+def _assemble_stem(table_name: str, singular_names: bool) -> str:
+    """PascalCase-assemble a table's class stem, mapping its characters on the way in.
+
+    Extracted so the sanitizing wrapper (:func:`python_class_stem`) and the "was this stem
+    repaired?" predicate (:func:`_stem_is_repaired`) share **one** assembly rather than each
+    carrying a copy. Two derivations of one name is the defect ``CI-114`` was.
+
+    ⚠ **The character map runs BEFORE** :func:`to_pascal_case`, deliberately, and this is the same
+    order :func:`python_class_name` uses for enums. ``to_pascal_case`` splits on ``'_'``, so mapping
+    first turns a space or a hyphen into a word boundary the assembly can *use*:
+    ``'order lines'`` -> ``'order_lines'`` -> ``OrderLines``. Mapping afterwards would give
+    ``Order_lines`` -- still legal, but an underscore in the middle of a PascalCase class name, and
+    a different answer from the one ``CREATE TYPE "order status"`` already gets. One repair order
+    for both namespaces, or a user learns two.
+
+    Args:
+        table_name: The table's name, verbatim from the source.
+        singular_names: Whether to singularize before assembling (``--singular-names``).
+
+    Returns:
+        The assembled stem -- **not** yet guaranteed to be a valid identifier, because a leading
+        digit survives the character map untouched (``'2fast'`` assembles to ``'2fast'``).
+    """
+    return to_pascal_case(identifier_characters(_processed_table_name(table_name, singular_names)))
+
+
+def python_class_stem(table_name: str, singular_names: bool = False) -> str:
+    """Build the PascalCase class stem an emitter derives a table's model classes from.
+
+    🔴 **The stem was not sanitized before ``CI-130``, and it is raw Postgres text.** A table name
+    is a quoted identifier, so ``CREATE TABLE "order lines"`` is legal and PostgREST carries it
+    verbatim as a ``definitions`` key. Measured on ``main``: it emitted
+    ``class Order linesBaseSchema(CustomModel):`` -- ``SyntaxError``, with ``castiron gen`` exiting
+    **0** -- and ``"2fast"`` emitted ``class 2fastBaseSchema`` (``invalid decimal literal``). The
+    bad stem also reached the *four other* classes the table produces, every relationship type
+    annotation pointing at it, and each class's docstring, so a fix that repaired only the header
+    would not have been one.
+
+    **The transform is the identity on every name that already produced a valid identifier**, which
+    is the byte-stability property (Hard Rule #9) the committed goldens pin: ``identifier_characters``
+    is the identity on such text and the leading-position guard does not fire.
+
+    ⚠ **This is the per-name form, and it cannot see a collision.** It is not injective --
+    ``order_lines``, ``ORDER_LINES``, ``"order lines"`` and ``"order-lines"`` all assemble to
+    ``OrderLines``, and under ``--singular-names`` so do the two distinct tables ``orders`` and
+    ``order``. **A caller that owns a whole schema must use** :func:`python_class_stems`, which also
+    knows that one stem binds five class names rather than one. Same division of labour as
+    :func:`python_class_name` vs :func:`python_class_names`.
+
+    Args:
+        table_name: The table's name, verbatim from the source.
+        singular_names: Whether to singularize the name first (``--singular-names``).
+
+    Returns:
+        The class stem, guaranteed a valid identifier after NFKC normalization.
+    """
+    return python_identifier(_assemble_stem(table_name, singular_names))
+
+
+def _stem_is_repaired(table_name: str, singular_names: bool) -> bool:
+    """Whether :func:`python_class_stem` had to *repair* the name rather than just assemble it.
+
+    The predicate that splits :func:`_allocate_class_names`' two phases for tables, and it is a
+    **fact about this input**, never a guess: it re-runs both repair rules and asks whether either
+    changed anything. Written exactly as the enum path's :func:`_class_name_is_repaired` is, and
+    **both halves are needed** -- the character map's effect is invisible in the assembled name
+    (``'order lines'`` and ``'order_lines'`` both assemble to ``OrderLines``), so testing only the
+    assembly would put a hostile name in phase 1 and let it race a well-behaved one for the bare
+    stem, which is precisely what the captain's ``CI-128-Q1`` ruling forbids.
+
+    Args:
+        table_name: The table's name, verbatim from the source.
+        singular_names: Whether the emitter singularizes names.
+
+    Returns:
+        ``True`` when the character map altered the name, or when the leading-position guard fired
+        on the assembled stem.
+    """
+    processed = _processed_table_name(table_name, singular_names)
+    if identifier_characters(processed) != processed:
+        return True
+    assembled = _assemble_stem(table_name, singular_names)
+    return python_identifier(assembled) != assembled
+
+
+@dataclass(frozen=True)
+class ClassStem:
+    """One table's source name and the Python class stem castiron emits its models under.
+
+    A **naming-layer DTO**, the same species as :class:`EnumClass` and ``ir/build.py``'s
+    ``ColumnIdentifier``: a return type, never an IR node. It adds no field to
+    :class:`~castiron.ir.TableInfo`, which matters concretely -- :meth:`~castiron.ir.Schema.as_dict`
+    walks ``dataclasses.fields``, so one new field would rewrite every committed ``ir.json`` golden
+    for a naming detail (Hard Rule #6).
+
+    Attributes:
+        source: The table's name, verbatim -- the ground truth, and the only thing that survives
+            into the emitted module (as the ``# original name was …`` comment) once the stem has
+            been repaired.
+        name: The class stem to emit. Guaranteed a valid identifier after NFKC normalization, and
+            guaranteed that **every name derived from it** (``{name}``, ``{name}BaseSchema``,
+            ``{name}Parent``, ``{name}Insert``, ``{name}Update``) is free within one
+            :func:`python_class_stems` call, including against the ``reserved`` seed.
+        natural: The stem this table would have taken had nothing been in the way -- i.e.
+            :func:`python_class_stem` of ``source``. Carried rather than recomputed because the
+            recomputation needs ``singular_names``, which is emitter config the naming layer does
+            not hold; carrying it keeps :func:`class_stem_reason` a pure function of the DTO.
+        note: Why ``name`` is not the straight transform of ``source`` -- :data:`_REPAIR_NOTE` or
+            :data:`_COLLISION_NOTE` -- or ``None`` when it is.
+
+            ⚠ **A closed vocabulary, deliberately.** The emitter interpolates it into a ``#``
+            comment in generated source, so it must never carry user text: a table name containing
+            a newline would split the comment and break the module (``CI-009``). User text goes in
+            ``source``/``taken_by``, which the emitter escapes.
+        taken_by: The name of the **other table** holding the stem this one would naturally have
+            taken, or ``None`` -- either because nothing was taken, or because the holder is a name
+            bound elsewhere in the module (an import, or ``CustomModel``) rather than another table.
+    """
+
+    source: str
+    name: str
+    natural: str
+    note: str | None = None
+    taken_by: str | None = None
+
+
+def python_class_stems(
+    table_names: Sequence[str],
+    singular_names: bool = False,
+    suffixes: Sequence[str] = ('',),
+    reserved: Collection[str] = (),
+) -> list[ClassStem]:
+    """Allocate one unique class stem per table, dropping and merging nothing.
+
+    The per-**container** form of :func:`python_class_stem`, and the reason one is needed: a
+    collision rule is not expressible one name at a time (``CI94-D1``). Three collisions reach it,
+    and **all three are present on ``main`` today**, before any sanitization:
+
+    1. **Assembly is not injective.** ``order_lines``, ``ORDER_LINES``, ``"order lines"`` and
+       ``"order-lines"`` are four legal, distinct Postgres tables that all assemble to
+       ``OrderLines``.
+    2. **``singularize`` collapses distinct names.** Measured with ``--singular-names``, the tables
+       ``orders`` and ``order`` emit **two** ``class OrderBaseSchema`` and **two** ``class Order``
+       definitions into one module; the second silently wins every binding. This has no enum
+       analogue.
+    3. **A stem binds five names, not one.** Measured, the tables ``order`` and ``order_insert``
+       emit two ``class OrderInsert`` -- the insert model of the first and the operational class of
+       the second -- while their *stems* look perfectly distinct. That is what ``suffixes`` is for:
+       a stem is allocated only when every name derived from it is free.
+
+    ``CI94-Q1`` (captain) forbids the silent merge outright: **every table gets its own classes**;
+    one that cannot keep its natural stem gets a suffixed one.
+
+    **The rule is** :func:`_allocate_class_names`, shared byte-for-byte with the enum path
+    (``CI-128``) rather than restated -- unrepaired stems claim their names first, colliders take
+    ``_2``/``_3``, the uniqueness key is the NFKC form, and ``reserved`` widens the domain to the
+    module's whole top-level namespace. **Determinism (Hard Rule #9)** is argued there.
+
+    Args:
+        table_names: The table names, in emission order and **already deduplicated** by the caller.
+            ``Schema.tables`` order is contractual, so the allocation is too.
+        singular_names: Whether the emitter singularizes names (``--singular-names``). It changes
+            which stems collide, so it belongs to the allocation rather than to the caller.
+        suffixes: Every suffix the caller appends to a stem to form a class name, ``''`` included
+            for the bare operational class. Defaulted to ``('',)`` so the function is meaningful
+            for an emitter that binds one class per table.
+        reserved: Every top-level name the module binds independently of any table -- its imports
+            and its ``CustomModel`` bases. Membership-tested only, never iterated into the output.
+
+    Returns:
+        One :class:`ClassStem` per name, positionally aligned with ``table_names``, with no derived
+        name repeated and none equal to a ``reserved`` entry.
+    """
+    naturals = [python_class_stem(name, singular_names) for name in table_names]
+    allocations = _allocate_class_names(
+        naturals,
+        [_stem_is_repaired(name, singular_names) for name in table_names],
+        list(table_names),
+        suffixes,
+        reserved,
+    )
+    return [
+        ClassStem(source=source, name=entry.name, natural=natural, note=entry.note, taken_by=entry.taken_by)
+        for source, natural, entry in zip(table_names, naturals, allocations)
+    ]
+
+
+def class_stem_reason(entry: ClassStem, render: Callable[[str], str]) -> str | None:
+    """Compose the human-readable reason ``entry`` did not keep its natural class stem.
+
+    The table-side twin of :func:`enum_class_reason`, over the same
+    :func:`_rename_reason` sentence, so the generated comment and the CLI notice read identically
+    whichever namespace was renamed.
+
+    Args:
+        entry: The resolved stem.
+        render: How to render the table name embedded in the reason. **Required, not defaulted**,
+            for the reason spelled out on :func:`enum_class_reason`: a generated ``#`` comment must
+            pass user text through ``_py_string``, a log line passes ``str``.
+
+    Returns:
+        The reason, or ``None`` when ``entry`` kept the straight transform of its table name
+        (``CI94-D3``: never gloss a name that was not changed).
+    """
+    return _rename_reason(entry.note, entry.name, entry.natural, entry.taken_by, render)
 
 
 @dataclass(frozen=True)

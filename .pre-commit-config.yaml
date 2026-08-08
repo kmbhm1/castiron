@@ -43,6 +43,34 @@ repos:
       - id: no-commit-to-branch
         stages: [pre-commit]
         args: [--branch, staging, --branch, main, --branch, master]
+  # ⚠ `check-yaml` above proves a workflow PARSES. It says nothing about whether the workflow
+  # means anything: `${{ inputs.rehearsal }}` where the input is named `rehearse` is well-formed
+  # YAML, resolves to the empty string at runtime, and is therefore *falsy* -- so a guarded step
+  # simply does not run, with no error anywhere. That is not hypothetical here (CI-124): the
+  # release workflow's entire real-vs-rehearsal split is `if:` expressions over exactly that
+  # input, and a typo in one would cut a REAL release where a TestPyPI rehearsal was asked for.
+  #
+  # Nothing else in this repo can catch it. `tests/unit/test_repo_tooling.py` guards the release
+  # workflow harder than anything else in the tree, but it reads the file as text: a substring
+  # check reports a typo'd context reference as *absent*, which is a weaker and differently-shaped
+  # claim than "this expression refers to something that exists". And the workflow cannot be
+  # executed to find out -- running the release path is what publishes to PyPI.
+  #
+  # `actionlint` (not `actionlint-docker`/`actionlint-system`: those need Docker or a
+  # system binary, while `language: golang` bootstraps its own toolchain) type-checks `${{ }}`
+  # expressions against the workflow's own `on:`/`jobs:` declarations, so an undefined
+  # `inputs.<name>`, `needs.<job>` or `matrix.<key>` is an error rather than an empty string.
+  # It runs on `^\.github/workflows/` only -- upstream's own `files:` -- so it costs nothing on a
+  # commit that does not touch one.
+  #
+  # ⚠ Deliberately NOT in `make validate`: adding a blocking gate is the captain's call, and this
+  # is pre-commit only. `zizmor` (the security linter for the same files) is a separate decision
+  # and is deliberately not here.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        stages: [pre-commit]
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v3.29.1
     hooks:

@@ -2,9 +2,10 @@
 
 > The OpenAPI source needs no database credentials and sees everything your API key can
 > see — column types, nullability, primary keys, single-column foreign keys, enums, and
-> RPC signatures. It cannot see unique or check constraints, identity/generated columns,
-> exact integer widths below `bigint`, or function return types. Point castiron at the
-> database itself when you need those.
+> RPC argument names and types. It cannot see unique or check constraints, identity/generated
+> columns, exact integer widths below `bigint`, function return types, or the order a
+> function's arguments were declared in. Point castiron at the database itself when you need
+> those.
 
 That is the whole page in one paragraph. The rest explains *why* each limit exists, what it
 does to your generated code, and what to do about it — because a code generator that
@@ -93,7 +94,10 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Fact | OpenAPI source | Live DB source (planned) | Why |
 | --- | --- | --- | --- |
 | Name, schema | ✅ full | ✅ | the `/rpc/<name>` path key |
-| Argument names, types, order, has-default | ✅ full | ✅ | the POST body schema |
+| Argument names, has-default | ✅ full | ✅ | the POST body schema's `properties` and `required` |
+| Argument **order** | ⚠ **alphabetical — not the order the function was declared with**; recoverable for a `STABLE`/`IMMUTABLE` function only, and castiron does not read it yet. See [below](#argument-order-is-alphabetical) | ✅ | the POST body's `properties` arrive sorted by name |
+| Argument types | ⚠ **as degraded as a column type, plus one loss beyond it** — `smallint` and `integer` both arrive as `int32`, and `char(2)` arrives as `character` with **no `maxLength`**, which the same column would carry | ✅ exact | `toSwaggerFormat` again; `maxLength` is emitted for columns only |
+| An argument's **enum values** | ❌ **never carried on the argument** — it links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise the argument keeps a bare type name and no values | ✅ | the parameter declares `format` but no `enum` list, and its type name is unqualified |
 | **Return type** | ❌ **never available** | ✅ | responses carry only `"OK"` |
 | **Set-returning** | ❌ **never available** | ✅ `proretset` | not encoded |
 | Volatility | ⚠ **binary only** — `VOLATILE` (POST-only) vs non-volatile (a GET exists); `STABLE` vs `IMMUTABLE` unknown | ✅ | inferred from method gating |
@@ -306,6 +310,35 @@ with a permission error the moment you select it. Treat the models as a descript
 schema's *shape*; get "what may this role read?" from `information_schema.column_privileges`,
 never from generated code.
 
+### Argument order is alphabetical
+
+This one also runs in the unsafe direction, because nothing about the result *looks* wrong.
+
+A function's POST body schema lists its arguments **sorted by name**, not in the order the
+function was declared. `search_products(p_terms text[], p_limit integer default 20)` arrives
+as:
+
+```json
+"properties": {
+  "p_limit": { "format": "int32", "type": "integer" },
+  "p_terms": { "format": "text[]", "type": "array", "items": { "type": "string" } }
+}
+```
+
+castiron builds its parameter list from that body, so the two land in the IR as
+`p_limit, p_terms` — reversed. Their names, types and defaults are each correct; only the
+order is not.
+
+Declaration order does survive, in exactly one place: the **GET** operation's `parameters`
+array, which for the same function lists `p_terms` before `p_limit`. PostgREST emits a GET
+operation only for a `STABLE`/`IMMUTABLE` function, so declaration order is recoverable for
+those and **structurally absent for a `VOLATILE` one**. castiron does not read it yet.
+
+Nothing shipped is wrong today — no emitter consumes function parameters (see the note
+above). It matters the moment one does: a client that called an RPC **positionally** from
+this order would swap arguments silently. Call PostgREST functions by argument name, which is
+what the JSON body is anyway, and the order never matters.
+
 ### Integer widths
 
 `smallint` and `integer` are the same token (`int32`) in the document. For the Pydantic
@@ -329,7 +362,8 @@ Reach for a live-database source when any of these are load-bearing for you:
 - identity/generated columns as fact rather than inference
 - exact integer widths, numeric precision/scale, `varchar(n)`, domain types
 - composite foreign keys, composite primary-key order, cross-schema relationships
-- function return types, set-returning functions, or overloads
+- function return types, set-returning functions, overloads, or the declared order of a
+  function's arguments
 - anything your API role cannot see
 
 The live-database source is on the roadmap and is not shipped yet. Until it lands, this

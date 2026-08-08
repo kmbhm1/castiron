@@ -167,6 +167,79 @@ warn_unused_configs = true
 files = ["src"]
 
 # ----------------------------------------------------------------------------
+# Dead-code detection (CI-107)
+# ----------------------------------------------------------------------------
+# ⚠ Before this section existed, `uv run vulture src/` -- named as castiron's dead-code check in
+# CLAUDE.md and provided as `make vulture` -- could not pass: it exited 3 (vulture's `DeadCode`,
+# i.e. it ran fine and found something; 2 would have meant the command itself was malformed) with
+# 22 findings, ALL at 60% confidence, and every one of them a false positive. A documented quality
+# check that can never go green teaches its readers to stop running it.
+#
+# Why vulture is wrong about all 22, in four independent ways it cannot see:
+#
+#   * REFLECTIVE READS  -- `Schema.as_dict()` serializes via `{f.name: ... for f in fields(obj)}`,
+#                          so EVERY IR dataclass field is consumed by name at runtime and by none
+#                          at parse time. This is most of the list.
+#   * THE STDLIB READS  -- `RedactingFilter.filter` assigns `record.msg` / `record.args` on a
+#                          `logging.LogRecord`; `Formatter.format` reads them back. The consumer
+#                          is CPython, not this repo.
+#   * PUBLIC SURFACE    -- castiron is a published library. `castiron.ir`'s exported model methods
+#                          and `castiron.cli.errors`' documented exit-code table are used by
+#                          DOWNSTREAM code, which vulture will never see. "Unused in src/" is not
+#                          "unused" for anything on the other side of a release.
+#   * PORTED AHEAD      -- two supabase-pydantic fidelity helpers landed with the IR (CI-003)
+#                          before the source that calls them (CI-010/013/020).
+#
+# All 22 are exercised by tests/ -- `uv run vulture src/ tests/` leaves exactly one of them
+# standing -- so this list allowlists reachable, covered code, never anything unreferenced.
+#
+# `ignore_names` matches a BARE NAME everywhere, not a name at a location; that is the only
+# location-independent knob vulture offers short of excluding whole files. So keep entries
+# explicit (no globs) and delete one the moment its symbol goes -- a stale entry silently widens
+# the blind spot. `TestTheVultureAllowlistIsMinimal` in tests/unit/test_repo_tooling.py fails on
+# an entry that no longer names anything in src/.
+#
+# ⚠ Do NOT "fix" a future finding by raising `min_confidence` past 60: unused *functions*,
+# *classes* and *attributes* are all reported at exactly 60%, so 61 would blind vulture to nearly
+# everything it is here to catch and turn this check into decoration. Left at the default 0.
+[tool.vulture]
+ignore_names = [
+    # cli/errors.py -- the documented exit-code table. `EXIT_INTERNAL` is used in src/ and so is
+    # absent here; these four are the contract users script against. `EXIT_DRIFT` is explicitly
+    # reserved for `castiron check` (CI-021) and is unused BY DESIGN until that row lands.
+    "EXIT_OK",
+    "EXIT_ERROR",
+    "EXIT_USAGE",
+    "EXIT_DRIFT",
+    # cli/output.py -- `WriteResult.written` is set from `not dry_run` and read by callers of the
+    # public result shape, not by castiron itself.
+    "written",
+    # ir/models.py -- IR dataclass fields, read reflectively by `Schema.as_dict()`. Each is flagged
+    # twice (the field declaration, and the attribute write in ir/build.py); one entry covers both.
+    "unique_partners",
+    "user_defined_values",
+    "non_nullable",
+    "mode",
+    "volatility",
+    # ir/models.py -- public methods on exported IR classes (`TableInfo`, `Schema`), consumed by
+    # downstream users today and by the SQLAlchemy/client emitters (CI-012/030/031) later.
+    "aliasing_in_columns",
+    "table_dependencies",
+    "primary_is_composite",
+    "has_unique_constraint",
+    "as_dict",
+    # ir/build.py -- fidelity helpers ported from supabase-pydantic with the IR, ahead of the
+    # sources that call them. `parse_constraint_definition_for_fk` reads `pg_constraint.condef`,
+    # which is precisely what the live-DB/DDL sources need.
+    "get_alias",
+    "parse_constraint_definition_for_fk",
+    # utils/logging.py -- attributes of the stdlib `logging.LogRecord`, read back by
+    # `logging.Formatter`. Never referenced again inside castiron, and never dead.
+    "msg",
+    "args",
+]
+
+# ----------------------------------------------------------------------------
 # Tests + coverage (90% floor, enforced in CI on the 3.10–3.13 matrix)
 # ----------------------------------------------------------------------------
 [tool.pytest.ini_options]

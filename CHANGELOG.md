@@ -1,6 +1,126 @@
 # CHANGELOG
 
 
+## v0.2.0 (2026-08-08)
+
+### Bug Fixes
+
+- **cli**: Report renamed model class names
+  ([`906b50a`](https://github.com/kmbhm1/castiron/commit/906b50a5bf0538a089c1abbb9175f4daaa122bcd))
+
+The fourth and last member of the rename family castiron already tells users about, in the same
+  voice and on the same channel: one aggregated `castiron: ...` warning per run, at most three
+  names, then `and N more`. It is the loudest of the four in consequence -- a repaired column keeps
+  its wire name through `Field(alias=...)`, while a repaired table name survives only as a comment.
+
+Reported from the emitter's own `class_stems`, never re-derived.
+
+Refs: CI-130
+
+- **emitters**: Emit the resolved table class names
+  ([`883520b`](https://github.com/kmbhm1/castiron/commit/883520b042fd81d5947e3fed039a025a95fc66e1))
+
+Resolve every table's class stem ONCE in `_write` and thread it to the five class headers, the
+  docstrings, the `Inherits from` trailer and -- the part a second derivation would break -- the
+  type annotation of every relationship field pointing at that table. Recomputing `to_pascal_case`
+  at the annotation site would name `OrderLines` where the header says `OrderLines_2`; that is
+  CI-114.
+
+Relationship FIELD names are a different namespace with a different rule, so they go through
+  `standardize_column_name` (the shipped column rule), which also covers a reserved word (`class:
+  list[Class]` was a SyntaxError) and a leading underscore (a NameError at import that compiles
+  cleanly).
+
+`_reserved_class_names` is unchanged in shape and now flows the resolved stems into the enum
+  allocator automatically, exactly as CI-128 designed it to. A renamed stem carries `# original name
+  was ...` above each of its classes, escaped through `_py_string` so a hostile name cannot split
+  the comment.
+
+Refs: CI-130
+
+- **emitters**: Sanitize and allocate table class stems
+  ([`e65fac6`](https://github.com/kmbhm1/castiron/commit/e65fac65052387b3518782ea333b9fef8ef043f1))
+
+A table name is a quoted Postgres identifier and PostgREST carries it verbatim as a `definitions`
+  key, but `to_pascal_case` only splits on `_` and capitalizes -- it never removes a character.
+  `CREATE TABLE "order lines"` therefore produced the class stem `Order lines`, and `"2fast"`
+  produced `2fast`. Neither is a Python identifier.
+
+Add `python_class_stem` (the per-name transform, calling the shared `python_identifier` CI-128
+  landed rather than forking it) and `python_class_stems` (the per-container allocator). A stem is a
+  stem, not a name: it binds five top-level classes, so `suffixes` makes the allocator test all of
+  them -- measured, tables `order` and `order_insert` collide in `OrderInsert` while their stems
+  look distinct.
+
+The collision rule itself is EXTRACTED from `python_class_names` into `_allocate_class_names` and
+  shared, per CI-128's interface contract: one Option-B mechanism, not two. `python_class_names` is
+  byte-identical in behaviour.
+
+Refs: CI-130
+
+### Features
+
+- **ir**: Record whether a constraint name was synthesized
+  ([`8a30091`](https://github.com/kmbhm1/castiron/commit/8a30091af0674fad0ab97e5e89e679f92455d8b2))
+
+The Schema IR asserted two things the OpenAPI source cannot know. Both rows (CI-084, CI-090) are one
+  subject -- the OpenAPI foreign-key model is lossy -- and they move the same five goldens and the
+  same KNOWN_DEFECTS entries, so they ship together.
+
+CI-084: `ColumnInfo.is_foreign_key` is now True **iff** a resolved forward `ForeignKeyInfo` names
+  that column. PostgREST filters relations by privilege but not the `<fk/>` markers that reference
+  them, so a marker can name a table absent from `definitions`. The builder correctly dropped that
+  edge and then set the flag from the constraint anyway, leaving the IR contradicting itself: a
+  consumer reading the flag found no relationship, a consumer reading the edge list never learned
+  the column was special. Fixed in `ir/build.py`, not in the parser, because the builder already
+  owns "is the target in this schema?" and the DDL and live-DB sources hit the identical case. The
+  FOREIGN KEY `ConstraintInfo` is RETAINED -- it is the only evidence the database has one, and it
+  is what the new CLI notice parses to name the missing target. No second IR field records the
+  dangling edge; `parse_constraint_definition_for_fk` already reads it (Hard Rule #6).
+
+CI-090: `ConstraintInfo.name_is_synthesized` and `ForeignKeyInfo.name_is_synthesized` (bool, default
+  False, appended last) record that a constraint name was manufactured from a naming template rather
+  than read from the database. The fact is otherwise destroyed at the point of synthesis: a
+  fabricated `<t>_<c>_fkey` is byte-identical to what Postgres names a genuinely default-named
+  constraint, so nothing downstream can tell them apart. The testbed names one
+  `order_lines_order_fk` in SQL; castiron reports `order_lines_order_id_fkey`. The synthesis is not
+  FK-specific -- PRIMARY KEY (`<t>_pkey`) and a view's downgraded UNIQUE (`<t>_<cols>_key`) are
+  manufactured by the same rule, all 35 constraints in the public capture.
+
+The flag rides the ROW, not the source: the constraint row contract widens from a 5-tuple to a
+  6-tuple and the fk row from a 7-tuple to an 8-tuple. A source-level switch would cover the two
+  sources that exist or are next, but not the DDL source, where a named `CONSTRAINT x FOREIGN KEY
+  ...` clause and a bare inline `REFERENCES` land in one document with different provenance. Per row
+  is strictly more expressive and costs one migration through the construction sites instead of two.
+  Both contracts are documented in `ir/build.py`'s module docstring, and every `Args:` block naming
+  their arity was updated with them.
+
+Two specified consumers, written into the field docstrings so the next author does not have to
+  rediscover them: `castiron check` (CI-021) compares constraint names only when both sides report
+  False, and the SQLAlchemy/DDL emitters (CI-030/CI-031) omit `name=` when it is True, letting
+  Postgres apply its own default. Both remove a false drift positive by construction.
+
+A fifth CLI notice warns once per run when a foreign key points at a table the schema does not
+  contain, naming up to three. It is emitted BEFORE `report()`'s identity-inference early return and
+  is not gated on the OpenAPI source: the predicate reads only the IR, and a DDL or single-schema
+  live-DB run reaches the same state. Unlike its four siblings, which are renames, this one reports
+  a structural loss -- the emitted module looks perfectly ordinary while a relationship the user
+  knows their database has is simply absent.
+
+Goldens: exactly 5 of 13 artifacts move, all `ir.json`. Zero emitted-module goldens and zero
+  fingerprint manifests -- neither change reaches the emitter (Hard Rule #9). The only non-additive
+  diff line in the whole set is `ledger_refs.ledger_id` flipping `is_foreign_key` true -> false.
+
+KNOWN_DEFECTS: CI-084 is retired (no wrong byte remains). CI-090 STAYS, rewritten -- the golden
+  still says `order_lines_order_id_fkey` while the database says `order_lines_order_fk`, so that
+  byte is still wrong; what changed is that castiron now declares the fabrication instead of hiding
+  it. `pg_constraint.conname` in CI-010/CI-011 retires the entry.
+
+Docs: `docs/sources/openapi.md` credited name synthesis to foreign keys only and had no row at all
+  for a dangling marker. Both corrected, with two new sections covering the warning and the
+  manufactured names.
+
+
 ## v0.1.1 (2026-08-08)
 
 ### Bug Fixes

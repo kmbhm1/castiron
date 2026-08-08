@@ -42,6 +42,122 @@ Until `0.1.0` it covered three: the hostile input emitted a module that did not 
 linter has nothing to say about a file it cannot read. [Column names are now
 repaired](#column-names), so the carve-out is gone rather than merely unused.
 
+## Model class names
+
+Every table produces a **class stem** — `orders` → `Orders` — and five classes hang off it:
+`OrdersBaseSchema`, `OrdersParent`, `OrdersInsert`, `OrdersUpdate` and the operational `Orders`.
+A table name is a quoted identifier in Postgres, so `CREATE TABLE "order lines"` is legal and
+PostgREST reports it verbatim.
+
+The rule, in order:
+
+1. **Sanitize, then PascalCase.** Every character Python will not accept inside an identifier
+   becomes `_` — the same map the [column](#column-names) and [enum label](#enum-member-names)
+   paths use — and `to_pascal_case` then splits on `_`. So a space or a hyphen becomes a word
+   boundary: `"order lines"` → `OrderLines`. A leading digit gains one `_`. Unicode is **kept**:
+   `Ünïcödé` comes through untouched.
+2. **Singularize first, when `--singular-names` is set.** `orders` → `Order`.
+3. **Collision resolution** — see below.
+
+| Postgres table | Class stem |
+| --- | --- |
+| `order_lines` | `OrderLines` |
+| `"order lines"` | `OrderLines` |
+| `"order-lines"` | `OrderLines` |
+| `ORDER_LINES` | `OrderLines` |
+| `"2fast"` | `_2fast` |
+| `"a""b"` | `AB` |
+| `"Ünïcödé"` | `Ünïcödé` |
+
+!!! warning "Until `0.1.1` these emitted a module that did not parse"
+    `"order lines"` emitted `class Order linesBaseSchema(CustomModel):` — a `SyntaxError`, with
+    `castiron gen` exiting `0` — and the bad stem reached all five class headers, every relationship
+    field pointing at that table, and each class's docstring. **No name that was already valid
+    changed**, so regenerating moves nothing unless your schema contains one of these.
+
+!!! note "`orderLines` becomes `Orderlines`, not `OrderLines`"
+    The table path capitalizes each `_`-separated word and lowercases the rest, so a camelCase
+    table name loses its inner capitals. That is what castiron has always emitted and it is not a
+    parse problem, so it was left alone. (Enum *type* names do have a camelCase branch — the two
+    transforms are not the same function.)
+
+### Colliding tables get an ordinal suffix
+
+Three different things collapse two tables onto one set of class names, and **all three predate
+the repair above**:
+
+* **The assembly is not injective**: `order_lines`, `ORDER_LINES`, `"order lines"` and
+  `"order-lines"` all become `OrderLines`.
+* **`--singular-names` merges names**: `orders` and `order` both become `Order`.
+* **A stem binds five class names, not one**: the tables `order` and `order_insert` have obviously
+  distinct stems and both want the name `OrderInsert`.
+
+Nothing is ever dropped or merged. Every table gets its own five classes; the ones that cannot keep
+the natural stem get `_2`, `_3`, … and a comment saying what took it. A stem is only allocated when
+**every** name derived from it is free — including against castiron's own `CustomModel` bases and
+everything the import block binds, so a table called `custom_model` or `base_model` cannot rebind
+them.
+
+!!! note "Well-behaved names are allocated first"
+    Tables whose name needed **no** repair claim their stem **before** repaired ones do, the same
+    way [enum classes](#enum-class-names) do. Adding `CREATE TABLE "order lines"` to a database that
+    already had `order_lines` should not rename a class you already import. Two *equally*
+    well-behaved colliders still need an arbitration, and there the first in schema order keeps it.
+
+```sql
+CREATE TABLE public."order lines" (id int primary key);
+CREATE TABLE public."order-lines" (id int primary key);
+CREATE TABLE public.order_lines   (id int primary key);
+```
+
+```python
+# original name was "order lines" (name collision, OrderLines is taken by "order_lines")
+class OrderLines_2BaseSchema(CustomModel):
+    """OrderLines_2 Base Schema."""
+
+    # Columns
+    id: int
+
+
+# original name was "order-lines" (name collision, OrderLines is taken by "order_lines")
+class OrderLines_3BaseSchema(CustomModel):
+    """OrderLines_3 Base Schema."""
+
+    # Columns
+    id: int
+
+
+class OrderLinesBaseSchema(CustomModel):
+    """OrderLines Base Schema."""
+
+    # Columns
+    id: int
+```
+
+The comment is repeated above **every** class the stem produces, because a class header carries
+nothing else of the source: once the stem is repaired the Postgres table name is otherwise
+unrecoverable from the module. It is emitted **only** when the name changed.
+
+**Relationship fields follow the resolved class**, never the one the table name suggests — a
+foreign key into `"order lines"` is annotated `list[OrderLines_2]` above, not `list[OrderLines]`.
+Their *field* names are model fields, so they follow the [column rule](#the-rule) instead: a table
+called `"order lines"` gives `order_lines: list[...]`, and one called `class` gives `field_class`.
+
+`castiron gen` prints one aggregated line to stderr when a table is renamed:
+
+```
+castiron: 2 tables are not emitted under the class name their name suggests
+(order lines -> OrderLines_2 (name collision, OrderLines is taken by order_lines),
+order-lines -> OrderLines_3 (name collision, OrderLines is taken by order_lines)) -- the
+original table name is preserved in a comment above each generated class, so the module
+still records which table it came from; only the Python class name differs.
+```
+
+!!! warning "The same positional caveat as everywhere else"
+    Ordinal suffixes are positional, so adding a table upstream that sorts before an existing
+    collider renumbers the later ones. Allocating unrepaired names first removes the common case —
+    a hostile name displacing a well-behaved one — but not the general one.
+
 ## Enum class names
 
 The class header is built from two pieces of raw Postgres text — the **schema** and the **type
@@ -100,8 +216,9 @@ natural name get `_2`, `_3`, … and a comment saying what took it.
     Two *equally* well-behaved colliders still need an arbitration, and there the first in schema
     order keeps the name.
 
-**Table model class names always win.** An enum yields to them, because a table's model is the
-stable thing your imports point at.
+**[Table model class names](#model-class-names) always win.** Model class stems are allocated
+first and an enum yields to them — including to a stem that itself carries an ordinal — because a
+table's model is the stable thing your imports point at.
 
 ```sql
 CREATE TYPE public."order status" AS ENUM ('open');

@@ -335,8 +335,8 @@
               "description": "Aggregate statistics for one user\n\nReturns lifetime totals.",
               "required": ["user_id"],
               "properties": {
-                "user_id": { "format": "int32", "type": "integer" },
-                "since": { "format": "date", "type": "string" }
+                "since": { "format": "date", "type": "string" },
+                "user_id": { "format": "int32", "type": "integer" }
               }
             }
           },
@@ -360,9 +360,9 @@
               "description": "Create an order\n\nInserts a row and returns its id.",
               "required": ["user_id", "status"],
               "properties": {
-                "user_id": { "format": "int64", "type": "integer" },
+                "items": { "format": "text[]", "items": { "type": "string" }, "type": "array" },
                 "status": { "format": "order_status", "type": "string" },
-                "items": { "format": "text[]", "items": { "type": "string" }, "type": "array" }
+                "user_id": { "format": "int64", "type": "integer" }
               }
             }
           },
@@ -423,8 +423,8 @@
               "description": "Search products\n\nReturns matching product rows.",
               "required": ["terms"],
               "properties": {
-                "terms": { "format": "text[]", "items": { "type": "string" }, "type": "array" },
-                "limit_to": { "format": "int32", "type": "integer" }
+                "limit_to": { "format": "int32", "type": "integer" },
+                "terms": { "format": "text[]", "items": { "type": "string" }, "type": "array" }
               }
             }
           },

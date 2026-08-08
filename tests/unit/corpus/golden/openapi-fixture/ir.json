@@ -885,11 +885,11 @@
       "schema": "public",
       "parameters": [
         {
-          "name": "user_id",
-          "raw_type": "bigint",
+          "name": "items",
+          "raw_type": "text[]",
           "mode": "IN",
-          "has_default": false,
-          "array_element_type": null,
+          "has_default": true,
+          "array_element_type": "text",
           "enum_info": null
         },
         {
@@ -909,11 +909,11 @@
           }
         },
         {
-          "name": "items",
-          "raw_type": "text[]",
+          "name": "user_id",
+          "raw_type": "bigint",
           "mode": "IN",
-          "has_default": true,
-          "array_element_type": "text",
+          "has_default": false,
+          "array_element_type": null,
           "enum_info": null
         }
       ],
@@ -928,18 +928,18 @@
       "schema": "public",
       "parameters": [
         {
-          "name": "user_id",
-          "raw_type": "integer",
-          "mode": "IN",
-          "has_default": false,
-          "array_element_type": null,
-          "enum_info": null
-        },
-        {
           "name": "since",
           "raw_type": "date",
           "mode": "IN",
           "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "user_id",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": false,
           "array_element_type": null,
           "enum_info": null
         }
@@ -965,19 +965,19 @@
       "schema": "public",
       "parameters": [
         {
-          "name": "terms",
-          "raw_type": "text[]",
-          "mode": "VARIADIC",
-          "has_default": false,
-          "array_element_type": "text",
-          "enum_info": null
-        },
-        {
           "name": "limit_to",
           "raw_type": "integer",
           "mode": "IN",
           "has_default": true,
           "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "terms",
+          "raw_type": "text[]",
+          "mode": "VARIADIC",
+          "has_default": false,
+          "array_element_type": "text",
           "enum_info": null
         }
       ],

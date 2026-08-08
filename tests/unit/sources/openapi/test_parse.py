@@ -756,25 +756,48 @@ class TestFunctions:
         assert function(rows, 'get_user_stats')[5] is None
         assert function(rows, 'get_user_stats')[6] is True
 
+    def test_every_fixture_rpc_body_is_in_alphabetical_order(self, document: dict[str, Any]) -> None:
+        # `CI-133`. Not evidence about PostgREST -- the fixture is hand-authored, so it can only
+        # ever be evidence about castiron -- but it stops the fixture from drifting BACK to a
+        # document shape the generator cannot emit, which is what let `CI-078` survive two
+        # corrections. The claim it mirrors is asserted against real bytes in
+        # TestRpcParameterOrderInTheRealCaptures below.
+        checked = 0
+        for key, item in document['paths'].items():
+            if not key.startswith('/rpc/'):
+                continue
+            for parameter in item.get('post', {}).get('parameters', []):
+                if parameter.get('in') != 'body':
+                    continue
+                properties = list(parameter['schema'].get('properties', {}))
+                assert properties == sorted(properties), (
+                    f'{key} has a POST body in {properties}, which is not alphabetical. A real '
+                    f'PostgREST always sorts it; re-sort the fixture rather than the expectation.'
+                )
+                checked += 1
+        # Not vacuous: every /rpc/* path in the fixture has a body, `ping`'s merely empty.
+        assert checked == 4, f'expected 4 RPC bodies in the fixture, swept {checked}'
+
     # ⚠ The three parameter-order expectations below read the hand-authored CI-005 fixture,
-    # whose RPC bodies are in DECLARATION order -- an order a real PostgREST never emits, since
-    # it alphabetizes them. They pin "castiron preserves whatever order the document gives",
-    # which is true, and nothing more; they are **not** evidence about argument order. Reality
-    # is pinned in TestRpcParameterOrderInTheRealCaptures. Re-ordering the fixture to match
-    # the generator is open row `CI-133`.
+    # whose RPC bodies are ALPHABETICAL as of `CI-133` -- the order a real PostgREST emits,
+    # measured in TestRpcParameterOrderInTheRealCaptures. They pin "castiron preserves whatever
+    # order the document gives", which is true, and nothing more; they are still **not**
+    # evidence about declaration order, because the fixture is hand-authored and an alphabetical
+    # body cannot carry it (`CI-078`). Before CI-133 the fixture held DECLARATION order -- a
+    # document shape PostgREST cannot emit -- so these expectations agreed with a fiction.
     def test_parameter_order_is_preserved_and_has_default_comes_from_required(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'get_user_stats')[7] == [
-            ('user_id', 'integer', None, False, None),
             ('since', 'date', None, True, None),
+            ('user_id', 'integer', None, False, None),
         ]
 
     def test_parameter_types_are_normalized_like_columns(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'create_order')[7] == [
-            ('user_id', 'bigint', None, False, None),
-            ('status', 'order_status', None, False, None),
             ('items', 'text[]', None, True, 'text'),
+            ('status', 'order_status', None, False, None),
+            ('user_id', 'bigint', None, False, None),
         ]
 
     def test_a_no_argument_function_yields_an_empty_parameter_list(self, document: dict[str, Any]) -> None:
@@ -784,8 +807,8 @@ class TestFunctions:
     def test_a_variadic_argument_is_only_visible_through_the_get_operation(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'search_products')[7] == [
-            ('terms', 'text[]', 'v', False, 'text'),
             ('limit_to', 'integer', None, True, None),
+            ('terms', 'text[]', 'v', False, 'text'),
         ]
 
     def test_the_description_comes_from_the_body_schema(self, document: dict[str, Any]) -> None:

@@ -111,7 +111,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -185,7 +186,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],

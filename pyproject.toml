@@ -228,11 +228,11 @@ ignore_names = [
     "primary_is_composite",
     "has_unique_constraint",
     "as_dict",
-    # ir/build.py -- fidelity helpers ported from supabase-pydantic with the IR, ahead of the
-    # sources that call them. `parse_constraint_definition_for_fk` reads `pg_constraint.condef`,
-    # which is precisely what the live-DB/DDL sources need.
+    # ir/build.py -- a fidelity helper ported from supabase-pydantic with the IR, ahead of the
+    # source that calls it. (`parse_constraint_definition_for_fk` sat here too until CI-084 gave
+    # it a real reader: cli/notices.py parses a retained-but-unresolved FOREIGN KEY definition
+    # with it to name the table the schema does not contain.)
     "get_alias",
-    "parse_constraint_definition_for_fk",
     # utils/logging.py -- attributes of the stdlib `logging.LogRecord`, read back by
     # `logging.Formatter`. Never referenced again inside castiron, and never dead.
     "msg",

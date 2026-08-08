@@ -9,6 +9,8 @@ from castiron.cli import notices
 from castiron.cli.notices import (
     MAX_NAMED_TABLES,
     OPENAPI_FIDELITY_NOTE,
+    dangling_foreign_key_warning,
+    dangling_foreign_keys,
     identity_pk_candidates,
     identity_pk_warning,
     renamed_class_stem_warning,
@@ -19,7 +21,7 @@ from castiron.cli.notices import (
     repaired_column_warning,
     report,
 )
-from castiron.ir import ColumnInfo, EnumInfo, Schema, TableInfo
+from castiron.ir import ColumnInfo, ConstraintInfo, ConstraintType, EnumInfo, Schema, TableInfo
 from castiron.sources import build_schema_from_document
 from castiron.sources.openapi import INTEGER_FAMILY
 from castiron.utils.naming import ClassStem, EnumClass, python_class_names, python_class_stems
@@ -454,3 +456,190 @@ class TestReportClassStems:
             )
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert [w.split()[1] for w in warnings] == ['table', 'enum']
+
+
+def dangling_document(*table_names: str) -> dict[str, Any]:
+    """A PostgREST document whose ``<fk/>`` markers all point at a table it does not contain."""
+    return {
+        'swagger': '2.0',
+        'definitions': {
+            name: {
+                'required': ['id', 'ledger_id'],
+                'properties': {
+                    'id': {'format': 'int32', 'type': 'integer', 'description': 'Note:\nPrimary Key.<pk/>'},
+                    'ledger_id': {
+                        'format': 'int32',
+                        'type': 'integer',
+                        'description': (
+                            "Note:\nForeign Key to `private_ledger.id`.<fk table='private_ledger' column='id'/>"
+                        ),
+                    },
+                },
+            }
+            for name in table_names
+        },
+        'paths': {f'/{name}': {'get': {}, 'post': {}} for name in table_names},
+    }
+
+
+def resolvable_document() -> dict[str, Any]:
+    """The same shape, but the marker's target IS in the document -- the counter-witness."""
+    document = dangling_document('ledger_refs')
+    document['definitions']['private_ledger'] = {
+        'required': ['id'],
+        'properties': {'id': {'format': 'int32', 'type': 'integer', 'description': 'Note:\nPrimary Key.<pk/>'}},
+    }
+    document['paths']['/private_ledger'] = {'get': {}, 'post': {}}
+    return document
+
+
+@pytest.mark.unit
+class TestDanglingForeignKeys:
+    """CI-084: a ``<fk/>`` marker whose target the API role cannot see is a *structural loss*."""
+
+    def test_it_names_the_column_and_the_missing_target(self) -> None:
+        schema = build_schema_from_document(dangling_document('ledger_refs'))
+        assert dangling_foreign_keys(schema) == ['ledger_refs.ledger_id -> private_ledger']
+
+    def test_a_resolvable_foreign_key_reports_nothing(self) -> None:
+        schema = build_schema_from_document(resolvable_document())
+        assert dangling_foreign_keys(schema) == []
+
+    def test_an_empty_schema_reports_nothing(self) -> None:
+        assert dangling_foreign_keys(Schema()) == []
+
+    def test_a_constraint_that_is_not_a_foreign_key_is_ignored(self) -> None:
+        # PRIMARY KEY and CHECK rows reach the same loop; only FOREIGN KEY may produce an entry.
+        schema = build_schema_from_document(resolvable_document())
+        assert any(c.type is not ConstraintType.FOREIGN_KEY for t in schema.tables for c in t.constraints)
+        assert dangling_foreign_keys(schema) == []
+
+    def test_an_unparseable_constraint_definition_is_skipped(self) -> None:
+        # A source may record a FOREIGN KEY constraint whose definition castiron cannot parse
+        # (or none at all). There is no target to name, so the notice stays quiet rather than
+        # inventing one.
+        unparseable = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='ref_id', raw_type='integer')],
+            constraints=[
+                ConstraintInfo(
+                    constraint_name='t_ref_id_fkey',
+                    type=ConstraintType.FOREIGN_KEY,
+                    columns=['ref_id'],
+                    constraint_definition='FOREIGN KEY ref_id REFERENCES nowhere',
+                ),
+                ConstraintInfo(constraint_name='t_ref_id_fkey2', type=ConstraintType.FOREIGN_KEY, columns=['ref_id']),
+            ],
+        )
+        assert dangling_foreign_keys(Schema(tables=[unparseable])) == []
+
+    def test_a_constraint_naming_a_column_the_table_does_not_have_is_skipped(self) -> None:
+        ghost = TableInfo(
+            name='t',
+            columns=[ColumnInfo(name='id', raw_type='integer')],
+            constraints=[
+                ConstraintInfo(
+                    constraint_name='t_ref_id_fkey',
+                    type=ConstraintType.FOREIGN_KEY,
+                    columns=['ref_id'],
+                    constraint_definition='FOREIGN KEY (ref_id) REFERENCES nowhere(id)',
+                )
+            ],
+        )
+        assert dangling_foreign_keys(Schema(tables=[ghost])) == []
+
+
+@pytest.mark.unit
+class TestDanglingForeignKeyWarning:
+    def test_one_entry_reads_singular(self) -> None:
+        message = dangling_foreign_key_warning(['ledger_refs.ledger_id -> private_ledger'])
+        assert message.startswith('1 foreign key points at a table this schema does not contain')
+        assert '(ledger_refs.ledger_id -> private_ledger)' in message
+
+    def test_two_entries_read_plural(self) -> None:
+        message = dangling_foreign_key_warning(['a.x -> p', 'b.y -> p'])
+        assert message.startswith('2 foreign keys point at a table this schema does not contain')
+
+    def test_it_names_up_to_three(self) -> None:
+        entries = [f't{i}.x -> p' for i in range(MAX_NAMED_TABLES)]
+        message = dangling_foreign_key_warning(entries)
+        assert all(entry in message for entry in entries)
+        assert 'more' not in message
+
+    def test_beyond_three_it_collapses_the_tail(self) -> None:
+        entries = [f't{i}.x -> p' for i in range(MAX_NAMED_TABLES + 2)]
+        message = dangling_foreign_key_warning(entries)
+        assert f'and {2} more' in message
+        assert entries[-1] not in message
+
+    def test_it_says_the_constraint_survives_in_the_ir(self) -> None:
+        # The whole point of the ruling: the flag is dropped, the evidence is not.
+        assert 'still recorded in the IR' in dangling_foreign_key_warning(['a.x -> p'])
+
+
+@pytest.mark.unit
+class TestReportDanglingForeignKeys:
+    def test_the_warning_fires_once_with_its_missing_target(self, caplog: pytest.LogCaptureFixture) -> None:
+        schema = build_schema_from_document(dangling_document('ledger_refs'))
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'CI5-D11: one aggregated warning per run -- got {warnings}'
+        assert 'ledger_refs.ledger_id -> private_ledger' in warnings[0]
+
+    def test_a_schema_with_no_dangling_foreign_key_says_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
+        schema = build_schema_from_document(resolvable_document())
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+    def test_it_still_fires_when_the_identity_inference_is_enabled(self, caplog: pytest.LogCaptureFixture) -> None:
+        # 🔴 The placement hazard: `report()` returns early once the identity inference is on.
+        # A dangling foreign key has nothing to do with that flag, so the notice must be emitted
+        # BEFORE the early return -- this test is red if it is not.
+        schema = build_schema_from_document(dangling_document('ledger_refs'))
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        assert any('does not contain' in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+    def test_it_is_not_gated_on_the_openapi_source(self, caplog: pytest.LogCaptureFixture) -> None:
+        # The condition reads the IR, not the source: a DDL or single-schema live-DB run reaches
+        # the same state, so the notice must not be tied to `from_openapi`.
+        schema = build_schema_from_document(dangling_document('ledger_refs'))
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=False,
+                disable_model_prefix_protection=False,
+            )
+        assert any('does not contain' in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+    def test_it_is_a_warning_not_an_info(self, caplog: pytest.LogCaptureFixture) -> None:
+        # CI-084-Q1, ruled WARNING: the emitted models are silently missing a relationship the
+        # user knows their database has, and every other silent fidelity loss here is surfaced.
+        schema = build_schema_from_document(dangling_document('ledger_refs'))
+        with caplog.at_level(logging.INFO, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=False,
+                disable_model_prefix_protection=False,
+            )
+        levels = {r.levelno for r in caplog.records if 'does not contain' in r.getMessage()}
+        assert levels == {logging.WARNING}

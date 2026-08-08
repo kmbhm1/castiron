@@ -364,3 +364,96 @@ class TestTableDescription:
     def test_a_none_description_serializes_as_null(self) -> None:
         schema = Schema(tables=[TableInfo(name='t')])
         assert schema.as_dict()['tables'][0]['description'] is None
+
+
+@pytest.mark.unit
+class TestConstraintNameIsSynthesized:
+    """``ConstraintInfo.name_is_synthesized`` — the additive CI-090 provenance field."""
+
+    def test_defaults_to_false(self) -> None:
+        """A source that reports the database's own name says nothing and is unaffected."""
+        assert ConstraintInfo(constraint_name='t_pkey', type=ConstraintType.PRIMARY_KEY).name_is_synthesized is False
+
+    def test_is_the_last_declared_field(self) -> None:
+        assert [f.name for f in dataclasses.fields(ConstraintInfo)][-1] == 'name_is_synthesized'
+
+    def test_positional_construction_is_unaffected(self) -> None:
+        constraint = ConstraintInfo('t_pkey', ConstraintType.PRIMARY_KEY, ['id'], 'PRIMARY KEY (id)', 'p')
+        assert (constraint.constraint_name, constraint.raw_constraint_type) == ('t_pkey', 'p')
+        assert constraint.name_is_synthesized is False
+
+    def test_as_dict_gains_exactly_one_key_in_last_position(self) -> None:
+        schema = Schema(
+            tables=[
+                TableInfo(
+                    name='t',
+                    constraints=[
+                        ConstraintInfo(
+                            constraint_name='t_pkey', type=ConstraintType.PRIMARY_KEY, name_is_synthesized=True
+                        )
+                    ],
+                )
+            ]
+        )
+        constraint_dict = schema.as_dict()['tables'][0]['constraints'][0]
+
+        assert list(constraint_dict)[-1] == 'name_is_synthesized'
+        assert constraint_dict['name_is_synthesized'] is True
+        assert list(constraint_dict) == [
+            'constraint_name',
+            'type',
+            'columns',
+            'constraint_definition',
+            'raw_constraint_type',
+            'name_is_synthesized',
+        ]
+
+
+@pytest.mark.unit
+class TestForeignKeyNameIsSynthesized:
+    """``ForeignKeyInfo.name_is_synthesized`` — the same field on the edge, for the same reason."""
+
+    def test_defaults_to_false(self) -> None:
+        edge = ForeignKeyInfo(
+            constraint_name='fk', column_name='a_id', foreign_table_name='b', foreign_column_name='id'
+        )
+        assert edge.name_is_synthesized is False
+
+    def test_is_the_last_declared_field(self) -> None:
+        assert [f.name for f in dataclasses.fields(ForeignKeyInfo)][-1] == 'name_is_synthesized'
+
+    def test_positional_construction_is_unaffected(self) -> None:
+        edge = ForeignKeyInfo('fk', 'a_id', 'b', 'id', 'public', RelationType.MANY_TO_ONE)
+        assert (edge.constraint_name, edge.relation_type) == ('fk', RelationType.MANY_TO_ONE)
+        assert edge.name_is_synthesized is False
+
+    def test_as_dict_gains_exactly_one_key_in_last_position(self) -> None:
+        schema = Schema(
+            tables=[
+                TableInfo(
+                    name='t',
+                    foreign_keys=[
+                        ForeignKeyInfo(
+                            constraint_name='fk',
+                            column_name='a_id',
+                            foreign_table_name='b',
+                            foreign_column_name='id',
+                            name_is_synthesized=True,
+                        )
+                    ],
+                )
+            ]
+        )
+        fk_dict = schema.as_dict()['tables'][0]['foreign_keys'][0]
+
+        assert list(fk_dict)[-1] == 'name_is_synthesized'
+        assert fk_dict['name_is_synthesized'] is True
+        assert list(fk_dict) == [
+            'constraint_name',
+            'column_name',
+            'foreign_table_name',
+            'foreign_column_name',
+            'foreign_table_schema',
+            'relation_type',
+            'name_is_synthesized',
+        ]

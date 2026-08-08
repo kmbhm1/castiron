@@ -248,28 +248,44 @@ class TestEveryViewIsClassifiedAsAView:
 
 
 # ---------------------------------------------------------------------------
-# CI-084 — reaches the IR golden only; the emitted module shows nothing.
+# CI-084 — FIXED. The witness is retired and INVERTED into the regression guard below,
+# following `TestEveryHostileColumnIsRepairedAndAliased`'s pattern: both counter-witnesses are
+# KEPT, because deleting them would throw away the evidence.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestCi084DanglingForeignKey:
-    def test_the_column_is_flagged_a_foreign_key_with_nothing_to_point_at(
-        self, corpus_irs: dict[tuple[str, Any], Schema]
-    ) -> None:
+class TestADanglingForeignKeyMarkerLeavesNoFlagBehind:
+    """The CI-084 witness, read the right way round.
+
+    ``TestCi084DanglingForeignKey`` used to assert that ``ledger_refs.ledger_id`` carried
+    ``is_foreign_key=True`` while ``ledger_refs.foreign_keys`` was ``[]`` — an IR contradicting
+    itself, since a consumer that read the flag and then looked for the relationship found
+    nothing. The captain ruled option **(b)**: the flag goes ``False``, the ``FOREIGN KEY``
+    ``ConstraintInfo`` is **retained**, and the CLI warns once per run.
+
+    The three options that lost: **(a)** leaving it as it was keeps every consumer wrong in a
+    different way; **(c)** a new IR field recording the dangling target duplicates a fact
+    ``ConstraintInfo.constraint_definition`` already carries (Hard Rule #6); **(d)** refusing with
+    a diagnostic would make castiron unusable against a correctly-secured Supabase project, which
+    is exactly what the testbed models (``REVOKE ALL ON public.private_ledger``).
+
+    The invariant, now testable: ``ColumnInfo.is_foreign_key`` is ``True`` **iff** the table
+    carries a resolved forward ``ForeignKeyInfo`` naming that column.
+
+    ⚠ **Both counter-witnesses are kept.** Without the constraint one this class cannot tell "the
+    dangling edge was handled" from "the parser stopped emitting the marker"; without the
+    resolvable one it cannot tell it from "the flag is never set at all".
+    """
+
+    def test_the_column_is_not_flagged_and_carries_no_edge(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
         ir = _ir('testbed-public-default', corpus_irs)
         table = _table(ir, 'ledger_refs')
         ledger_id = next(column for column in table['columns'] if column['name'] == 'ledger_id')
-        assert (ledger_id['is_foreign_key'], table['foreign_keys']) == (True, []), witness_failed(
-            'CI-084',
-            'testbed-public/ir.json',
-            'ledger_refs.ledger_id has is_foreign_key=True while ledger_refs.foreign_keys is [] '
-            '-- a consumer reads the flag and then finds no relationship.',
-            fixed_action=(
-                'this needs a CAPTAIN CALL on the semantics before it is a fix at all\n'
-                '                        (drop the flag / keep it with an explicit dangling marker /\n'
-                '                        warn). Once ruled: ' + FIX_ACTION
-            ),
+        assert (ledger_id['is_foreign_key'], table['foreign_keys']) == (False, []), (
+            'ledger_refs.ledger_id claims a foreign key again while ledger_refs.foreign_keys is '
+            'empty. That is CI-084 regressing: the IR asserts a relationship no edge in the same '
+            'IR can serve, and CI-012 would generate a PostgREST embed that 404s at runtime.'
         )
 
     def test_the_constraint_survives_naming_a_table_that_is_not_in_the_schema(
@@ -278,10 +294,37 @@ class TestCi084DanglingForeignKey:
         ir = _ir('testbed-public-default', corpus_irs)
         definitions = [constraint['constraint_definition'] for constraint in _table(ir, 'ledger_refs')['constraints']]
         assert 'FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)' in definitions
-        # The other half of the defect: the referenced table is not in the schema at all, because
-        # the API role cannot see it. That is what makes the edge dangling rather than merely
-        # unrecorded.
+        # The other half: the referenced table is not in the schema at all, because the API role
+        # cannot see it. That is what makes the edge dangling rather than merely unrecorded -- and
+        # retaining the constraint is what keeps the dangling edge inspectable (and what the CLI's
+        # `dangling_foreign_keys` notice parses to name the missing target).
         assert not any(table['name'] == 'private_ledger' for table in ir['tables'])
+
+    def test_a_resolvable_foreign_key_in_the_same_capture_is_still_flagged(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        # The targeted-ness counter-witness: one column in this capture is dangling and exactly
+        # one flag moved. `order_lines.order_id -> orders` resolves and must stay True.
+        ir = _ir('testbed-public-default', corpus_irs)
+        table = _table(ir, 'order_lines')
+        order_id = next(column for column in table['columns'] if column['name'] == 'order_id')
+        assert order_id['is_foreign_key'] is True
+        assert 'orders' in [fk['foreign_table_name'] for fk in table['foreign_keys']]
+
+    def test_it_is_the_only_dangling_column_in_the_capture(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
+        # Enumerated, not sampled (CI6-Q7): every FOREIGN KEY constraint in the capture whose
+        # column is unflagged. If a second one appears, the blast radius this fix was measured
+        # against has changed and the notice's wording ("N foreign keys") needs re-reading.
+        ir = _ir('testbed-public-default', corpus_irs)
+        dangling = [
+            f'{table["name"]}.{column}'
+            for table in ir['tables']
+            for constraint in table['constraints']
+            if constraint['type'] == 'FOREIGN KEY'
+            for column in constraint['columns']
+            if not next((c['is_foreign_key'] for c in table['columns'] if c['name'] == column), True)
+        ]
+        assert dangling == ['ledger_refs.ledger_id']
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +358,11 @@ class TestCi090SynthesizedConstraintName:
             'this golden is provably fabricated rather than read.',
             fixed_action=(
                 'the fix lands with the live-DB source (CI-010/CI-011), which\n'
-                '                        can read pg_constraint.conname. Then: ' + FIX_ACTION
+                '                        can read pg_constraint.conname. castiron already DECLARES\n'
+                '                        the fabrication via name_is_synthesized=True, so no\n'
+                '                        consumer can mistake this byte for a read name -- but the\n'
+                '                        byte itself is still wrong, which is why the entry stays.\n'
+                '                        Then: ' + FIX_ACTION
             ),
         )
 
@@ -351,6 +398,21 @@ class TestCi090SynthesizedConstraintName:
         # (customer_tags carries two), one of which -- order_report -- is a VIEW, where SQL has no
         # FK constraint to name at all, so that spelling is fabricated twice over.
         assert checked == 10, f'expected 10 forward FK edges in the public capture, enumerated {checked}'
+
+    def test_every_synthesized_name_is_declared_synthesized(self, corpus_irs: dict[tuple[str, Any], Schema]) -> None:
+        # The half of CI-090 this PR closes: the value is still fabricated, but it no longer
+        # claims to have been read. Enumerated over EVERY constraint and EVERY edge, not just the
+        # foreign keys -- `<t>_pkey` and a view's `<t>_<cols>_key` are manufactured by the same
+        # templates (CI-090 was filed as FK-only; measured, it is not). This is the guard that
+        # catches a future source forgetting to set the flag on a row.
+        ir = _ir('testbed-public-default', corpus_irs)
+        constraints = [c for table in ir['tables'] for c in table['constraints']]
+        edges = [fk for table in ir['tables'] for fk in table['foreign_keys']]
+        assert len(constraints) == 35, f'expected 35 constraints in the public capture, found {len(constraints)}'
+        assert len(edges) == 17, f'expected 17 edges (forward + reverse), found {len(edges)}'
+        assert {c['type'] for c in constraints} == {'PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE'}
+        assert all(c['name_is_synthesized'] is True for c in constraints)
+        assert all(fk['name_is_synthesized'] is True for fk in edges)
 
 
 # ---------------------------------------------------------------------------

@@ -15,11 +15,26 @@ Positional tuple contracts (the source ↔ builder boundary)
   array_element_type, description)`` — ``is_nullable`` is ``'YES'``/``'NO'``;
   ``table_type`` is ``'BASE TABLE'``/``'VIEW'``; ``identity_generation`` is
   non-``None`` for identity columns.
-- **fk row (7-tuple):** ``(table_schema, table_name, column_name,
-  foreign_table_schema, foreign_table_name, foreign_column_name, constraint_name)``.
-- **constraint row (5-tuple):** ``(constraint_name, table_name, columns,
-  raw_constraint_type, constraint_definition)`` — ``raw_constraint_type`` is the pg
-  code ``'p'|'f'|'u'|'c'|'x'``.
+- **fk row (8-tuple):** ``(table_schema, table_name, column_name,
+  foreign_table_schema, foreign_table_name, foreign_column_name, constraint_name,
+  name_is_synthesized)``.
+- **constraint row (6-tuple):** ``(constraint_name, table_name, columns,
+  raw_constraint_type, constraint_definition, name_is_synthesized)`` —
+  ``raw_constraint_type`` is the pg code ``'p'|'f'|'u'|'c'|'x'``.
+
+  ⚠ **Both rows grew a trailing element in CI-090** (they were a 7-tuple and a 5-tuple).
+  ``name_is_synthesized`` is a ``bool`` saying whether **this row's** ``constraint_name`` was
+  manufactured by the source from a naming template rather than read from the database. It is
+  deliberately **per row, not per source**. A source-level switch would cover the two sources
+  that exist or are next -- the OpenAPI document carries no constraint name anywhere, so every
+  name it produces is synthesized, and a live-DB source reads ``pg_constraint.conname``, so none
+  of its are -- but it cannot cover the DDL source (CI-013/CI-020), where ``CONSTRAINT x FOREIGN
+  KEY ...`` carries a real name and a bare inline ``REFERENCES`` does not. One document, mixed
+  provenance: per row is strictly more expressive, and it costs one migration through the
+  construction sites instead of two. The fact has to be recorded where the name is manufactured
+  because it is unrecoverable afterwards -- a synthesized ``<t>_<c>_fkey`` is byte-identical to
+  what Postgres names a genuinely default-named constraint, so no downstream heuristic can tell
+  them apart. See :class:`~castiron.ir.models.ConstraintInfo` for the two consumers.
 - **enum-type row (7-tuple):** ``(type_name, namespace, owner, category, is_defined,
   typtype, enum_values)`` — only ``typtype == 'e'`` rows are enums.
 - **enum-type-mapping row (6-tuple):** ``(column_name, table_name, namespace,
@@ -692,7 +707,7 @@ def add_foreign_key_info_to_table_details(
 
     Args:
         tables: The tables built from the column rows, keyed by ``(schema, name)``.
-        fk_details: Foreign-key rows (7-tuple contract).
+        fk_details: Foreign-key rows (8-tuple contract).
         disable_model_prefix_protection: Must match the value used to build the columns.
             A mismatch renames a column here but not there (or vice versa), so the FK
             silently stops matching any column and ``is_foreign_key`` is never set.
@@ -706,6 +721,7 @@ def add_foreign_key_info_to_table_details(
             foreign_table_name,
             foreign_column_name,
             constraint_name,
+            name_is_synthesized,
         ) = row
         table_key = (table_schema, table_name)
         foreign_table_key = (foreign_table_schema, foreign_table_name)
@@ -739,6 +755,7 @@ def add_foreign_key_info_to_table_details(
             ),
             relation_type=relation_type,
             foreign_table_schema=foreign_table_schema,
+            name_is_synthesized=name_is_synthesized,
         )
         tables[table_key].add_foreign_key(fk_info)
 
@@ -816,14 +833,14 @@ def add_constraints_to_table_details(
     Args:
         tables: The tables built from the column rows, keyed by ``(schema, name)``.
         schema: The schema these constraint rows belong to.
-        constraints: Constraint rows (5-tuple contract).
+        constraints: Constraint rows (6-tuple contract).
         disable_model_prefix_protection: Must match the value used to build the columns.
             A mismatch makes ``ConstraintInfo.columns`` name a column that does not
             exist, so ``primary``/``is_unique``/``is_foreign_key`` are never set and
             ``TableInfo.primary_key()`` returns a phantom name.
     """
     for row in constraints:
-        (constraint_name, table_name, columns, raw_constraint_type, constraint_definition) = row
+        (constraint_name, table_name, columns, raw_constraint_type, constraint_definition, name_is_synthesized) = row
 
         if table_name.startswith(f'{schema}.'):
             table_name = table_name[len(schema) + 1 :]
@@ -840,6 +857,7 @@ def add_constraints_to_table_details(
                 ],
                 constraint_definition=constraint_definition,
                 raw_constraint_type=raw_constraint_type,
+                name_is_synthesized=name_is_synthesized,
             )
             tables[table_key].add_constraint(constraint)
 
@@ -854,8 +872,44 @@ def get_unique_columns_from_constraints(constraint: ConstraintInfo) -> list[str]
     return unique_columns
 
 
+def _foreign_key_edge_exists(table: TableInfo, constraint: ConstraintInfo, column_name: str) -> bool:
+    """Whether a resolved forward FK edge backs ``constraint`` on ``column_name``.
+
+    Matching on ``(constraint_name, column_name)`` rather than on mere membership is what keeps
+    this exact. :func:`construct_tables` runs :func:`add_foreign_key_info_to_table_details`
+    before :func:`update_columns_with_constraints` and
+    :func:`analyze_table_relationships` -- which appends **reverse** edges -- after, so at the
+    call site ``table.foreign_keys`` holds forward edges only. The pair check stays correct even
+    if that order ever moved: a reverse edge lands on the *target* table carrying the target's
+    column name, so it can never satisfy the predicate for the source table's constraint column.
+
+    Args:
+        table: The table the constraint belongs to.
+        constraint: The FOREIGN KEY constraint being applied to a column.
+        column_name: The column the constraint names.
+
+    Returns:
+        ``True`` when the builder resolved an edge for this constraint on this column.
+    """
+    return any(
+        fk.constraint_name == constraint.constraint_name and fk.column_name == column_name for fk in table.foreign_keys
+    )
+
+
 def update_columns_with_constraints(tables: dict[tuple[str, str], TableInfo]) -> None:
-    """Set ``primary``/``is_unique``/``is_foreign_key``/``constraint_definition`` on columns."""
+    """Set ``primary``/``is_unique``/``is_foreign_key``/``constraint_definition`` on columns.
+
+    ⚠ **CI-084: ``is_foreign_key`` is ``True`` iff a resolved forward**
+    :class:`~castiron.ir.models.ForeignKeyInfo` **names the column.** It means "castiron can
+    build a relationship from this column", *not* "the database has a foreign key here" -- the
+    latter is what the :class:`~castiron.ir.models.ConstraintInfo` records, and it stays
+    recorded either way. A source can legitimately report a FOREIGN KEY constraint whose target
+    table is absent from the analysis (a PostgREST document whose API role cannot see the target;
+    a DDL or live-DB run scoped to one schema), and
+    :func:`add_foreign_key_info_to_table_details` drops that edge. Setting the flag from the
+    constraint alone left the IR contradicting itself: the column claimed a relationship that no
+    edge in the same IR could serve.
+    """
     for table in tables.values():
         if not table.columns or not table.constraints:
             continue
@@ -869,7 +923,12 @@ def update_columns_with_constraints(tables: dict[tuple[str, str], TableInfo]) ->
                         if constraint.type == ConstraintType.UNIQUE:
                             column.is_unique = True
                             column.unique_partners = get_unique_columns_from_constraints(constraint)
-                        if constraint.type == ConstraintType.FOREIGN_KEY:
+                        # Guarded `= True`, never `= <predicate>`: two FOREIGN KEY constraints can
+                        # name one column, and the flag must stay sticky across the loop so a
+                        # second, dangling constraint cannot unset what a resolved one established.
+                        if constraint.type == ConstraintType.FOREIGN_KEY and _foreign_key_edge_exists(
+                            table, constraint, column.name
+                        ):
                             column.is_foreign_key = True
                         if constraint.type == ConstraintType.CHECK and len(constraint.columns) == 1:
                             column.constraint_definition = constraint.constraint_definition
@@ -908,6 +967,7 @@ def add_relationships_to_table_details(tables: dict[tuple[str, str], TableInfo],
             foreign_table_name,
             foreign_column_name,
             _constraint_name,
+            _name_is_synthesized,
         ) = row
         table_key = (table_schema, table_name)
         foreign_table_key = (foreign_table_schema, foreign_table_name)
@@ -1076,6 +1136,10 @@ def analyze_table_relationships(tables: dict[tuple[str, str], TableInfo]) -> Non
                     foreign_table_name=table.name,
                     foreign_column_name=fk.column_name,
                     relation_type=reverse_type,
+                    # The reverse edge deliberately reuses the owning side's `constraint_name`, so it
+                    # must reuse that side's provenance too -- otherwise a manufactured name would be
+                    # mirrored onto an edge claiming the database supplied it.
+                    name_is_synthesized=fk.name_is_synthesized,
                 )
                 foreign_table.foreign_keys.append(reverse_fk)
 
@@ -1453,8 +1517,8 @@ def construct_tables(
 
     Args:
         column_details: Column rows (12-tuple contract).
-        fk_details: Foreign-key rows (7-tuple contract).
-        constraints: Constraint rows (5-tuple contract).
+        fk_details: Foreign-key rows (8-tuple contract).
+        constraints: Constraint rows (6-tuple contract).
         enum_types: Enum-type rows (7-tuple contract).
         enum_type_mapping: Enum-type-mapping rows (6-tuple contract).
         schema: The schema name these rows belong to.
@@ -1505,8 +1569,8 @@ def build_schema(
 
     Args:
         column_details: Column rows (12-tuple contract).
-        fk_details: Foreign-key rows (7-tuple contract).
-        constraints: Constraint rows (5-tuple contract).
+        fk_details: Foreign-key rows (8-tuple contract).
+        constraints: Constraint rows (6-tuple contract).
         enum_types: Enum-type rows (7-tuple contract).
         enum_type_mapping: Enum-type-mapping rows (6-tuple contract).
         schema: The schema name these rows belong to.

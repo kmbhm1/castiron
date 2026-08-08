@@ -621,7 +621,7 @@ class TestTheFourCallSitesAgree:
         ]
         tables = get_table_details_from_columns(rows)
         add_foreign_key_info_to_table_details(
-            tables, [('public', 'child', 'space-name', 'public', 'parent', '2fast', 'child_fk')]
+            tables, [('public', 'child', 'space-name', 'public', 'parent', '2fast', 'child_fk', False)]
         )
         fk = tables[('public', 'child')].foreign_keys[0]
         # `space-name` is the SECOND collider, so a per-name recomputation would say `space_name`
@@ -634,7 +634,7 @@ class TestTheFourCallSitesAgree:
         rows = [column_row('t', '2fast', nullable='NO'), column_row('t', 'space name'), column_row('t', 'space-name')]
         tables = get_table_details_from_columns(rows)
         add_constraints_to_table_details(
-            tables, 'public', [('t_pkey', 't', ['2fast', 'space-name'], 'p', 'PRIMARY KEY (2fast, space-name)')]
+            tables, 'public', [('t_pkey', 't', ['2fast', 'space-name'], 'p', 'PRIMARY KEY (2fast, space-name)', False)]
         )
         assert tables[('public', 't')].constraints[0].columns == ['field_2fast', 'space_name_2']
 
@@ -643,7 +643,9 @@ class TestTheFourCallSitesAgree:
         # _constraints` matches `ConstraintInfo.columns` against `ColumnInfo.name` by equality.
         rows = [column_row('t', '2fast', nullable='NO')]
         tables = get_table_details_from_columns(rows)
-        add_constraints_to_table_details(tables, 'public', [('t_pkey', 't', ['2fast'], 'p', 'PRIMARY KEY (2fast)')])
+        add_constraints_to_table_details(
+            tables, 'public', [('t_pkey', 't', ['2fast'], 'p', 'PRIMARY KEY (2fast)', False)]
+        )
         update_columns_with_constraints(tables)
         assert tables[('public', 't')].columns[0].primary is True
         assert tables[('public', 't')].primary_key() == ['field_2fast']

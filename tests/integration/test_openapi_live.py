@@ -470,11 +470,14 @@ class TestKeysAndRelations:
 
     def test_foreign_key_constraint_names_are_synthesized(self, live_public_schema: Schema) -> None:
         # The document carries no constraint name, so castiron synthesizes pg's own default
-        # spelling. That happens to match here; it would NOT match a hand-named constraint.
+        # spelling. That happens to match here; it would NOT match a hand-named constraint --
+        # `order_lines_order_fk` in this very seed is the counter-example. CI-090: castiron now
+        # DECLARES the synthesis, so a consumer never has to guess which of the two it is holding.
         orders = _table(live_public_schema, 'orders')
         outbound = next(fk for fk in orders.foreign_keys if fk.column_name == 'customer_id')
         assert outbound.constraint_name == 'orders_customer_id_fkey'
         assert outbound.foreign_table_schema == 'public'
+        assert outbound.name_is_synthesized is True
 
 
 class TestConstraintFloor:
@@ -796,16 +799,17 @@ class TestPrivilegeFloor:
             'secret_body',
         ]
 
-    def test_a_dangling_fk_marker_leaves_an_inconsistent_column(self, live_public_schema: Schema) -> None:
-        # CI-084 (SEED-F2), characterized rather than xfailed because the RIGHT behaviour is
-        # undecided: is a marker naming a table the role cannot see evidence of an FK, or noise?
-        # castiron currently keeps the flag and drops the edge, so `ledger_id` is_foreign_key=True
-        # with no ForeignKeyInfo to go with it. Harmless for the Pydantic emitter (it iterates
-        # foreign_keys) and latent for CI-012 and the SQLAlchemy emitter, which read the flag.
-        # Whichever way a future row resolves it, this assertion fails and forces the choice.
+    def test_a_dangling_fk_marker_leaves_the_column_unflagged(self, live_public_schema: Schema) -> None:
+        # CI-084 (SEED-F2), RULED and fixed. The choice this test used to force has been made:
+        # `is_foreign_key` is True **iff** a resolved forward ForeignKeyInfo names the column, so a
+        # marker naming a table the role cannot see leaves the flag unset and the edge list empty.
+        # The FOREIGN KEY constraint is retained (see below and `TestConstraintFloor`), which is
+        # what keeps the evidence that the database really does have one.
         ledger_id = _column(live_public_schema, 'ledger_refs', 'ledger_id')
-        assert ledger_id.is_foreign_key is True
+        assert ledger_id.is_foreign_key is False
         assert [fk.column_name for fk in _table(live_public_schema, 'ledger_refs').foreign_keys] == []
+        definitions = [c.constraint_definition for c in _table(live_public_schema, 'ledger_refs').constraints]
+        assert 'FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)' in definitions
 
     def test_the_marker_names_the_invisible_table_in_the_raw_document(
         self, live_public_document: Mapping[str, Any]

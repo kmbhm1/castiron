@@ -73,7 +73,8 @@
           "foreign_table_name": "products",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "restricted_table_owner_id_fkey",
@@ -81,7 +82,8 @@
           "foreign_table_name": "restricted_table",
           "foreign_column_name": "owner_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -92,7 +94,8 @@
             "id"
           ],
           "constraint_definition": "UNIQUE (id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "active_users_view_favorite_product_id_fkey",
@@ -101,7 +104,8 @@
             "favorite_product_id"
           ],
           "constraint_definition": "FOREIGN KEY (favorite_product_id) REFERENCES products(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -220,7 +224,8 @@
           "foreign_table_name": "orders",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_items_product_id_fkey",
@@ -228,7 +233,8 @@
           "foreign_table_name": "products",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -240,7 +246,8 @@
             "product_id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_items_order_id_fkey",
@@ -249,7 +256,8 @@
             "order_id"
           ],
           "constraint_definition": "FOREIGN KEY (order_id) REFERENCES orders(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_items_product_id_fkey",
@@ -258,7 +266,8 @@
             "product_id"
           ],
           "constraint_definition": "FOREIGN KEY (product_id) REFERENCES products(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -392,7 +401,8 @@
           "foreign_table_name": "users",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_items_order_id_fkey",
@@ -400,7 +410,8 @@
           "foreign_table_name": "order_items",
           "foreign_column_name": "order_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -411,7 +422,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "orders_user_id_fkey",
@@ -420,7 +432,8 @@
             "user_id"
           ],
           "constraint_definition": "FOREIGN KEY (user_id) REFERENCES users(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -489,7 +502,8 @@
           "foreign_table_name": "active_users_view",
           "foreign_column_name": "favorite_product_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_items_product_id_fkey",
@@ -497,7 +511,8 @@
           "foreign_table_name": "order_items",
           "foreign_column_name": "product_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -508,7 +523,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -596,7 +612,8 @@
           "foreign_table_name": "active_users_view",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -607,7 +624,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "restricted_table_owner_id_fkey",
@@ -616,7 +634,8 @@
             "owner_id"
           ],
           "constraint_definition": "FOREIGN KEY (owner_id) REFERENCES active_users_view(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -844,7 +863,8 @@
           "foreign_table_name": "orders",
           "foreign_column_name": "user_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -855,7 +875,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [

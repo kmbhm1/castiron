@@ -136,6 +136,17 @@ class ConstraintInfo:
 
     ``raw_constraint_type`` retains the original source code (e.g. the pg ``contype``)
     for round-trip fidelity; it is ``None`` for sources that do not expose one.
+
+    ``name_is_synthesized`` is ``True`` when ``constraint_name`` was **manufactured by the
+    source** from a naming template rather than read from the database. It defaults to
+    ``False``, so every existing constructor and every source that reports a real name is
+    unaffected. It exists because the fact is otherwise **unrecoverable**: a synthesized
+    ``orders_pkey`` is byte-identical to the name Postgres gives a genuinely default-named
+    constraint, so no downstream heuristic can tell them apart. Two consumers are specified
+    to read it -- ``castiron check`` (CI-021) compares constraint names only when **both**
+    sides report ``False``, and the SQLAlchemy/DDL emitters (CI-030/CI-031) omit ``name=``
+    entirely when it is ``True``, letting Postgres apply its own default. Both remove a
+    false drift positive by construction rather than by convention.
     """
 
     constraint_name: str
@@ -143,6 +154,7 @@ class ConstraintInfo:
     columns: list[str] = field(default_factory=list)
     constraint_definition: str | None = None
     raw_constraint_type: str | None = None
+    name_is_synthesized: bool = False
 
     def __str__(self) -> str:
         """Return a short, human-readable representation of the constraint."""
@@ -151,7 +163,15 @@ class ConstraintInfo:
 
 @dataclass
 class ForeignKeyInfo:
-    """A foreign-key edge from a column to a column on a foreign table."""
+    """A foreign-key edge from a column to a column on a foreign table.
+
+    ``name_is_synthesized`` carries the same provenance fact as
+    :attr:`ConstraintInfo.name_is_synthesized`, for the same two consumers, and defaults to
+    ``False`` for the same reason: a source that reports the database's own
+    ``pg_constraint.conname`` says nothing and is unaffected. A **reverse** edge synthesized
+    by :func:`castiron.ir.build.analyze_table_relationships` inherits the flag from the
+    forward edge it mirrors, because it deliberately reuses that edge's ``constraint_name``.
+    """
 
     constraint_name: str
     column_name: str
@@ -159,6 +179,7 @@ class ForeignKeyInfo:
     foreign_column_name: str
     foreign_table_schema: str = 'public'
     relation_type: RelationType | None = None
+    name_is_synthesized: bool = False
 
 
 @dataclass(unsafe_hash=True)

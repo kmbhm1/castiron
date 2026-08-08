@@ -244,29 +244,21 @@ KNOWN_DEFECTS: dict[str, Defect] = {
             'as evidence about PostgREST.'
         ),
     ),
-    'CI-084': Defect(
-        row_id='CI-084',
-        summary='A dangling FK marker yields is_foreign_key=True with an empty foreign_keys list.',
-        why_it_is_wrong=(
-            'PostgREST emits an <fk .../> marker naming a table absent from definitions (the role '
-            'cannot see it), so ledger_refs.ledger_id is flagged a foreign key with nothing to '
-            'point at -- a consumer reads is_foreign_key and then finds no relationship, which is '
-            'the worst of the available behaviours. The right one (drop the flag / mark it dangling '
-            '/ warn) is an open captain call, which is WHY this is characterized rather than fixed.'
-        ),
-    ),
     'CI-090': Defect(
         row_id='CI-090',
-        summary='The FK constraint name is synthesized from a Postgres default, not read.',
+        summary='Every constraint name is synthesized from a Postgres default template, not read.',
         why_it_is_wrong=(
-            'The OpenAPI source fabricates "<table>_<column>_fkey" because the document carries no '
-            'constraint name. That is a pg DEFAULT, not a recoverable fact, and it is provably '
-            'wrong for any hand-named constraint: the testbed names this one order_lines_order_fk '
-            'in SQL, and castiron reports order_lines_order_id_fkey. Harmless for the Pydantic '
-            'emitter (which never renders it), but a SQLAlchemy/DDL emitter would emit a name= that '
-            'does not match the database and `castiron check` would then report drift that does not '
-            'exist -- a broken build for a user who changed nothing. pg_constraint.conname settles '
-            'it in CI-010/CI-011.'
+            'The document carries no constraint name anywhere, so the OpenAPI source fabricates pg '
+            'DEFAULTS -- "<t>_<c>_fkey", "<t>_pkey", "<t>_<cols>_key" -- for all 35 constraints in '
+            'this capture, not just the foreign keys. The value is provably wrong for any '
+            'hand-named constraint: the testbed names one order_lines_order_fk in SQL, and this '
+            'golden still says order_lines_order_id_fkey. THAT BYTE IS STILL WRONG, which is why '
+            'this entry stays registered. What changed is that castiron '
+            'now DECLARES the fabrication -- every row carries name_is_synthesized=true -- so a '
+            'SQLAlchemy/DDL emitter can omit name= rather than emit one that does not match the '
+            'database, and `castiron check` can skip the comparison rather than report drift that '
+            'does not exist. The value itself is unrecoverable from this source; '
+            'pg_constraint.conname supplies it in CI-010/CI-011, and the entry retires then.'
         ),
     ),
 }
@@ -359,7 +351,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=SourceOptions(),
         emitter_config=EmitterConfig(),
         status='characterized',
-        defects=('CI-084', 'CI-090'),
+        defects=('CI-090',),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'default.py.txt',
         golden_ir=GOLDEN_DIR / 'testbed-public' / 'ir.json',
@@ -370,7 +362,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=_MAXIMAL_SOURCE,
         emitter_config=_MAXIMAL_EMITTER,
         status='characterized',
-        defects=('CI-084', 'CI-090'),
+        defects=('CI-090',),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'maximal.py.txt',
         # A DIFFERENT IR from `testbed-public-default`: both source options are flipped, and the

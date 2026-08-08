@@ -57,18 +57,22 @@ configuration that some other file depends on is asserted, because "remember to 
 config" is not a mechanism.
 
 The file has since grown a second family, on the same principle but a sharper edge: the **release
-path** (CI-115, CI-121, CI-122, CI-123). Nothing there can be checked by running it -- a release run
+path** (CI-115, CI-121, CI-122). Nothing there can be checked by running it -- a release run
 publishes to PyPI -- and each of those rows is a live failure that surfaced only mid-release, after
 the version bump and the tag push had already happened. These assertions are the only automated
 check that path has.
 
-CI-123 adds the sharpest case of that: a ``rehearse`` input that makes the same workflow either cut
-a real release or upload to TestPyPI. **Which mode a step belongs to is invisible at rest and
-unrunnable in a test** -- a rehearsal that started python-semantic-release would recreate the exact
-half-released state (bumped version, pushed tag, created Release) that two sessions were spent
-unwinding, and a real release whose publish step named the test index would report success while
-publishing nothing anyone can install. So the mode separation is asserted structurally, from a
-step-level parse of the workflow.
+The sharpest case is what gates the two steps that actually publish. Both wait on
+``steps.release.outputs.released == 'true'``, and both failure modes are silent: a step that lost
+that guard uploads the *previous* version's artifacts under a version PyPI has already accepted
+(refused permanently, after the tag and the GitHub Release exist), and a publish step that names an
+index at all redirects a real release somewhere nobody can install it while the run goes green. So
+those conditions are asserted structurally, from a step-level parse of the workflow.
+
+⚠ That parse outlived what it was written for. It arrived with CI-123, a ``rehearse`` input that
+made the same file either cut a real release or upload to TestPyPI; the captain removed that mode
+on 2026-08-08, once the rehearsal and two real releases had all run green. What remains is the half
+that was never about the rehearsal.
 
 A third family covers the **local dev tooling** (CI-107, CI-108), and it shares the release
 family's defining property rather than the first family's: both rows were checks that had quietly
@@ -275,24 +279,22 @@ USER_FACING_COMMIT_TYPES = frozenset({'feat', 'fix', 'perf'})
 #: covers the scoped ``ci(release): ...`` spelling too -- verified end to end, not assumed.
 ANCHORED_COMMIT_TYPE = re.compile(r'\^([a-z]+)')
 
-#: The upload action. It appears **twice** in the release workflow now -- once for real PyPI and
-#: once for TestPyPI -- which is why the CI-123 assertions go through ``workflow_steps`` rather
-#: than ``uses_action`` / ``pinned_action_major``: both of those return on the FIRST match and
-#: would silently answer about whichever step happens to come first.
+#: The upload action. Assertions about it go through ``workflow_steps`` rather than
+#: ``uses_action`` / ``pinned_action_major``, which answer only "is this action used, and at what
+#: major": neither can read a step's ``if:`` or its ``with:`` children, and both return on the
+#: FIRST match -- so a second step using this action (the CI-123 rehearsal was exactly that shape)
+#: would be answered about silently by whichever one came first.
 PYPI_PUBLISH_ACTION = 'pypa/gh-action-pypi-publish'
 
 #: The action that attaches ``dist/*`` to the GitHub Release. A real-release step, and one that
 #: has never executed -- see CI-116 for why it is this action and not ``upload-to-gh-release``.
 PSR_PUBLISH_ACTION = 'python-semantic-release/publish-action'
 
-#: The ``workflow_dispatch`` input that selects rehearsal mode (CI-123).
-REHEARSE_INPUT = 'rehearse'
-
-#: The index a rehearsal uploads to. Spelled out rather than pattern-matched: "some URL that
-#: mentions test.pypi.org" is not the assertion -- ``https://test.pypi.org/legacy/`` is the upload
-#: endpoint, and a near-miss (no trailing slash, ``/simple/``, the web root) fails at upload time,
-#: i.e. in the one mode where a failure is meant to be cheap but is still a wasted dispatch.
-TEST_PYPI_URL = 'https://test.pypi.org/legacy/'
+#: The condition both publishing steps carry, normalized (``normalized_condition`` strips the
+#: ``${{ }}`` wrapper and all whitespace). ``released`` is ``'true'`` only when
+#: python-semantic-release actually cut a release; a no-op run sets it to ``'false'`` and still
+#: succeeds, so a step that lost this guard would publish on a run that released nothing.
+RELEASED_GUARD = "steps.release.outputs.released=='true'"
 
 #: Both spellings of the publish action's index input, asserted **absent** on the real step.
 #: Read from the action's own ``action.yml``: the canonical kebab-case ``repository-url`` carries
@@ -302,20 +304,6 @@ TEST_PYPI_URL = 'https://test.pypi.org/legacy/'
 #: value on the real step silently redirects a real release to another index.
 REPOSITORY_URL_KEYS = ('with.repository-url', 'with.repository_url')
 
-#: Both spellings of the input that would make a re-run of the rehearsal report success without
-#: uploading anything. Asserted absent by captain ruling (CI-123-Q2): TestPyPI is permanent per
-#: ``(name, version)``, so ``cast-iron 0.0.0`` can be uploaded exactly once, and a second run must
-#: fail loudly on "File already exists" rather than produce a green that means nothing.
-SKIP_EXISTING_KEYS = ('with.skip-existing', 'with.skip_existing')
-
-#: The spelling of the input context that must never appear in a condition. For a
-#: ``workflow_dispatch`` boolean, ``inputs.rehearse`` is a real boolean while
-#: ``github.event.inputs.rehearse`` is the STRING ``'false'`` when unchecked -- and GitHub's falsy
-#: set is ``false, 0, -0, "", '', null``, which does not contain ``'false'``. So the string
-#: spelling is always truthy and ``== true`` against it is always false: both directions silently
-#: invert a mode.
-STRING_FLAVOURED_INPUTS = 'github.event.inputs'
-
 #: The file whose name IS the CI-121 mechanism. ``$GITHUB_ENV`` is job-scoped, so anything written
 #: to it inherits into every later step, including the container action -- which is how
 #: ``VIRTUAL_ENV`` reached ``build_command``. ``setup-uv`` was one producer, not the category, so
@@ -323,9 +311,9 @@ STRING_FLAVOURED_INPUTS = 'github.event.inputs'
 JOB_SCOPED_ENV_FILE = 'GITHUB_ENV'
 
 #: The number of steps the release job has: app token, checkout, PSR, publish to PyPI, upload to
-#: the GitHub Release, rehearsal build, rehearsal publish. Asserted so that a parse which silently
-#: returns fewer (or none) fails HERE rather than making every loop below pass vacuously (CI-083).
-RELEASE_STEP_COUNT = 7
+#: the GitHub Release. Asserted so that a parse which silently returns fewer (or none) fails HERE
+#: rather than making every loop below pass vacuously (CI-083).
+RELEASE_STEP_COUNT = 5
 
 #: The keys ``workflow_steps`` recognises at the top level of a step. A ``- <key>:`` line whose key
 #: is one of these STARTS a step; a nested line whose key is not one of these (an ``env:`` child,
@@ -923,71 +911,19 @@ def workflow_steps(text: str) -> list[dict[str, str]]:
     return steps
 
 
-def yaml_block(text: str, *path: str) -> list[str]:
-    """Return the raw lines nested under one mapping key path.
-
-    Textual for the same reason as everything else here. Each key narrows the search to the block
-    the previous one opened, so a key name that also occurs elsewhere in the document cannot be
-    picked up from outside its parent.
-
-    Args:
-        text: The whole document.
-        *path: The key path, e.g. ``'on', 'workflow_dispatch', 'inputs'``.
-
-    Returns:
-        The lines strictly more indented than the last key, with their indentation intact. Empty
-        when any key along the path is missing.
-    """
-    lines = non_comment_lines(text)
-    for key in path:
-        index = next((position for position, line in enumerate(lines) if line.strip().startswith(f'{key}:')), None)
-        if index is None:
-            return []
-        indent = len(lines[index]) - len(lines[index].lstrip())
-        block = []
-        for line in lines[index + 1 :]:
-            if len(line) - len(line.lstrip()) <= indent:
-                break
-            block.append(line)
-        lines = block
-    return lines
-
-
-def workflow_dispatch_input(text: str, name: str) -> dict[str, str]:
-    """Return the declaration of one ``workflow_dispatch`` input.
-
-    Args:
-        text: The whole workflow file.
-        name: The input's name, e.g. ``'rehearse'``.
-
-    Returns:
-        Its fields (``description``, ``type``, ``default``), unquoted. Empty when the workflow
-        declares no such input -- which the caller asserts against, because an empty dict would
-        otherwise make a ``.get('default') != 'true'`` check pass on an input that is gone.
-    """
-    fields: dict[str, str] = {}
-    for line in yaml_block(text, 'on', 'workflow_dispatch', 'inputs', name):
-        key, separator, value = line.strip().partition(':')
-        if separator:
-            fields[key.strip()] = scalar_value(value)
-    return fields
-
-
 def normalized_condition(step: dict[str, str]) -> str:
     """Return a step's ``if`` free of its expression wrapper and of all whitespace.
 
-    ⚠ After normalization ``!inputs.rehearse`` **contains** ``inputs.rehearse``, so a
-    rehearsal-only predicate has to exclude the negation explicitly. That substring relation is
-    the single most likely way this guard becomes theatre, which is why
-    ``excludes_a_real_release`` states it and the positive control exercises it.
+    Whitespace-insensitive on purpose: a condition is compared for what it *requires*, so
+    reformatting one must not redden a guard while dropping a conjunct from one must.
 
     Args:
         step: One step from ``workflow_steps``.
 
     Returns:
-        The condition, e.g. ``"!inputs.rehearse&&steps.release.outputs.released=='true'"``. The
-        empty string for a step with no condition -- which fails every mode assertion, as it
-        should: an ungated step runs in both modes.
+        The condition, e.g. ``"steps.release.outputs.released=='true'"``. The empty string for a
+        step with no condition -- a real state here, not a sentinel: the version step is
+        deliberately ungated.
     """
     return ''.join(step.get('if', '').replace('${{', '').replace('}}', '').split())
 
@@ -1035,35 +971,6 @@ def repository_url(step: dict[str, str]) -> str | None:
         if key in step:
             return step[key]
     return None
-
-
-def excludes_a_rehearsal(step: dict[str, str]) -> bool:
-    """Report whether a step is unreachable in rehearsal mode.
-
-    Args:
-        step: One step from ``workflow_steps``.
-
-    Returns:
-        True if its condition carries the negated input.
-    """
-    return f'!inputs.{REHEARSE_INPUT}' in normalized_condition(step)
-
-
-def excludes_a_real_release(step: dict[str, str]) -> bool:
-    """Report whether a step is unreachable on a real release.
-
-    The negation is excluded explicitly: after ``normalized_condition`` the string
-    ``!inputs.rehearse`` contains ``inputs.rehearse``, so a bare membership test would accept the
-    *real-only* condition as rehearsal-only and both mode assertions would become one tautology.
-
-    Args:
-        step: One step from ``workflow_steps``.
-
-    Returns:
-        True if its condition requires the input and does not negate it.
-    """
-    condition = normalized_condition(step)
-    return f'inputs.{REHEARSE_INPUT}' in condition and f'!inputs.{REHEARSE_INPUT}' not in condition
 
 
 def pyproject_table(*path: str) -> dict[str, object]:
@@ -1991,6 +1898,37 @@ class TestNothingLeaksARunnerVirtualEnvIntoTheReleaseContainer:
             f'make a red test go away.'
         )
 
+    def test_nothing_in_the_release_workflow_writes_the_job_scoped_env_file(self) -> None:
+        """The CHANNEL, not the producer -- ``setup-uv`` was one writer of ``$GITHUB_ENV``, not the category.
+
+        Carried over from the CI-123 guards when the TestPyPI rehearsal was removed (2026-08-08):
+        the rehearsal is gone, but the mechanism this asserts is CI-121's, and it outlives the mode
+        it happened to be written under. Anything writing that file -- another action, or a
+        ``run:`` step with an ``echo ... >> "$GITHUB_ENV"`` -- inherits into every later step,
+        including the python-semantic-release container, whose ``build_command`` receives a fixed
+        whitelist that includes ``VIRTUAL_ENV``.
+        """
+        writers = [line.strip() for line in non_comment_lines(release_workflow_text()) if JOB_SCOPED_ENV_FILE in line]
+        assert not writers, (
+            f'{RELEASE_NAME} writes `${JOB_SCOPED_ENV_FILE}`:\n  ' + '\n  '.join(writers) + '\n'
+            f'That file is JOB-scoped: every later step inherits it, including the '
+            f'python-semantic-release CONTAINER action. That is exactly how the 0.1.0 release died '
+            f'(CI-121) -- `{SETUP_UV_ACTION}` exported a venv path through it that resolves only '
+            f'on the runner.'
+        )
+        # Anti-vacuity (CI-072), inline because the assertion is an absence over a filter: the
+        # filter must SEE a plain write, and must NOT see the prose. release.yml names
+        # `$GITHUB_ENV` in the comment block that explains CI-121, so both halves are live.
+        write = f'        run: echo X >> "${JOB_SCOPED_ENV_FILE}"'
+        assert [line for line in non_comment_lines(f'{write}\n') if JOB_SCOPED_ENV_FILE in line], (
+            f'non_comment_lines cannot see `{write.strip()}`, so this guard would stay green with '
+            f'the CI-121 channel reopened.'
+        )
+        assert not [line for line in non_comment_lines(f'      # {write.strip()}\n') if JOB_SCOPED_ENV_FILE in line], (
+            f'a COMMENT naming `${JOB_SCOPED_ENV_FILE}` is read as a write, so this guard would '
+            f'fail permanently on the documentation that explains why it exists.'
+        )
+
     def test_psr_really_does_forward_the_variable_this_class_is_about(self) -> None:
         # The two assertions above are only worth having because PSR passes this name through. If
         # it ever stops, they are guarding a channel that no longer exists -- and the whitelist is
@@ -2208,21 +2146,25 @@ class TestTheChangelogExclusionsSuppressTypesTheParserKnows:
 
 @pytest.mark.unit
 class TestTheStepParserReadsStepsNotComments:
-    """``workflow_steps`` is the load-bearing half of the CI-123 guard, so it is tested directly.
+    """``workflow_steps`` is the load-bearing half of the release-path guards, so it is tested directly.
 
     Mirrors ``TestTheWorkflowParserReadsCommandsNotLabels``. Each case is a way the real
-    ``release.yml`` could make a naive parser lie: it carries a comment block that names
-    ``astral-sh/setup-uv@v5`` and quotes its ``python-version:`` input, and after CI-123 it also
-    quotes ``github.event.inputs``, ``$GITHUB_ENV`` and a bare ``if: !inputs.rehearse`` in prose --
-    every one of them a string some assertion below forbids. A parser that read comments would fail
+    ``release.yml`` could make a naive parser lie: it carries comment blocks that name
+    ``astral-sh/setup-uv@v5``, quote its ``python-version:`` input and quote the publish action's
+    own ``${{ inputs.repository-url || inputs.repository_url }}`` -- every one of them a string
+    some assertion here or in the next class reads. A parser that read comments would fail
     permanently on the documentation that explains why the guards exist.
+
+    ⚠ Two of the counts the next class depends on are now **zero or one** (one publish action, no
+    ``run:`` steps), and an absence proves nothing about a reader that stopped reading. So the
+    cases below show the parser *seeing* each of those shapes on a synthetic document first.
     """
 
     def test_a_commented_out_step_is_not_a_step(self) -> None:
         document = '\n'.join(
             [
-                '      # - name: Publish to TestPyPI',
-                '      #   if: ${{ inputs.rehearse }}',
+                '      # - name: Publish to PyPI',
+                "      #   if: ${{ steps.release.outputs.released == 'true' }}",
                 '      #   uses: pypa/gh-action-pypi-publish@release/v1',
                 '      #   with:',
                 '      #     repository-url: https://test.pypi.org/legacy/',
@@ -2231,10 +2173,12 @@ class TestTheStepParserReadsStepsNotComments:
         assert workflow_steps(document) == []
 
     def test_a_block_scalar_run_is_captured_whole_and_the_next_step_still_parses(self) -> None:
+        # Anti-vacuity (CI-083) for `test_the_real_release_workflow_parses_to_the_steps_these_guards_iterate`,
+        # which asserts the job has NO `run:` steps: the parser has to be shown reading one at all,
+        # block-scalar body included, or that assertion is an empty list compared with an empty list.
         document = '\n'.join(
             [
                 '      - name: Build',
-                '        if: ${{ inputs.rehearse }}',
                 '        run: |',
                 '          pipx run --spec uv~=0.11.32 uv build',
                 '          echo done',
@@ -2246,11 +2190,12 @@ class TestTheStepParserReadsStepsNotComments:
         assert len(steps) == 2
         assert steps[0]['run'] == 'pipx run --spec uv~=0.11.32 uv build\necho done'
         assert steps[1] == {'name': 'After', 'uses': 'pypa/gh-action-pypi-publish@release/v1'}
+        assert steps_running_a_command(steps) == [steps[0]]
 
     def test_with_children_are_namespaced_and_do_not_leak_into_the_next_step(self) -> None:
         document = '\n'.join(
             [
-                '      - name: Publish to TestPyPI',
+                '      - name: Publish somewhere else',
                 '        uses: pypa/gh-action-pypi-publish@release/v1',
                 '        with:',
                 '          repository-url: https://test.pypi.org/legacy/',
@@ -2266,301 +2211,126 @@ class TestTheStepParserReadsStepsNotComments:
         assert steps[0]['with.repository-url'] == 'https://test.pypi.org/legacy/'
         assert steps[0]['with.print-hash'] == 'true'
         assert repository_url(steps[1]) is None, (
-            'a `with:` child leaked from one step into the next, so the real publish step would '
-            "inherit the rehearsal step's index and the guard that keeps a real release off "
-            'TestPyPI could never fail.'
+            'a `with:` child leaked from one step into the next, so a step that names an index '
+            'would hand it to the step after it -- and the guard that keeps the real publish step '
+            'pointed at real PyPI could never fail.'
         )
 
     def test_a_step_with_no_condition_normalizes_to_the_empty_string(self) -> None:
-        # An ungated step runs in BOTH modes, so it must fail every mode assertion rather than
-        # returning something a substring test would accidentally accept.
+        # The version step is genuinely ungated, so the empty string is a value the next class
+        # compares against rather than a sentinel for "not parsed".
         step = workflow_steps('      - name: Ungated\n        uses: actions/checkout@v4\n')[0]
+        assert 'if' not in step
         assert normalized_condition(step) == ''
-        assert not excludes_a_rehearsal(step)
-        assert not excludes_a_real_release(step)
 
     def test_a_condition_is_normalized_free_of_its_expression_wrapper(self) -> None:
-        step = workflow_steps(
-            "      - name: Publish\n        if: ${{ !inputs.rehearse && steps.release.outputs.released == 'true' }}\n"
-        )[0]
-        assert normalized_condition(step) == "!inputs.rehearse&&steps.release.outputs.released=='true'"
-
-    def test_an_input_declaration_is_read_and_a_commented_one_is_not(self) -> None:
-        document = '\n'.join(
-            [
-                'on:',
-                '  workflow_dispatch:',
-                '    inputs:',
-                '      # rehearse:',
-                '      #   default: true',
-                '      rehearse:',
-                "        description: 'Rehearse against TestPyPI: no bump, no tag.'",
-                '        type: boolean',
-                '        default: false',
-                'permissions:',
-                '  contents: read',
-            ]
-        )
-        declared = workflow_dispatch_input(document, REHEARSE_INPUT)
-        assert declared['type'] == 'boolean'
-        assert declared['default'] == 'false'
-        # The description keeps its own colon, and `permissions:` is outside the block.
-        assert declared['description'] == 'Rehearse against TestPyPI: no bump, no tag.'
-        assert 'contents' not in declared
-
-    def test_an_absent_input_yields_nothing(self) -> None:
-        assert workflow_dispatch_input('on:\n  workflow_dispatch:\n', REHEARSE_INPUT) == {}
+        step = workflow_steps("      - name: Publish\n        if: ${{ steps.release.outputs.released == 'true' }}\n")[0]
+        assert normalized_condition(step) == RELEASED_GUARD
 
     def test_the_real_release_workflow_parses_to_the_steps_these_guards_iterate(self) -> None:
         """Anti-vacuity (CI-083) for every test in the next class -- they all iterate these sets.
 
         Asserted as exact counts rather than "at least one": a parse that returned an empty list,
-        or one that split the comment blocks into phantom steps, would leave the mode assertions
+        or one that split the comment blocks into phantom steps, would leave the assertions below
         passing over the wrong number of things while reading as green.
         """
         steps = release_steps()
         assert len(steps) == RELEASE_STEP_COUNT, (
             f'{RELEASE_NAME} parses to {len(steps)} steps, not {RELEASE_STEP_COUNT}: '
             f'{[step.get("name") or step.get("uses") for step in steps]}.\n'
-            f'Either a step was added or removed -- in which case decide which MODE it belongs to '
-            f'and update RELEASE_STEP_COUNT deliberately -- or workflow_steps stopped reading the '
-            f'file, which would make every assertion in '
-            f'TestTheRehearsalCannotFireOnARealRelease pass over an empty set.'
+            f'Either a step was added or removed -- in which case decide deliberately what gates '
+            f'it and update RELEASE_STEP_COUNT -- or workflow_steps stopped reading the file, '
+            f'which would make every assertion in the next class pass over an empty set.'
         )
         assert len(steps_using(steps, PSR_ACTION)) == 1
         assert len(steps_using(steps, PSR_PUBLISH_ACTION)) == 1
-        assert len(steps_using(steps, PYPI_PUBLISH_ACTION)) == 2, (
-            f'{RELEASE_NAME} no longer has exactly two {PYPI_PUBLISH_ACTION} steps (real PyPI and '
-            f'TestPyPI). That count is why these guards parse steps instead of using uses_action, '
+        assert len(steps_using(steps, PYPI_PUBLISH_ACTION)) == 1, (
+            f'{RELEASE_NAME} no longer has exactly one {PYPI_PUBLISH_ACTION} step. A second one is '
+            f'how a release quietly reaches another index -- the CI-123 TestPyPI rehearsal was '
+            f'that shape -- and it is why these guards parse steps rather than call uses_action, '
             f'which returns on the first match.'
         )
-        assert len(steps_running_a_command(steps)) == 1, (
-            f'{RELEASE_NAME} has {len(steps_running_a_command(steps))} `run:` steps, not 1. The '
-            f'rehearsal build is the only one -- and "the release job has no run: steps" was part '
-            f'of the CI-121 reasoning, so a new one needs to be checked against it.'
+        assert steps_running_a_command(steps) == [], (
+            f'{RELEASE_NAME} has a `run:` step: '
+            f'{[step.get("name") for step in steps_running_a_command(steps)]}.\n'
+            f'"The release job has no `run:` steps" is part of the CI-121 reasoning -- a run step '
+            f'is somewhere `${JOB_SCOPED_ENV_FILE}` can be written, and that file is job-scoped, so '
+            f'it reaches the python-semantic-release container. Check a new one against that '
+            f'class before adding it.'
         )
 
 
 @pytest.mark.unit
-class TestTheRehearsalCannotFireOnARealRelease:
-    """CI-123 -- one workflow, two modes, and no way to run either one in a test.
+class TestThePublishStepsFireOnlyOnARealRelease:
+    """What survives the removal of the TestPyPI rehearsal (CI-123, removed 2026-08-08).
 
-    The rehearsal exists because two steps of this workflow have NEVER EXECUTED (``Publish to
-    PyPI``, ``Upload artifacts to the GitHub Release``): both are gated on
-    ``released == 'true'``, and both release runs died upstream of them -- CI-121 in
-    ``build_command``, CI-122 at ``github.create_release``. A third failure at the publish step
-    would land *after* the version bump, the tag and the Release already exist.
+    The rehearsal added a ``rehearse`` input and an ``!inputs.rehearse`` conjunct to every real
+    step. The captain removed the mode once it and two real releases (``v0.1.0``, ``v0.1.1``) had
+    all run green -- but two invariants those conjuncts sat next to are not about the rehearsal at
+    all, and both are still unreachable by running anything: a release run publishes to PyPI and
+    spends a version number.
 
-    So a ``rehearse`` input makes the same file either cut a real release or upload the in-tree
-    ``0.0.0`` to TestPyPI. The two failure modes that creates are both silent:
+    * **Both publishing steps stay gated on a release having happened.** ``released`` is
+      ``'true'`` only when python-semantic-release actually cut one; a no-op run sets it to
+      ``'false'`` and the job still succeeds. A step that lost the guard would upload whatever
+      ``dist/`` holds under a version PyPI has already accepted -- refused permanently, and only
+      after the tag and the GitHub Release exist.
+    * **The publish step names no index.** For ``pypa/gh-action-pypi-publish``, *unset is real
+      PyPI*: ``repository-url`` carries no default and the deprecated ``repository_url`` alias
+      defaults to the real endpoint, so any value there redirects a real release somewhere nobody
+      can install it, with the run reporting success.
 
-    * a rehearsal that reaches python-semantic-release recreates the half-released state (bumped
-      version, pushed tag, created Release) that two sessions were spent unwinding, and
-    * a real release whose publish step names the test index reports success while publishing
-      nothing anyone can install.
-
-    Neither is visible at rest, and neither can be caught by running the workflow. Hence a
-    structural guard, over a step-level parse. ⚠ The three ways it could quietly stop meaning
-    anything -- an empty parse, the ``inputs.rehearse`` / ``!inputs.rehearse`` substring relation,
-    and a comment being read as configuration -- are controlled explicitly, above and below.
+    ⚠ The version step is the one that must NOT be gated -- everything downstream reads its
+    outputs, and a skipped step produces none.
     """
 
-    def test_the_rehearse_input_is_a_boolean_that_defaults_to_false(self) -> None:
-        declared = workflow_dispatch_input(release_workflow_text(), REHEARSE_INPUT)
-        assert declared, (
-            f'{RELEASE_NAME} declares no `{REHEARSE_INPUT}` workflow_dispatch input. Every mode '
-            f'assertion below is then about conditions on an input that does not exist -- under a '
-            f'dispatch the context would be empty, so the real path would run and the rehearsal '
-            f'steps would silently never fire.'
-        )
-        assert declared.get('type') == 'boolean', (
-            f'{RELEASE_NAME}: the `{REHEARSE_INPUT}` input is `type: {declared.get("type")}`, not '
-            f'`boolean`. `type: boolean` is what makes `inputs.{REHEARSE_INPUT}` a real boolean; '
-            f"a string input reopens the truthiness trap, where the value `'false'` is TRUTHY "
-            f'(GitHub coerces only `false, 0, -0, "", \'\', null`) and every rehearsal gate fires '
-            f'on a real release.'
-        )
-        assert declared.get('default') == 'false', (
-            f'{RELEASE_NAME}: the `{REHEARSE_INPUT}` input defaults to '
-            f'{declared.get("default")!r}. A `true` default turns the plain "Run workflow" button '
-            f'-- the way the first release gets cut -- into a TestPyPI upload that reports success '
-            f'and releases NOTHING, with no error anywhere to say so.'
+    def test_the_version_step_runs_on_every_dispatch(self) -> None:
+        versions = steps_using(release_steps(), PSR_ACTION)
+        assert len(versions) == 1, f'{RELEASE_NAME} has {len(versions)} {PSR_ACTION} steps, not 1.'
+        assert normalized_condition(versions[0]) == '', (
+            f'{RELEASE_NAME}: the {PSR_ACTION} step now carries `if: {versions[0].get("if", "")}`. '
+            f'It is the step that DECIDES whether a release happens and every step after it reads '
+            f'`steps.release.outputs.released` -- a skipped step produces no outputs, so that '
+            f'output becomes the empty string, both publish steps skip, and the whole job reports '
+            f'success having released nothing. Removing the rehearsal (CI-123) left this step '
+            f'deliberately ungated; keep it that way.'
         )
 
-    def test_every_real_release_step_is_excluded_from_a_rehearsal(self) -> None:
+    def test_both_publishing_steps_wait_for_a_release_to_have_happened(self) -> None:
         steps = release_steps()
-        publishes = steps_using(steps, PYPI_PUBLISH_ACTION)
-        real = (
-            steps_using(steps, PSR_ACTION)
-            + [step for step in publishes if repository_url(step) is None]
-            + steps_using(steps, PSR_PUBLISH_ACTION)
+        # Identified by action rather than by name, so renaming a step cannot silently empty the
+        # set this iterates (CI-083).
+        publishing = steps_using(steps, PYPI_PUBLISH_ACTION) + steps_using(steps, PSR_PUBLISH_ACTION)
+        assert len(publishing) == 2, (
+            f'expected 2 publishing steps in {RELEASE_NAME} (upload to PyPI, upload to the GitHub '
+            f'Release); found {len(publishing)}.'
         )
-        # Anti-vacuity (CI-083): identified by role and by index, never by name -- a rename must
-        # not silently empty this list, and a `repository-url` added to the real publish step must
-        # not silently remove it from the set that has to be gated.
-        assert len(real) == 3, (
-            f'expected 3 real-release steps in {RELEASE_NAME} (semantic-release, publish to PyPI, '
-            f'upload to the GitHub Release); found {len(real)}. If a `repository-url` appeared on '
-            f'the real publish step it is no longer counted here -- see '
-            f'test_the_publish_steps_point_at_the_indexes_they_claim_to.'
-        )
-        for step in real:
-            assert excludes_a_rehearsal(step), (
-                f'{RELEASE_NAME}: the real-release step '
-                f'{step.get("name") or step.get("uses")!r} has the condition '
-                f'{step.get("if", "")!r}, which does not exclude a rehearsal.\n'
-                f'A rehearsal must not start python-semantic-release AT ALL: it would bump the '
-                f'version, write CHANGELOG.md, commit, push the tag and create a GitHub Release -- '
-                f'the exact half-released state the 0.1.0 runs left behind and that had to be '
-                f'unwound by hand (remote tag deleted, main force-pushed).\n'
-                f'Add `!inputs.{REHEARSE_INPUT}` to the condition, and keep the `${{{{ }}}}` '
-                f'wrapper: a bare `if: !inputs.{REHEARSE_INPUT}` is a YAML TAG, not a condition.'
+        for step in publishing:
+            assert RELEASED_GUARD in normalized_condition(step), (
+                f'{RELEASE_NAME}: the publishing step {step.get("name") or step.get("uses")!r} has '
+                f'the condition {step.get("if", "")!r}, which does not require '
+                f"`steps.release.outputs.released == 'true'`.\n"
+                f'python-semantic-release sets that output to `false` and EXITS ZERO when the '
+                f'commits since the last tag cut no version. Without the guard the job would then '
+                f'upload the artifacts already on PyPI under a version it has already accepted -- '
+                f'which PyPI refuses permanently -- or attach them to a release that does not '
+                f'exist.\n'
+                f'If a conjunct is genuinely being added here, keep this one and update the test '
+                f'deliberately.'
             )
 
-    def test_every_rehearsal_step_is_excluded_from_a_real_release(self) -> None:
-        steps = release_steps()
-        rehearsal = steps_running_a_command(steps) + [
-            step for step in steps_using(steps, PYPI_PUBLISH_ACTION) if repository_url(step) == TEST_PYPI_URL
-        ]
-        assert len(rehearsal) == 2, (
-            f'expected 2 rehearsal-only steps in {RELEASE_NAME} (the build, and the upload to '
-            f'{TEST_PYPI_URL}); found {len(rehearsal)}.'
-        )
-        for step in rehearsal:
-            assert excludes_a_real_release(step), (
-                f'{RELEASE_NAME}: the rehearsal-only step '
-                f'{step.get("name") or step.get("uses")!r} has the condition '
-                f'{step.get("if", "")!r}, which does not exclude a real release.\n'
-                f'On the real path that either wastes a build or -- worse -- uploads a real '
-                f'release to the TEST index, where nobody can install it and the version can never '
-                f'be re-uploaded to the real one.\n'
-                f'The condition must be `${{{{ inputs.{REHEARSE_INPUT} }}}}` and must NOT be the '
-                f'negation: after normalization `!inputs.{REHEARSE_INPUT}` contains '
-                f'`inputs.{REHEARSE_INPUT}`, so both modes would read as satisfied.'
-            )
-
-    def test_no_condition_reads_the_string_flavoured_spelling_of_the_input(self) -> None:
-        offenders = [
-            line.strip() for line in non_comment_lines(release_workflow_text()) if STRING_FLAVOURED_INPUTS in line
-        ]
-        assert not offenders, (
-            f'{RELEASE_NAME} reads `{STRING_FLAVOURED_INPUTS}`:\n  ' + '\n  '.join(offenders) + '\n'
-            f'Use the `inputs` context instead. GitHub: "the `inputs` context preserves Boolean '
-            f'values as Booleans instead of converting them to strings", and the falsy set is '
-            f"`false, 0, -0, \"\", '', null` -- the STRING `'false'` is not on it. So a bare "
-            f'`{STRING_FLAVOURED_INPUTS}.{REHEARSE_INPUT}` is ALWAYS true and comparing it '
-            f'`== true` is ALWAYS false. Both spellings silently invert a mode, in opposite '
-            f'directions, and neither reports anything.'
-        )
-
-    def test_every_negated_condition_is_wrapped_in_the_expression_syntax(self) -> None:
-        conditions = [
-            line.strip().lstrip('-').strip().partition(':')[2].strip()
-            for line in non_comment_lines(release_workflow_text())
-            if line.strip().lstrip('-').strip().startswith('if:')
-        ]
-        negations = [condition for condition in conditions if '!inputs' in condition]
-        # Anti-vacuity (CI-083): with no negated condition this loop asserts nothing, and a file
-        # with no negations is itself the failure this class exists to catch.
-        assert negations, (
-            f'{RELEASE_NAME} has no negated `if:` at all, so nothing keeps python-semantic-release '
-            f'out of a rehearsal. See test_every_real_release_step_is_excluded_from_a_rehearsal.'
-        )
-        for condition in negations:
-            assert condition.startswith('${{'), (
-                f'{RELEASE_NAME} has the condition `if: {condition}`, which is not wrapped in '
-                f'`${{{{ }}}}`.\n'
-                f'Measured: a leading `!` opens a YAML TAG, so `if: !inputs.{REHEARSE_INPUT}` is '
-                f'not a false condition -- it is a parse error, `ConstructorError: could not '
-                f"determine a constructor for the tag '!inputs.{REHEARSE_INPUT}'`. Quoting it "
-                f'parses but leaves two spellings of the same idea in one file. Write '
-                f'`if: ${{{{ !inputs.{REHEARSE_INPUT} }}}}`.'
-            )
-
-    def test_the_publish_steps_point_at_the_indexes_they_claim_to(self) -> None:
+    def test_the_publish_step_names_no_index_so_it_reaches_real_pypi(self) -> None:
         publishes = steps_using(release_steps(), PYPI_PUBLISH_ACTION)
-        assert len(publishes) == 2, (
-            f'{RELEASE_NAME} has {len(publishes)} {PYPI_PUBLISH_ACTION} steps, not 2 (real PyPI and TestPyPI).'
-        )
-        named = [step for step in publishes if repository_url(step) is not None]
-        assert len(named) == 1 and named[0]['with.repository-url'] == TEST_PYPI_URL, (
-            f'{RELEASE_NAME}: exactly one publish step must name an index, and it must be '
-            f'`{TEST_PYPI_URL}`; found {[repository_url(step) for step in publishes]}.\n'
-            f'⚠ UNSET IS REAL PyPI. `repository-url` carries no default and the deprecated '
-            f'`repository_url` alias defaults to `https://upload.pypi.org/legacy/`, with the action '
-            f'passing `${{{{ inputs.repository-url || inputs.repository_url }}}}`. So a value on '
-            f'the REAL step redirects a real release to another index -- a run that goes green '
-            f'while publishing nothing users can install -- and a missing value on the REHEARSAL '
-            f'step uploads the rehearsal to real PyPI, spending the name this row exists to '
-            f'protect.'
-        )
-
-    def test_the_rehearsal_cannot_report_success_without_uploading_anything(self) -> None:
-        """Captain ruling CI-123-Q2: the rehearsal is ONE-SHOT, and that is the point.
-
-        TestPyPI is permanent per ``(name, version)``, so ``cast-iron 0.0.0`` can be uploaded
-        exactly once. ``skip-existing: true`` would make a second run green -- and would make a
-        *successful* rehearsal and a rehearsal that uploaded **nothing** indistinguishable, which
-        is the false-green class this project keeps getting bitten by. The failure on a second run
-        ("File already exists") is honest and wanted.
-        """
-        for step in steps_using(release_steps(), PYPI_PUBLISH_ACTION):
-            for key in SKIP_EXISTING_KEYS:
-                assert key not in step, (
-                    f'{RELEASE_NAME}: the step {step.get("name")!r} sets '
-                    f'`{key.partition(".")[2]}: {step[key]}`. Ruled against (CI-123-Q2): it makes '
-                    f'a rehearsal that uploaded nothing report exactly the same green as one that '
-                    f'worked, so the second run proves less than the first while looking '
-                    f'identical. If a re-runnable rehearsal is genuinely wanted, that is a captain '
-                    f'call and this test is where the decision gets recorded.'
-                )
-
-    def test_the_rehearsal_installs_uv_without_touching_the_job_environment(self) -> None:
-        text = release_workflow_text()
-        builds = steps_running_a_command(workflow_steps(text))
-        assert len(builds) == 1, f'expected exactly 1 `run:` step in {RELEASE_NAME}; found {len(builds)}.'
-        build = builds[0]
-        assert 'uses' not in build, (
-            f'{RELEASE_NAME}: the rehearsal build step now invokes the action '
-            f'{build["uses"]!r}. It must stay a plain `run:` -- an action can export variables '
-            f'job-wide, which is precisely the CI-121 mechanism.'
-        )
-        writers = [line.strip() for line in non_comment_lines(text) if JOB_SCOPED_ENV_FILE in line]
-        assert not writers, (
-            f'{RELEASE_NAME} writes `${JOB_SCOPED_ENV_FILE}`:\n  ' + '\n  '.join(writers) + '\n'
-            f'That file is JOB-scoped: every later step inherits it, including the '
-            f'python-semantic-release CONTAINER action, whose `build_command` receives a fixed '
-            f'whitelist that includes `{POISONED_ENV}`. That is exactly how the 0.1.0 release died '
-            f'(CI-121) -- `{SETUP_UV_ACTION}` exported a venv path that only resolves on the '
-            f'runner. The guard is about the CHANNEL, not about that one action.'
-        )
-        requirement = flag_argument([build['run']], '--spec')
-        declared = [
-            specifier
-            for specifier in pyproject_string_list(pyproject_table('project', 'optional-dependencies'), BUILD_EXTRA)
-            if specifier.startswith('uv')
-        ]
-        assert requirement is not None, (
-            f'{RELEASE_NAME}: the rehearsal build runs `{build["run"]}`, which passes no `--spec`, '
-            f'so nothing pins the uv it builds with. Use '
-            f"`pipx run --spec '<requirement>' uv build`."
-        )
-        assert len(declared) == 1, (
-            f'{PYPROJECT_NAME}: `[project.optional-dependencies].{BUILD_EXTRA}` declares '
-            f'{declared} for uv; this guard needs exactly one requirement to bind the workflow to.'
-        )
-        assert requirement == declared[0], (
-            f'{RELEASE_NAME} builds the rehearsal with `{requirement}` while {PYPROJECT_NAME} '
-            f'releases with `{declared[0]}`.\n'
-            f'These are the two declarations of "the uv this project releases with" and they must '
-            f'move together. The `{BUILD_EXTRA}` extra pins the uv that WROTE {LOCK_NAME} (0.11.x: '
-            f'`version = 1`, `revision = 3`), not the newest uv -- so a rehearsal on a different '
-            f'uv would be rehearsing a build the real release never performs.'
-        )
-        assert re.search(r'[=<>~!]', requirement), (
-            f'{RELEASE_NAME}: the rehearsal build requirement `{requirement}` is unpinned, so the '
-            f'rehearsal would silently drift onto whatever uv shipped this morning while the real '
-            f'release stays on {declared[0]}.'
+        assert len(publishes) == 1, f'{RELEASE_NAME} has {len(publishes)} {PYPI_PUBLISH_ACTION} steps, not 1.'
+        assert repository_url(publishes[0]) is None, (
+            f'{RELEASE_NAME}: the publish step names the index '
+            f'{repository_url(publishes[0])!r}.\n'
+            f'⚠ UNSET IS REAL PyPI. The canonical kebab-case `repository-url` carries no default, '
+            f'the deprecated `repository_url` alias defaults to `https://upload.pypi.org/legacy/`, '
+            f'and the composite passes `${{{{ inputs.repository-url || inputs.repository_url }}}}`. '
+            f'So ANY value here silently redirects a real release to another index -- a run that '
+            f'goes green while publishing nothing anyone can install. That is not hypothetical: '
+            f'the CI-123 rehearsal pointed exactly this action at test.pypi.org.'
         )
 
     def test_these_guards_can_still_see_the_shapes_they_forbid(self) -> None:
@@ -2569,32 +2339,30 @@ class TestTheRehearsalCannotFireOnARealRelease:
         That is the shape that passes loudly forever once the reader underneath it stops reading,
         so each forbidden shape is pushed back through the same helpers and asserted to be SEEN.
         """
-        # 1. An ungated step must fail both mode predicates -- it runs in both modes.
+        # 1. An ungated publish step -- the exact regression that dropping a conjunct could leave
+        #    behind -- must be visible as ungated.
         ungated = workflow_steps('      - name: Publish\n        uses: pypa/gh-action-pypi-publish@release/v1\n')[0]
-        assert not excludes_a_rehearsal(ungated) and not excludes_a_real_release(ungated), (
-            'an ungated step satisfies a mode predicate, so both mode assertions would pass on a '
-            'workflow with no conditions at all.'
+        assert RELEASED_GUARD not in normalized_condition(ungated), (
+            'an ungated step reads as carrying the released guard, so the assertion that both '
+            'publishing steps carry it could not fail.'
         )
-        # 2. The string-flavoured spelling must be visible on a non-comment line, and invisible on
-        #    a commented one -- release.yml documents the trap in prose, right where it matters.
-        live = f'        if: ${{{{ {STRING_FLAVOURED_INPUTS}.{REHEARSE_INPUT} }}}}\n'
-        assert [line for line in non_comment_lines(live) if STRING_FLAVOURED_INPUTS in line], (
-            'the string-flavoured spelling is invisible to non_comment_lines on a plain condition '
-            'line, so that guard would stay green with the trap in the file.'
-        )
-        assert not [line for line in non_comment_lines(f'      # {live.strip()}\n') if STRING_FLAVOURED_INPUTS in line]
-        # 3. A real publish step carrying an index must be visible to the index check.
+        # 2. ...and a guarded one as guarded, or (1) is two empty strings agreeing with each other.
+        guarded = workflow_steps(
+            "      - name: Publish\n        if: ${{ steps.release.outputs.released == 'true' }}\n"
+        )[0]
+        assert RELEASED_GUARD in normalized_condition(guarded)
+        # 3. A publish step carrying an index must be visible to the index check...
         redirected = workflow_steps(
             '\n'.join(
                 [
                     '      - name: Publish to PyPI',
                     '        uses: pypa/gh-action-pypi-publish@release/v1',
                     '        with:',
-                    f'          repository-url: {TEST_PYPI_URL}',
+                    '          repository-url: https://test.pypi.org/legacy/',
                 ]
             )
         )[0]
-        assert repository_url(redirected) == TEST_PYPI_URL
+        assert repository_url(redirected) == 'https://test.pypi.org/legacy/'
         # ...including the deprecated alias, which is the spelling that carries a real default.
         aliased = workflow_steps(
             '      - uses: pypa/gh-action-pypi-publish@release/v1\n'
@@ -2605,31 +2373,17 @@ class TestTheRehearsalCannotFireOnARealRelease:
             'repository_url reads only the kebab-case spelling, so the deprecated `repository_url` '
             'alias could redirect a real release with the guard none the wiser.'
         )
-        # 4. `skip-existing` must be visible in both spellings (CI-123-Q2).
-        for spelling in ('skip-existing', 'skip_existing'):
-            skipping = workflow_steps(
-                f'      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          {spelling}: true\n'
-            )[0]
-            assert f'with.{spelling}' in skipping, (
-                f'`{spelling}: true` is invisible to the parser, so the one-shot ruling could be '
-                f'reversed in the file without reversing it in the test.'
+        # 4. ...and a commented-out step must not be read as configuration at all. release.yml
+        #    quotes both spellings in prose immediately above the step this class guards.
+        assert (
+            workflow_steps(
+                '      # - name: Publish to PyPI\n'
+                '      #   uses: pypa/gh-action-pypi-publish@release/v1\n'
+                '      #   with:\n'
+                '      #     repository-url: https://test.pypi.org/legacy/\n'
             )
-        # 5. THE SUBSTRING TRAP, explicitly. After normalization `!inputs.rehearse` CONTAINS
-        #    `inputs.rehearse`. If both predicates accepted both spellings, the two central mode
-        #    assertions above would be one tautology that no mutation could ever redden.
-        real_only = workflow_steps(f'      - name: R\n        if: ${{{{ !inputs.{REHEARSE_INPUT} }}}}\n')[0]
-        rehearsal_only = workflow_steps(f'      - name: H\n        if: ${{{{ inputs.{REHEARSE_INPUT} }}}}\n')[0]
-        assert excludes_a_rehearsal(real_only) and not excludes_a_real_release(real_only), (
-            f'`!inputs.{REHEARSE_INPUT}` satisfies the REHEARSAL-only predicate. The negation is a '
-            f'superstring of the plain form, so the two mode assertions accept each other and '
-            f'neither can fail -- theatre (CI-072).'
+            == []
         )
-        assert excludes_a_real_release(rehearsal_only) and not excludes_a_rehearsal(rehearsal_only), (
-            f'`inputs.{REHEARSE_INPUT}` satisfies the REAL-only predicate, so a rehearsal-only '
-            f'step would read as correctly gated for a real release.'
-        )
-        # 6. ...and a commented-out step must not be read as configuration at all.
-        assert workflow_steps(f'      # - name: R\n      #   if: ${{{{ !inputs.{REHEARSE_INPUT} }}}}\n') == []
 
 
 class TestThePreCommitRuffHookIsNotTheLegacyAlias:

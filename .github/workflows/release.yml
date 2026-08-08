@@ -31,88 +31,10 @@
 #
 # Until then, run it by hand from the Actions tab to cut the first release.
 # ---------------------------------------------------------------------------
-# REHEARSAL MODE (CI-123) -- tick `rehearse` on a manual dispatch.
-#
-# WHY IT EXISTS. Two steps in this file have NEVER EXECUTED: `Publish to PyPI` and
-# `Upload artifacts to the GitHub Release`. Both are gated on `released == 'true'`, and
-# both release runs so far died upstream of them -- CI-121 in `build_command`, CI-122 at
-# `github.create_release` (a 422: the rendered body was 169,012 chars against a 125,000
-# cap). A third failure at the PUBLISH step would land after the version bump, the tag
-# and the GitHub Release already exist -- straight back into the half-state the last two
-# sessions were spent unwinding. So the publish is rehearsed first, against test.pypi.org,
-# where a mistake costs nothing but a name in a sandbox index.
-#
-# WHAT A GREEN REHEARSAL PROVES
-#   1. The OIDC exchange works FOR THIS WORKFLOW: the token minted by job `release` of
-#      `.github/workflows/release.yml`, with `id-token: write` and no `environment:`, is
-#      accepted by a Trusted Publisher. Same shape the real release emits; only the index,
-#      and therefore the audience, differs (the action reads the audience from
-#      `https://{domain}/_/oidc/audience`, so nothing is hand-configured).
-#   2. A brand-new project name is claimable by a PENDING publisher's first upload, and the
-#      pending -> concrete conversion works end to end.
-#   3. Warehouse accepts our metadata -- long-description rendering, the PEP 639
-#      `license` + `license-files` pair, classifiers, `Requires-Python`, and the
-#      `Requires-Dist: uv~=0.11.32; extra == "build"` marker. `twine check` passed locally
-#      on the real 0.1.0 artifacts and is NOT Warehouse's validator; this is.
-#
-# WHAT IT CANNOT PROVE -- read this before trusting a green run
-#   * Nothing about the pypi.org pending publisher. That is a different row in a different
-#     database on a different service; no query from this repository can read it. A green
-#     rehearsal followed by `invalid-publisher` on pypi.org is a fully consistent outcome.
-#   * Nothing about `cast-iron` being claimable on PyPI. TestPyPI has its own name state
-#     and its own prohibited-name table (see NAME-D1 for why the hyphen matters).
-#   * Nothing about python-semantic-release: rehearsal mode does not start it AT ALL. The
-#     version bump, the changelog render, the tag push and `create_release` -- the step
-#     CI-122 fixed -- are all still unexecuted, as is `publish-action`.
-#   * Nothing about `build_command` inside PSR's container: the rehearsal builds on the
-#     runner, with pipx, deliberately. Run 2 got past the container build, so that half is
-#     proven by execution already.
-#   * It cannot exercise the CI-121 channel at all, because it never starts the container
-#     action. The `unset VIRTUAL_ENV` belt in `build_command` stays load-bearing.
-#   * Job-level `permissions:` cannot be made mode-dependent, so `contents: write` is
-#     granted during a rehearsal even though nothing writes. Stated, not fixed: splitting
-#     the job to narrow it would add a second workflow-shaped surface for no safety gain.
-#
-# WHY AN INPUT AND NOT A SECOND WORKFLOW FILE. A PyPI Trusted Publisher match includes the
-# WORKFLOW FILENAME: `job_workflow_ref` is one of warehouse's
-# `__required_verifiable_claims__` for a GitHub publisher, `_check_job_workflow_ref` expects
-# `OWNER/REPO/.github/workflows/WORKFLOW.yml@REF`, and the publisher row stores a
-# `workflow_filename`. (Do not grep for `workflow_ref` and conclude otherwise -- that one is
-# in `__unchecked_claims__`.) A `release-rehearsal.yml` would mint a claim castiron never
-# ships and would validate nothing about the real one. One file, one job, one input.
-#
-# ⚠ USE `inputs.rehearse`, NEVER `github.event.inputs.rehearse`. GitHub: "the `inputs`
-# context preserves Boolean values as Booleans instead of converting them to strings." The
-# falsy set is `false, 0, -0, "", '', null` -- the STRING `'false'` is not on it. So the
-# `github.event.inputs` spelling is ALWAYS truthy, and comparing it `== true` is ALWAYS
-# false. Both silently invert a mode, in opposite directions.
-#
-# ⚠ EVERY NEGATION CARRIES `${{ }}`. A bare `if: !inputs.rehearse` is not a condition, it is
-# a YAML TAG -- measured: `ConstructorError: could not determine a constructor for the tag
-# '!inputs.rehearse'`. Always write `if: ${{ !inputs.rehearse }}`.
-#
-# THE DAY THE TRIGGER BECOMES `push: main`: under a push event the `inputs` context is
-# empty, so `inputs.rehearse` dereferences to null -- falsy. `${{ !inputs.rehearse }}` is
-# then true (the real path runs) and `${{ inputs.rehearse }}` is false (the rehearsal steps
-# skip). That is correct by design, not by luck; do not "fix" it when you flip the switch.
-#
-# All of the above is enforced by `tests/unit/test_repo_tooling.py`
-# (`TestTheRehearsalCannotFireOnARealRelease`), because a workflow YAML change cannot be
-# checked by running it.
-# ---------------------------------------------------------------------------
 name: release
 
 on:
   workflow_dispatch:
-    inputs:
-      rehearse:
-        # ⚠ `default: false` is load-bearing. A `true` default would turn the plain
-        # "Run workflow" -- the way the first release gets cut -- into a TestPyPI upload
-        # that reports success and releases nothing. `type: boolean` is what makes
-        # `inputs.rehearse` a real boolean rather than the string trap above.
-        description: 'Rehearse against TestPyPI: skip semantic-release entirely (no bump, no commit, no tag, no GitHub Release), build the in-tree version and upload to test.pypi.org. Leave UNCHECKED to cut a real release.'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -169,18 +91,8 @@ jobs:
       # `build_command` also defends itself with `unset VIRTUAL_ENV` (see pyproject.toml). That is
       # the belt to this brace, not a duplicate: PSR passes a fixed whitelist rather than the
       # environment, and `VIRTUAL_ENV` is the ONLY name on it that anything on the runner can set.
-      #
-      # ⚠ THE `!inputs.rehearse` CONJUNCT ON THE NEXT THREE STEPS IS DEFENCE IN DEPTH, AND IT
-      # STAYS. On the two publish steps it is strictly redundant -- a skipped step produces no
-      # outputs, so with the version step below skipped `steps.release.outputs.released` is the
-      # empty string and `== 'true'` is already false. It is written out anyway because it makes
-      # "no step is reachable in the wrong mode" a property OF THE FILE rather than a property of
-      # a chain of reasoning about skipped-step outputs, and because it is what the guard in
-      # `tests/unit/test_repo_tooling.py` asserts. A future edit to either gate must still trip
-      # over the negation. Do not simplify it back out.
       - name: Python Semantic Release (version + changelog + tag)
         id: release
-        if: ${{ !inputs.rehearse }}
         uses: python-semantic-release/python-semantic-release@v9
         with:
           github_token: ${{ steps.app-token.outputs.token || github.token }}
@@ -192,7 +104,7 @@ jobs:
       # silently redirects a REAL release to some other index -- a release that reports success
       # and publishes nothing anyone can install. The guard asserts both spellings are absent.
       - name: Publish to PyPI
-        if: ${{ !inputs.rehearse && steps.release.outputs.released == 'true' }}
+        if: ${{ steps.release.outputs.released == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
@@ -207,47 +119,8 @@ jobs:
       # `publish-action` does publish `v9`, takes the same inputs, and is what the pinned
       # v9.21.2 docs prescribe. Keep its major in lockstep with the version step (CI-116).
       - name: Upload artifacts to the GitHub Release
-        if: ${{ !inputs.rehearse && steps.release.outputs.released == 'true' }}
+        if: ${{ steps.release.outputs.released == 'true' }}
         uses: python-semantic-release/publish-action@v9
         with:
           github_token: ${{ steps.app-token.outputs.token || github.token }}
           tag: ${{ steps.release.outputs.tag }}
-
-      # --- rehearsal only, from here down (CI-123) -------------------------------------------
-      #
-      # ⚠ PIPX, NOT `astral-sh/setup-uv` -- AND NOT EVEN A GATED ONE. See the block above: that
-      # action creates the workspace `.venv` and exports `VIRTUAL_ENV` through `$GITHUB_ENV`,
-      # which is JOB-scoped and reaches the container action. `if: ${{ inputs.rehearse }}` would
-      # keep it off the real path today, which is exactly why the reasoning has to live here and
-      # the guard has to be structural: `if:` conditions get edited. The invariant asserted in
-      # `tests/unit/test_repo_tooling.py` is not "no ungated setup-uv" -- it is "no setup-uv, and
-      # nothing writing `$GITHUB_ENV`, ANYWHERE in this file". A plain `run:` step writes nothing
-      # to `$GITHUB_ENV` unless its command does.
-      #
-      # The uv pin is byte-equal to `[project.optional-dependencies].build` in pyproject.toml, and
-      # the guard binds them: that pin tracks THE uv THAT WROTE `uv.lock`, and a second,
-      # independently drifting declaration of "the uv this project releases with" is the thing to
-      # avoid. The rehearsal does not rewrite the lock, so it does not need that property -- it
-      # just must not contradict it.
-      #
-      # pipx ships on the runner image (`Pipx 1.16.0` on ubuntu-24.04, which `ubuntu-latest`
-      # currently resolves to; the 26.04 preview carries 1.16.1). If that ever stops being true
-      # the step fails loudly with `pipx: command not found` IN A REHEARSAL, never on the real
-      # path -- a cost of one re-dispatch, paid in the mode that exists to absorb it.
-      - name: Build the distributions (rehearsal only)
-        if: ${{ inputs.rehearse }}
-        run: pipx run --spec 'uv~=0.11.32' uv build
-
-      # ⚠ NO `skip-existing`, BY CAPTAIN RULING (CI-123-Q2). TestPyPI is permanent per
-      # `(name, version)`, so `cast-iron 0.0.0` can be uploaded exactly once and a second
-      # rehearsal MUST fail loudly on "File already exists". With `skip-existing: true` a
-      # successful rehearsal and a rehearsal that silently uploaded NOTHING become
-      # indistinguishable -- the false-green class this project keeps getting bitten by. The
-      # guard asserts the input is absent so a later "convenience" addition trips a test.
-      - name: Publish to TestPyPI (rehearsal only)
-        if: ${{ inputs.rehearse }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: dist/
-          print-hash: true

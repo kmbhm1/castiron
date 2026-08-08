@@ -39,6 +39,14 @@ pytestmark = pytest.mark.integration
 #: would pass even if that pattern stopped matching what PostgREST actually emits.
 _FK_MARKER = re.compile(r"<fk table='([^']*)' column='([^']*)'/>")
 
+#: The primary-key marker, same rationale as :data:`_FK_MARKER` and with the same deliberate
+#: strictness: the parser accepts the laxer ``<pk\s*/>``, so spelling that here would hide a change
+#: in what PostgREST actually writes behind castiron's tolerance for it.
+_PK_MARKER = re.compile(r'<pk/>')
+
+#: One row of the key-constraint parity table: name, type, columns, definition.
+_KeyRow = tuple[str, ConstraintType, tuple[str, ...], str | None]
+
 
 def _table(schema: Schema, name: str) -> TableInfo:
     """Return the named table, or fail listing what the schema actually contains."""
@@ -63,6 +71,33 @@ def _function(schema: Schema, name: str) -> FunctionInfo:
         if function.name == name:
             return function
     raise AssertionError(f'{name!r} is absent. Present: {[f.name for f in schema.functions]}')
+
+
+def _pk_marked_columns(document: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    """Return every definition's ``<pk/>``-marked columns, read from the **document**.
+
+    Reading the raw document rather than the IR is the whole point: it gives an expectation an
+    input castiron did not produce. An expectation computed from ``Schema`` alone can only restate
+    whatever castiron did, and a hand-written roster of relation names goes stale the first time
+    the seed or the classification changes -- which is exactly how ``CI-135`` happened.
+
+    Args:
+        document: The PostgREST OpenAPI document.
+
+    Returns:
+        ``{definition name: marked column names}`` in the document's own property order (which is
+        the order ``_parse_definition`` collects them in), for definitions carrying ≥1 marker.
+    """
+    marked: dict[str, tuple[str, ...]] = {}
+    for name, definition in document['definitions'].items():
+        columns = tuple(
+            column
+            for column, prop in definition.get('properties', {}).items()
+            if _PK_MARKER.search(prop.get('description') or '')
+        )
+        if columns:
+            marked[name] = columns
+    return marked
 
 
 def _emit(schema: Schema) -> str:
@@ -458,17 +493,43 @@ class TestConstraintFloor:
         }
         assert found == set()
 
-    def test_the_only_unique_constraints_are_downgraded_view_keys(self, live_public_schema: Schema) -> None:
+    def test_the_only_unique_constraints_are_downgraded_view_keys(
+        self, live_public_schema: Schema, live_public_document: Mapping[str, Any]
+    ) -> None:
+        """No UNIQUE reaches the IR except a view key castiron itself downgraded (CI5-D14a).
+
+        ⚠ **This assertion was a hard-coded roster of two views, and it was wrong for six days.**
+        It was written on 2026-08-02 against the behaviour of the day; ``CI-075`` landed on
+        2026-08-03 and stopped views misclassifying as base tables, which *correctly* grew the set
+        from two to five. Nothing caught it because nothing had ever run this suite. The
+        expectation is therefore computed now -- from the document's own ``<pk/>`` markers and
+        castiron's ``table_type`` -- so that the next correct classification change moves the
+        expectation with the behaviour instead of staling it. ``CI-135``.
+
+        What a derived expectation gives up, stated precisely because it was **measured** rather
+        than reasoned about (by replaying the real pre-``CI-075`` output against all three tests):
+        a *partial* classification regression is invisible here. Read three of the five views as
+        base tables again and both sides shrink together, so this stays green -- and so does
+        :meth:`TestViewKeyDowngrade.test_a_key_marker_becomes_a_pk_on_a_table_and_a_unique_on_a_view`.
+        ``TestViewClassification.test_every_view_classifies_as_a_view`` goes red, which is why its
+        enumeration of the seed's five views is deliberate and belongs there: that is the one claim
+        a seed change *should* force someone to edit. (A *total* collapse -- no view classified as
+        one at all -- is caught right here, by the emptiness guard below.)
+        """
+        marked = _pk_marked_columns(live_public_document)
+        expected = {
+            (t.name, f'{t.name}_{"_".join(marked[t.name])}_key', marked[t.name])
+            for t in live_public_schema.tables
+            if t.table_type == 'VIEW' and t.name in marked
+        }
+        assert expected, 'no VIEW carries a <pk/> marker, so this test would assert nothing'
         unique = {
             (t.name, c.constraint_name, tuple(c.columns))
             for t in live_public_schema.tables
             for c in t.constraints
             if c.type is ConstraintType.UNIQUE
         }
-        assert unique == {
-            ('mv_customer_spend', 'mv_customer_spend_customer_id_key', ('customer_id',)),
-            ('order_report', 'order_report_order_id_key', ('order_id',)),
-        }
+        assert unique == expected
 
     def test_a_length_check_never_reaches_the_column(self, live_public_schema: Schema) -> None:
         # `customers.bio` carries CHECK (length(bio) BETWEEN 3 AND 500). Through the live-DB source
@@ -605,6 +666,53 @@ class TestViewClassification:
 
 class TestViewKeyDowngrade:
     """A view's ``<pk/>`` marker is retained as a UNIQUE constraint, not a primary key (CI5-D14a)."""
+
+    def test_a_key_marker_becomes_a_pk_on_a_table_and_a_unique_on_a_view(
+        self, live_public_schema: Schema, live_public_document: Mapping[str, Any]
+    ) -> None:
+        """The downgrade is one rule with two arms, checked over **every** marked relation.
+
+        The tests below spot-check two views, which cannot see the regression that would cost the
+        most on the other arm: a downgrade applied to base tables as well would silently empty
+        twenty primary keys, and every one of those spot-checks would still pass. Derived from the
+        document's markers (CI-135), so a relation added to the seed extends this check instead of
+        staling it, and asserted as one whole table so "exactly one key constraint per marked
+        relation, and none at all on an unmarked one" is part of the claim rather than an
+        assumption -- ``all_nullable_readonly`` is the live instance of the second half.
+        """
+        marked = _pk_marked_columns(live_public_document)
+        arms = {_table(live_public_schema, name).table_type for name in marked}
+        assert arms == {'BASE TABLE', 'VIEW'}, f'both arms of the rule must be exercised; saw {sorted(arms)}'
+
+        expected: dict[str, list[_KeyRow]] = {}
+        for name, columns in marked.items():
+            if _table(live_public_schema, name).table_type == 'VIEW':
+                unique = f'{name}_{"_".join(columns)}_key'
+                expected[name] = [(unique, ConstraintType.UNIQUE, columns, f'UNIQUE ({", ".join(columns)})')]
+            else:
+                expected[name] = [(f'{name}_pkey', ConstraintType.PRIMARY_KEY, columns, None)]
+
+        actual: dict[str, list[_KeyRow]] = {}
+        for table in live_public_schema.tables:
+            for c in table.constraints:
+                if c.type in (ConstraintType.PRIMARY_KEY, ConstraintType.UNIQUE):
+                    actual.setdefault(table.name, []).append(
+                        (c.constraint_name, c.type, tuple(c.columns), c.constraint_definition)
+                    )
+        assert actual == expected
+
+        # The column flags have to agree with the constraint row, on both arms. This is CI5-D14a's
+        # entire reason for the downgrade: `TableInfo.primary_key()` is *defined* to be empty for a
+        # VIEW, so recording a PK row there would leave `ColumnInfo.primary` and `primary_key()`
+        # contradicting each other, and different emitters read the two differently.
+        for name, columns in marked.items():
+            table = _table(live_public_schema, name)
+            flags = (table.primary_key(), [c.name for c in table.columns if c.primary])
+            unique_columns = [c.name for c in table.columns if c.is_unique]
+            if table.table_type == 'VIEW':
+                assert (flags, unique_columns) == (([], []), list(columns)), name
+            else:
+                assert (flags, unique_columns) == ((list(columns), list(columns)), []), name
 
     def test_a_joined_view_keeps_its_key_as_uniqueness_evidence(self, live_public_schema: Schema) -> None:
         report = _table(live_public_schema, 'order_report')

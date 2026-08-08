@@ -14,8 +14,11 @@ from castiron.ir import EnumInfo
 from castiron.utils.naming import (
     EnumMember,
     _is_enum_reserved_shape,
+    enum_class_reason,
     pluralize,
     python_class_name,
+    python_class_names,
+    python_identifier,
     python_member_names,
     singularize,
     to_pascal_case,
@@ -157,6 +160,10 @@ class TestPythonClassName:
     @pytest.mark.parametrize(
         ('name', 'schema', 'expected'),
         [
+            # 🔴 These five are the BYTE-STABILITY PINS and must not be edited. They are every
+            # shape that already produced a valid identifier before `CI-128` sanitized this
+            # transform, so they are what proves the sanitizer is the IDENTITY on valid input --
+            # the property the four committed enum-class goldens depend on.
             ('order_status', 'public', 'PublicOrderStatusEnum'),
             ('thirdType', 'public', 'PublicThirdTypeEnum'),
             ('FourthType', 'public', 'PublicFourthTypeEnum'),
@@ -167,8 +174,61 @@ class TestPythonClassName:
     def test_class_names(self, name: str, schema: str, expected: str) -> None:
         assert python_class_name(EnumInfo(name=name, values=[], schema=schema)) == expected
 
+    @pytest.mark.parametrize(
+        ('name', 'schema', 'expected'),
+        [
+            # More byte-stability pins: the remaining currently-valid shapes, including the
+            # non-ASCII one `CI94-D2` protects.
+            ('2fa_mode', 'public', 'Public2faModeEnum'),
+            ('Ünïcödé', 'public', 'PublicÜnïcödéEnum'),
+            ('task_state', 'public', 'PublicTaskStateEnum'),
+            ('status', 'audit', 'AuditStatusEnum'),
+        ],
+    )
+    def test_a_valid_name_is_untouched_by_the_sanitizer(self, name: str, schema: str, expected: str) -> None:
+        assert python_class_name(EnumInfo(name=name, values=[], schema=schema)) == expected
+
+    @pytest.mark.parametrize(
+        ('name', 'schema', 'expected'),
+        [
+            # `CI-128`: every one of these emitted a class header that did not parse, at exit 0.
+            ('order status', 'public', 'PublicOrderStatusEnum'),
+            ('order-status', 'public', 'PublicOrderStatusEnum'),
+            ('2fa mode', 'public', 'Public2faModeEnum'),
+            ('mood\n', 'public', 'PublicMoodEnum'),
+            ('a"b', 'public', 'PublicABEnum'),
+            ('emoji\U0001f642', 'public', 'PublicEmojiEnum'),
+            (' ', 'public', 'PublicEnum'),
+            ('!!!', 'public', 'PublicEnum'),
+            # ⚠ The SCHEMA is the second unsanitized input, and it is just as reachable:
+            # `CREATE SCHEMA "my schema"` and `CREATE SCHEMA "2fa"` are both legal Postgres.
+            ('order_status', 'my schema', 'My_schemaOrderStatusEnum'),
+            ('mood', '2fa', '_2faMoodEnum'),
+            ('2fa', '', '_2faEnum'),
+        ],
+    )
+    def test_a_hostile_name_is_repaired(self, name: str, schema: str, expected: str) -> None:
+        resolved = python_class_name(EnumInfo(name=name, values=[], schema=schema))
+        assert resolved == expected
+        assert unicodedata.normalize('NFKC', resolved).isidentifier()
+
     def test_empty_name_edge(self) -> None:
         assert python_class_name(EnumInfo(name='', values=[], schema='public')) == 'PublicEnum'
+
+    def test_empty_schema_edge(self) -> None:
+        # Both parts empty -> the bare `Enum`, which SHADOWS `from enum import Enum`. It is not a
+        # special case here on purpose: `python_class_names` seeds itself with the module's
+        # import-bound names, so the collision rule is what resolves it. See
+        # `TestPythonClassNames.test_the_bare_Enum_name_is_reserved_by_the_import`.
+        assert python_class_name(EnumInfo(name='', values=[], schema='')) == 'Enum'
+
+    def test_it_is_not_injective_which_is_why_python_class_names_exists(self) -> None:
+        # Measured on `main` BEFORE any sanitization: six legal, distinct Postgres type names
+        # already collapsed onto one class name. Sanitization widens this set; it did not create
+        # it. The per-name form cannot see that -- only the per-container form can.
+        variants = ['order_status', 'orderStatus', 'OrderStatus', 'Order_Status', '_order_status', 'ORDER_STATUS']
+        resolved = {python_class_name(EnumInfo(name=v, values=[], schema='public')) for v in variants}
+        assert resolved == {'PublicOrderStatusEnum'}
 
 
 @pytest.mark.unit
@@ -361,6 +421,99 @@ def _generated_names(max_length: int = 5) -> list[str]:
 def _generated_labels(max_length: int = 4) -> list[str]:
     """Every string over :data:`LABEL_ALPHABET` up to ``max_length``."""
     return [''.join(p) for size in range(1, max_length + 1) for p in itertools.product(LABEL_ALPHABET, repeat=size)]
+
+
+#: Alphabet for the generated :func:`python_identifier` sweep. Every class of character that can
+#: defeat ``str.isidentifier()`` is represented, plus the two that defeat a naive check of it:
+#: ``NFKC_UNDERSCORE`` (a *valid* identifier character that normalizes to ``'_'``) and ``ﬁ`` (a
+#: valid identifier character that NFKC-expands to **two** characters). A leading digit is the
+#: only failure the character map itself cannot fix, so ``'2'`` is what exercises the second rule.
+IDENTIFIER_ALPHABET = ('_', NFKC_UNDERSCORE, 'ﬁ', 'A', '2', ' ', '-', '"', '\n', '\t', '\x00', '.', '\U0001f642')
+
+
+def _generated_identifier_inputs(max_length: int = 3) -> list[str]:
+    """Every string over :data:`IDENTIFIER_ALPHABET` up to ``max_length``, plus the empty string."""
+    return [''] + [
+        ''.join(p) for size in range(1, max_length + 1) for p in itertools.product(IDENTIFIER_ALPHABET, repeat=size)
+    ]
+
+
+@pytest.mark.unit
+class TestPythonIdentifier:
+    """``CI-128``: the shared identifier-repair primitive, which ``CI-130`` will also call.
+
+    ``python_identifier`` has to be **total** over arbitrary Postgres text, because that is what
+    reaches it: a pg type name, a schema name, and (next row) a table name are all raw user text
+    that PostgREST hands over verbatim. The sweep below is the assertion that carries the weight --
+    the parametrized cases only name the shapes someone thought of.
+    """
+
+    @pytest.mark.parametrize('text', ['order_status', 'OrderStatus', '_x', 'Ünïcödé', 'ﬁ', 'a2', '__init__'])
+    def test_it_is_the_identity_on_a_valid_identifier(self, text: str) -> None:
+        # Including non-ASCII (`CI94-D2`, ruled by the captain: Unicode is KEPT, not folded to
+        # ASCII) -- destroying an international name to satisfy a lint rule is the worse trade.
+        assert python_identifier(text) == text
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('order status', 'order_status'),
+            ('order-status', 'order_status'),
+            ('a"b', 'a_b'),
+            ('a\nb', 'a_b'),
+            ('a\tb', 'a_b'),
+            ('a\x00b', 'a_b'),
+            ('a.b', 'a_b'),
+            ('emoji\U0001f642', 'emoji_'),
+        ],
+    )
+    def test_it_repairs_every_hostile_character(self, text: str, expected: str) -> None:
+        # One character out per character in: no run-collapsing and no stripping, so `'a  b'` and
+        # `'a b'` stay DISTINGUISHABLE attempts and the collision rule -- not this function --
+        # resolves them when they are not.
+        assert python_identifier(text) == expected
+
+    def test_a_leading_digit_gains_exactly_one_underscore(self) -> None:
+        assert python_identifier('2fa') == '_2fa'
+        assert python_identifier('2') == '_2'
+
+    def test_the_empty_string_becomes_an_underscore(self) -> None:
+        # Unreachable from `python_class_name` (the `Enum` suffix means the string is never
+        # empty); reachable from `CI-130`'s table-name path, where it is a different question.
+        assert python_identifier('') == '_'
+
+    def test_the_alphabet_covers_the_classes_that_matter(self) -> None:
+        # A sweep that silently narrows passes vacuously -- the standing lesson from `CI-080`
+        # round 2, where the corpus could not spell the shape the test claimed to guard.
+        assert NFKC_UNDERSCORE in IDENTIFIER_ALPHABET
+        assert unicodedata.normalize('NFKC', NFKC_UNDERSCORE) == '_'
+        assert unicodedata.normalize('NFKC', 'ﬁ') == 'fi', 'the NFKC-expanding character must stay'
+        assert any(c.isdigit() for c in IDENTIFIER_ALPHABET), 'the leading-digit rule needs a digit'
+        assert any(not ('_' + c).isidentifier() for c in IDENTIFIER_ALPHABET), 'the map needs something to repair'
+        assert len(_generated_identifier_inputs()) == 2380
+
+    def test_no_generated_input_survives_as_a_non_identifier(self) -> None:
+        # 🔴 The oracle. The test is on the NFKC form because CPython normalizes identifiers at
+        # COMPILE time -- the name the compiler judges is not always the string castiron wrote.
+        for text in _generated_identifier_inputs():
+            repaired = python_identifier(text)
+            assert unicodedata.normalize('NFKC', repaired).isidentifier(), f'{text!r} -> {repaired!r}'
+
+    def test_one_prefix_is_always_enough(self) -> None:
+        # ⚠ The spec's proof said one `'_'` prefix suffices; an IDENTICAL "one pass is enough"
+        # claim was made on the enum MEMBER path and was wrong (`_repair_enum_shape` needs up to
+        # three). Idempotence is that proof made falsifiable: a second pass changing anything
+        # would mean the first was insufficient.
+        for text in _generated_identifier_inputs():
+            once = python_identifier(text)
+            assert python_identifier(once) == once, f'{text!r} needed a second pass'
+
+    def test_it_never_collapses_a_run_or_strips(self) -> None:
+        # The length invariant the character map promises, which is what keeps two distinct
+        # Postgres names distinguishable for the collision rule to arbitrate.
+        for text in _generated_identifier_inputs():
+            if text:
+                assert len(python_identifier(text)) in (len(text), len(text) + 1)
 
 
 def fold_map() -> dict[str, str]:
@@ -971,3 +1124,210 @@ class TestCi113TheClassNameAxisIsClosed:
         # axis at all -- there the NAMES are generated directly and need no folding.
         assert not (set(LABEL_ALPHABET) & set(fold_map().values()))
         assert not any(name.startswith(f'_{FIXTURE_CLASS}__') for name in _generated_names())
+
+
+#: The NFKC uniqueness witness, found by construction rather than assumed to exist.
+#:
+#: ``'ﬁ'`` (U+FB01 LATIN SMALL LIGATURE FI) is a valid identifier character that NFKC-expands to the
+#: **two** characters ``fi``. Placed after the first character it survives ``str.capitalize()``, so
+#: ``public.xﬁ`` and ``public.xfi`` produce ``PublicXﬁEnum`` and ``PublicXfiEnum`` -- different
+#: strings, and **one binding** at compile time. Measured: ``exec``ing both assignments leaves a
+#: single name. A raw-string uniqueness check would therefore emit two classes that collapse into
+#: one at import, which is ``CI-080``'s failure mode in a new costume.
+NFKC_COLLIDING_TYPE_NAMES = ('xﬁ', 'xfi')
+
+
+@pytest.mark.unit
+class TestPythonClassNames:
+    """``CI-128``: the per-container form, which is the only place a collision is expressible.
+
+    ``python_class_name`` is not injective and never was -- six legal, distinct Postgres type names
+    already collapsed onto ``PublicOrderStatusEnum`` on ``main``, and the second silently won the
+    module-level binding. ``CI94-Q1`` (captain) forbids dropping or merging a variant, so every enum
+    gets its own class and the loser of a name gets an ordinal.
+    """
+
+    @staticmethod
+    def _enums(*names: str, schema: str = 'public') -> list[EnumInfo]:
+        return [EnumInfo(name=name, values=[], schema=schema) for name in names]
+
+    def test_one_entry_per_enum_positionally_aligned(self) -> None:
+        # `CI94-Q1`'s one non-negotiable: nothing dropped, nothing merged, order preserved.
+        enums = self._enums('order status', 'order-status', 'order_status', 'mood')
+        resolved = python_class_names(enums)
+        assert [entry.enum for entry in resolved] == enums
+        assert len({entry.name for entry in resolved}) == len(enums)
+
+    def test_an_empty_registry_returns_an_empty_list(self) -> None:
+        assert python_class_names([]) == []
+
+    def test_the_unrepaired_name_is_allocated_first(self) -> None:
+        # 🔴 The captain's ruling on `CI-128-Q1` (Option B), and the reason it is not plain
+        # first-come. `schema.enums` is sorted on `(schema, name)`, and `' '` (0x20) and `'-'`
+        # (0x2D) sort BEFORE `'_'` (0x5F) -- so under first-come the hostile `order status` would
+        # take `PublicOrderStatusEnum` and the WELL-BEHAVED `order_status` would be renamed to
+        # `PublicOrderStatusEnum_3`. Adding one type to a database would then silently rename a
+        # class the user already imports, and `check` mode (CI-021) would report it as drift.
+        resolved = python_class_names(self._enums('order status', 'order-status', 'order_status'))
+        assert [entry.name for entry in resolved] == [
+            'PublicOrderStatusEnum_2',
+            'PublicOrderStatusEnum_3',
+            'PublicOrderStatusEnum',
+        ]
+        assert [entry.note for entry in resolved] == ['name collision', 'name collision', None]
+
+    def test_a_renamed_class_names_the_type_that_took_its_name(self) -> None:
+        # Without this the `_2` is inexplicable: the user cannot discover from the module what
+        # holds the bare name, so a rename they could act on becomes a bug report.
+        first, second, _ = python_class_names(self._enums('order status', 'order-status', 'order_status'))
+        assert first.taken_by == 'public.order_status'
+        assert second.taken_by == 'public.order_status', 'the BARE name holder is the informative one, not `_2`'
+        assert enum_class_reason(first, str) == 'name collision, PublicOrderStatusEnum is taken by public.order_status'
+
+    def test_two_well_behaved_colliders_fall_back_to_input_order(self) -> None:
+        # Phase 1 is plain first-come internally -- Option B only reorders REPAIRED against
+        # unrepaired. This is the residual churn the captain accepted, pinned so it is not a
+        # surprise: two equally well-behaved types still need an arbitration.
+        resolved = python_class_names(self._enums('orderStatus', 'order_status'))
+        assert [entry.name for entry in resolved] == ['PublicOrderStatusEnum', 'PublicOrderStatusEnum_2']
+        assert resolved[1].taken_by == 'public.orderStatus'
+
+    def test_a_reserved_name_forces_an_ordinal(self) -> None:
+        resolved = python_class_names(self._enums('order_status'), reserved={'PublicOrderStatusEnum'})
+        assert resolved[0].name == 'PublicOrderStatusEnum_2'
+        assert resolved[0].note == 'name collision'
+        # `taken_by` is None because a reserved name is NOT another enum -- it is a model class or
+        # an import, and the reason text says so rather than naming a type that does not exist.
+        assert resolved[0].taken_by is None
+        assert enum_class_reason(resolved[0], str) == (
+            'name collision, PublicOrderStatusEnum is taken by another class in this module'
+        )
+
+    def test_the_bare_Enum_name_is_reserved_by_the_import(self) -> None:
+        # The degenerate `EnumInfo(name='', schema='')` is named `Enum`, which would rebind
+        # `from enum import Enum` and take the base class of every other enum in the module with
+        # it. Handled by the collision rule seeded with the import-bound names, not a special case.
+        resolved = python_class_names([EnumInfo(name='', values=[], schema='')], reserved={'Enum'})
+        assert resolved[0].name == 'Enum_2'
+
+    def test_the_uniqueness_key_is_the_nfkc_form(self) -> None:
+        # 🔴 Two names that differ as STRINGS and are one binding to the compiler. The premise is
+        # asserted first, because a witness that stopped colliding would make the rest vacuous.
+        first, second = (python_class_name(e) for e in self._enums(*NFKC_COLLIDING_TYPE_NAMES))
+        assert first != second
+        assert unicodedata.normalize('NFKC', first) == unicodedata.normalize('NFKC', second)
+        namespace: dict[str, object] = {}
+        exec(compile(f'{first} = 1\n{second} = 2\n', '<witness>', 'exec'), namespace)  # noqa: S102
+        assert len([n for n in namespace if n.startswith('Public')]) == 1, 'the witness no longer collides'
+
+        resolved = python_class_names(self._enums(*NFKC_COLLIDING_TYPE_NAMES))
+        assert [entry.name for entry in resolved] == ['PublicXﬁEnum', 'PublicXfiEnum_2']
+
+    def test_it_is_a_pure_function_of_the_ordered_input(self) -> None:
+        # Determinism (Hard Rule #9). `reserved` is passed three ways: if anything iterated it,
+        # the answers would differ.
+        enums = self._enums('order status', 'order-status', 'order_status', 'mood')
+        names = ['PublicMoodEnum', 'PublicOrderStatusEnum']
+        answers = {
+            tuple(entry.name for entry in python_class_names(enums, container))
+            for container in (set(names), frozenset(names), list(names), tuple(names))
+        }
+        assert len(answers) == 1
+        assert python_class_names(enums) == python_class_names(enums)
+
+    def test_a_suffixed_candidate_is_re_repaired(self) -> None:
+        # Structurally kept even though it is provably a no-op here: the identical "a `_2` suffix
+        # cannot re-create a hazard" argument was made on the enum MEMBER path and was wrong.
+        resolved = python_class_names(self._enums('mood', 'mood', 'mood'))
+        assert [entry.name for entry in resolved] == ['PublicMoodEnum', 'PublicMoodEnum_2', 'PublicMoodEnum_3']
+        assert all(unicodedata.normalize('NFKC', entry.name).isidentifier() for entry in resolved)
+
+    def test_an_unrenamed_class_has_no_reason_to_explain(self) -> None:
+        # The counter-witness (`CI94-D3`): never gloss a name that was not changed. Without it,
+        # "always comment" would satisfy every assertion above -- and a comment above every enum
+        # class is bytes in every user's file forever.
+        resolved = python_class_names(self._enums('order_status'))
+        assert resolved[0].note is None
+        assert enum_class_reason(resolved[0], str) is None
+
+    def test_every_resolved_name_is_a_valid_unique_identifier(self) -> None:
+        # The sweep: every generated label is also a plausible TYPE name, so reuse the corpus.
+        enums = [EnumInfo(name=name, values=[], schema='public') for name in _generated_labels(max_length=3)]
+        resolved = python_class_names(enums, reserved=_IMPORTLIKE_RESERVED)
+        assert len(resolved) == len(enums)
+        assert all(unicodedata.normalize('NFKC', entry.name).isidentifier() for entry in resolved)
+        keys = [unicodedata.normalize('NFKC', entry.name) for entry in resolved]
+        assert len(set(keys)) == len(keys), 'two classes would collapse onto one binding at import'
+        assert not (set(keys) & _IMPORTLIKE_RESERVED)
+
+
+#: A stand-in for the emitter's reserved seed, so the naming-level sweep exercises the seam without
+#: importing the emitter. The emitter's real seed is asserted separately, against a real emission.
+_IMPORTLIKE_RESERVED = frozenset({'BaseModel', 'Enum', 'Field', 'CustomModel', 'PublicAEnum'})
+
+
+@pytest.mark.unit
+class TestCi128TheMemberGuardSeesTheResolvedClassName:
+    """``CI-128`` §3.6: ``CI-113``'s guard has to test the class name that is actually emitted.
+
+    ``CI-113`` made :func:`python_member_names` derive the class name internally, arguing that doing
+    so "makes it IMPOSSIBLE for a caller to supply a class name the emitter will not use". ``CI-128``
+    **falsifies that invariant**: once two Postgres types collide, the emitted header is
+    ``PublicOrderStatusEnum_2`` and :func:`python_class_name` is not it -- so the class-private
+    clause tested a class name the module never binds, and a crafted label could be swallowed again.
+
+    Measured on 3.12 with exactly the fixture below: guarded against the **resolved** name, both
+    labels survive; guarded against the derived default, **one of two is silently dropped**.
+    """
+
+    @staticmethod
+    def _collided() -> tuple[EnumInfo, str, str]:
+        """An enum whose resolved class name carries an ordinal, plus a label crafted for it."""
+        resolved = python_class_names(
+            [
+                EnumInfo(name='order_status', values=[], schema='public'),
+                EnumInfo(name='orderStatus', values=[], schema='public'),
+            ]
+        )
+        class_name = resolved[1].name
+        label = crafted_class_private_label(class_name)
+        return EnumInfo(name='orderStatus', values=[label, 'ok'], schema='public'), class_name, label
+
+    def test_the_fixture_really_carries_an_ordinal(self) -> None:
+        # The premise, asserted rather than assumed: without the ordinal the two class names are
+        # the same string and the test below would pass for the wrong reason.
+        _, class_name, _ = self._collided()
+        assert class_name == 'PublicOrderStatusEnum_2'
+        assert class_name != python_class_name(EnumInfo(name='orderStatus', values=[], schema='public'))
+
+    def test_a_crafted_label_survives_under_the_resolved_class_name(self) -> None:
+        enum, class_name, label = self._collided()
+        members = python_member_names(enum, class_name)
+        assert [m.label for m in members] == [label, 'ok']
+        enum_class = _exec_enum_clean([(m.name, m.label) for m in members], class_name)[class_name]
+        assert len(list(enum_class)) == 2, 'a label was swallowed by the class-private clause'  # type: ignore[call-overload]
+        assert enum_class(label).value == label  # type: ignore[operator]
+
+    def test_the_derived_default_would_swallow_it(self) -> None:
+        # 🔴 The falsification. Without this, passing the resolved name could be a no-op and the
+        # whole §3.6 change would be unfalsifiable.
+        #
+        # ⚠ Judged by `_exec_enum_survives`, NOT by the member count -- and that is the whole
+        # CI-113 lesson repeated. py3.11+ DROP a class-private member while **py3.10 KEEPS it**
+        # under the mangled name with only a DeprecationWarning, so a count assertion says `1` on
+        # three legs and `2` on the fourth. A first draft of this test asserted the count and went
+        # green on 3.11/3.12/3.13 and red on 3.10 in the matrix gate. "Survived" means the
+        # interpreter warned about nothing and gave the member the name castiron wrote, which is
+        # the same statement on all four legs.
+        enum, class_name, _ = self._collided()
+        default_name = python_member_names(enum)[0].name  # the CI-113 default -- the WRONG name here
+        resolved_name = python_member_names(enum, class_name)[0].name
+        assert default_name != resolved_name, 'the resolved class name must change the repair'
+        assert not _exec_enum_survives(default_name, class_name), 'the default must be demonstrably insufficient'
+        assert _exec_enum_survives(resolved_name, class_name)
+
+    def test_the_default_is_unchanged_for_an_enum_alone_in_its_namespace(self) -> None:
+        # Backward compatibility: the parameter is OPTIONAL because this is public API in a
+        # published 0.1.x, and the derived default is correct for every existing caller.
+        enum = EnumInfo(name='order_status', values=['pending', 'in progress'], schema='public')
+        assert python_member_names(enum) == python_member_names(enum, python_class_name(enum))

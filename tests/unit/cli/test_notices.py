@@ -11,13 +11,16 @@ from castiron.cli.notices import (
     OPENAPI_FIDELITY_NOTE,
     identity_pk_candidates,
     identity_pk_warning,
+    renamed_enum_class_warning,
+    renamed_enum_classes,
     repaired_column_names,
     repaired_column_warning,
     report,
 )
-from castiron.ir import ColumnInfo, Schema, TableInfo
+from castiron.ir import ColumnInfo, EnumInfo, Schema, TableInfo
 from castiron.sources import build_schema_from_document
 from castiron.sources.openapi import INTEGER_FAMILY
+from castiron.utils.naming import EnumClass, python_class_names
 
 
 def table(name: str, *columns: ColumnInfo) -> TableInfo:
@@ -250,3 +253,102 @@ class TestReport:
                 Schema(), infer_generated_primary_keys=True, from_openapi=False, disable_model_prefix_protection=False
             )
         assert caplog.records == []
+
+
+def enum_classes(*names: str, schema: str = 'public', reserved: frozenset[str] = frozenset()) -> list[EnumClass]:
+    """Resolve class names for ``names`` through the real allocator -- never hand-built entries."""
+    return python_class_names([EnumInfo(name=name, values=[], schema=schema) for name in names], reserved)
+
+
+@pytest.mark.unit
+class TestRenamedEnumClasses:
+    def test_a_well_behaved_registry_reports_nothing(self) -> None:
+        # The common case, and the one that must stay silent: a notice on every run is noise.
+        assert renamed_enum_classes(enum_classes('order_status', 'mood')) == []
+
+    def test_it_reports_a_repair_and_a_collision(self) -> None:
+        renamed = renamed_enum_classes(enum_classes('order status', 'order-status', 'order_status'))
+        assert [entry.enum.name for entry in renamed] == ['order status', 'order-status']
+
+    def test_it_reports_in_emission_order(self) -> None:
+        renamed = renamed_enum_classes(enum_classes('a b', 'c d', 'order_status'))
+        assert [entry.name for entry in renamed] == ['PublicABEnum', 'PublicCDEnum']
+
+    def test_the_default_reports_nothing(self) -> None:
+        assert renamed_enum_classes(()) == []
+
+
+@pytest.mark.unit
+class TestRenamedEnumClassWarning:
+    def test_one_type_reads_singular(self) -> None:
+        message = renamed_enum_class_warning(renamed_enum_classes(enum_classes('order status')))
+        assert message.startswith('1 enum type is not emitted under the class name')
+
+    def test_it_names_up_to_three_types(self) -> None:
+        renamed = renamed_enum_classes(enum_classes('a b', 'c d', 'e f'))
+        message = renamed_enum_class_warning(renamed)
+        assert 'public.a b -> PublicABEnum (identifier repair)' in message
+        assert 'more' not in message
+
+    def test_beyond_three_it_collapses_the_tail(self) -> None:
+        renamed = renamed_enum_classes(enum_classes('a b', 'c d', 'e f', 'g h', 'i j'))
+        message = renamed_enum_class_warning(renamed)
+        assert f'and {5 - MAX_NAMED_TABLES} more)' in message
+        assert 'g h' not in message and 'i j' not in message
+
+    def test_a_suffixed_type_names_what_took_the_bare_name(self) -> None:
+        # 🔴 The captain's requirement (CI-128-Q4): the `_2` is baffling unless the message says
+        # what holds the bare name.
+        renamed = renamed_enum_classes(enum_classes('order status', 'order_status'))
+        message = renamed_enum_class_warning(renamed)
+        assert 'public.order status -> PublicOrderStatusEnum_2' in message
+        assert 'PublicOrderStatusEnum is taken by public.order_status' in message
+
+    def test_a_type_suffixed_by_a_model_name_says_so(self) -> None:
+        renamed = renamed_enum_classes(enum_classes('order_status', reserved=frozenset({'PublicOrderStatusEnum'})))
+        assert 'taken by another class in this module' in renamed_enum_class_warning(renamed)
+
+    def test_it_says_the_type_name_is_preserved(self) -> None:
+        # The reassurance sentence, matching `repaired_column_warning`'s: nothing is lost.
+        message = renamed_enum_class_warning(renamed_enum_classes(enum_classes('order status')))
+        assert 'preserved in a comment above each class' in message
+
+    def test_it_carries_no_documentation_url(self) -> None:
+        message = renamed_enum_class_warning(renamed_enum_classes(enum_classes('order status')))
+        assert 'http' not in message
+
+
+@pytest.mark.unit
+class TestReportEnumClasses:
+    def test_the_enum_warning_fires_once_for_the_whole_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+                enum_classes=enum_classes('order status', 'order-status', 'order_status'),
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'CI5-D11: one aggregated warning per run -- got {warnings}'
+        assert warnings[0].startswith('2 enum types are not emitted')
+
+    def test_it_stays_quiet_for_a_well_behaved_registry(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+                enum_classes=enum_classes('order_status'),
+            )
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+    def test_the_parameter_defaults_to_reporting_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Backward compatible: a caller that emits no Python classes reports nothing rather than
+        # guessing what some emitter would have named them.
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(), infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False
+            )
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []

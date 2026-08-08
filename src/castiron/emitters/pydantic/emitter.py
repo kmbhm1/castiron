@@ -30,13 +30,23 @@ byte-identical to supabase-pydantic.
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from enum import Enum
 
-from castiron.emitters.base import EmittedFile, Emitter, render_import_block, section_comment
+from castiron.emitters.base import EmittedFile, Emitter, _split_import, render_import_block, section_comment
 from castiron.emitters.config import EmitterConfig
 from castiron.ir import ColumnInfo, RelationType, Schema, SortedColumns, TableInfo
 from castiron.types import PYDANTIC_TYPE_MAP, resolve_column_type
-from castiron.utils.naming import pluralize, python_class_name, python_member_names, singularize, to_pascal_case
+from castiron.utils.naming import (
+    EnumClass,
+    enum_class_reason,
+    pluralize,
+    python_class_name,
+    python_class_names,
+    python_member_names,
+    singularize,
+    to_pascal_case,
+)
 
 #: Indentation unit for generated code (4 spaces -- clean, PEP 8-style output).
 IND = '    '
@@ -53,6 +63,49 @@ _LENGTH_PATTERN = r'length\((\w+)\)\s*([=<>]+)\s*(\d+)'
 #: importing it. The corpus ruff sweep does catch that (as ``F821``), but a constant that is
 #: *structurally* the same string is better than a constant a test happens to notice.
 _FIELD_CALL = '= Field('
+
+#: Names the import block binds unconditionally on its own account, independent of the type map.
+#: Every ``imports.add`` / initialiser site in :meth:`PydanticEmitter._imports` contributes exactly
+#: one of these.
+_FIXED_IMPORT_BOUND_NAMES = frozenset(
+    {'annotations', 'Annotated', 'BaseModel', 'ConfigDict', 'Enum', 'Field', 'StringConstraints'}
+)
+
+
+def _type_map_bound_names() -> frozenset[str]:
+    """Every name the per-column type-map imports can bind (``datetime``, ``Decimal``, ``UUID4``...).
+
+    ⚠ **Derived from** :data:`~castiron.types.PYDANTIC_TYPE_MAP` **rather than hand-listed, so it
+    cannot rot when the map grows.** This is the eighth contributor to the import block and the
+    easiest to forget: it is a single ``imports.update`` in a loop rather than a literal
+    ``imports.add``, and a hand-written constant that omitted it would make
+    :data:`_IMPORT_BOUND_NAMES` quietly untrue for any schema with a ``numeric``, ``uuid``,
+    ``jsonb`` or ``inet`` column.
+
+    Returns:
+        The bound names, parsed from the map's import lines with the same splitter
+        :func:`~castiron.emitters.base.render_import_block` renders them with.
+    """
+    names: set[str] = set()
+    for resolution in PYDANTIC_TYPE_MAP.values():
+        for line in resolution.imports:
+            module, imported = _split_import(line)
+            names.update(imported if imported else (module,))
+    return frozenset(names)
+
+
+#: **Every** top-level name the emitted module's import block can bind, over every configuration.
+#:
+#: 🔴 Seeded into :meth:`PydanticEmitter._reserved_class_names` so an enum class can never shadow an
+#: import. The degenerate enum ``EnumInfo(name='', schema='')`` is named ``Enum`` by
+#: :func:`~castiron.utils.naming.python_class_name` and would otherwise rebind
+#: ``from enum import Enum`` -- taking the base class of every other enum in the module with it.
+#:
+#: ⚠ **A restatement, cross-checked against reality in a test** (the ``CI94-D8`` pattern):
+#: ``test_the_import_bound_names_constant_covers_a_maximal_emission`` AST-parses the import block of
+#: a maximally-configured emission and asserts every bound name appears here, so the constant fails
+#: loudly rather than silently going stale.
+_IMPORT_BOUND_NAMES = _FIXED_IMPORT_BOUND_NAMES | _type_map_bound_names()
 
 
 def _field_call(arguments: str) -> str:
@@ -259,13 +312,29 @@ class PydanticEmitter(Emitter):
         exactly two before code. Emitting two here put ``I001`` in every module castiron has ever
         written. ``ruff format`` agrees with the one-blank form, so there is no check-vs-format
         conflict to trade off.
+
+        🔴 **The enum class names are resolved exactly ONCE here and threaded to both consumers.**
+        The class header (:meth:`_enum_section`) and the column annotation (:meth:`_base_type`) each
+        used to call :func:`~castiron.utils.naming.python_class_name` independently; the moment a
+        collision rule can allocate ``…Enum_2`` for one of them, two independent derivations of one
+        name is a module that does not import. That is ``CI-114`` exactly, and the fix is the same
+        shape: one derivation, read twice.
+
+        ⚠ The map is a **local**, not per-render state on ``self``. The emitter holds only
+        ``config`` and treats the ``Schema`` as read-only; giving it mutable per-render state would
+        make a reused emitter instance order-dependent.
         """
+        enum_classes: Sequence[EnumClass] = self.enum_classes(schema)
+        enum_names: Mapping[tuple[str, str], str] = {
+            (entry.enum.schema, entry.enum.name): entry.name for entry in enum_classes
+        }
+
         sections: list[str] = []
-        enum_section = self._enum_section(schema)
+        enum_section = self._enum_section(enum_classes)
         if enum_section:
             sections.append(enum_section)
         sections.append(self._custom_section())
-        base_section = self._base_section(schema)
+        base_section = self._base_section(schema, enum_names)
         if base_section:
             sections.append(base_section)
         operational_section = self._operational_section(schema)
@@ -350,7 +419,62 @@ class PydanticEmitter(Emitter):
 
     # ------------------------------------------------------------------ enum classes
 
-    def _enum_section(self, schema: Schema) -> str | None:
+    def enum_classes(self, schema: Schema) -> list[EnumClass]:
+        """Resolve the class name for every enum this module will emit -- the **single authority**.
+
+        Public because it has a second consumer outside the emitter: the CLI's fidelity notices
+        (:mod:`castiron.cli.notices`) tell the user which enum types were renamed, and they must
+        report the names actually written rather than re-deriving them. One derivation, two
+        readers -- re-deriving is the defect ``CI-114`` was.
+
+        Empty exactly when :meth:`_enum_section` renders nothing, because it is gated on the same
+        :meth:`_emits_enums` predicate: one condition, read everywhere (``CI-114``'s fix, preserved).
+
+        Args:
+            schema: The schema being emitted (treated as read-only).
+
+        Returns:
+            One :class:`~castiron.utils.naming.EnumClass` per registry entry, positionally aligned
+            with ``schema.enums``, or an empty list when no enum classes will be emitted.
+        """
+        if not self._emits_enums(schema):
+            return []
+        return python_class_names(schema.enums, self._reserved_class_names(schema))
+
+    def _reserved_class_names(self, schema: Schema) -> set[str]:
+        """Every other top-level name the emitted module binds, so an enum class cannot shadow one.
+
+        The enum namespace is not private: an enum class name can equal a **table model** class name
+        (``EnumInfo('status', schema='order')`` and ``TableInfo('order_status_enum')`` both want
+        ``OrderStatusEnum``), and it can equal an **import** (``EnumInfo(name='', schema='')`` is
+        named ``Enum``). Measured on ``main``, the model won and ``OrderStatusEnum('open')`` returned
+        a pydantic model.
+
+        ⚠ **All four table variants are seeded regardless of what this config will actually emit,
+        deliberately.** Seeding only the emitted ones would make an enum's class name depend on
+        ``--no-crud-models`` / ``--no-null-parent-classes`` -- an unrelated flag silently renaming a
+        user's enum class. Over-seeding costs nothing (a name nobody emits simply cannot be taken)
+        and buys flag-independence.
+
+        ⚠⚠ **Built by calling :meth:`_class_name` / :meth:`_write_name`, never by re-deriving the
+        strings.** This is what makes ``CI-130`` (sanitizing table stems) a safe follow-up rather
+        than a merge conflict: when those two methods change, the seed follows automatically.
+
+        Args:
+            schema: The schema being emitted (treated as read-only).
+
+        Returns:
+            The reserved names. Consumed by membership only -- never iterated into the output, so it
+            cannot reach the emitted bytes (Hard Rule #9).
+        """
+        reserved = set(_IMPORT_BOUND_NAMES)
+        reserved.update({CUSTOM_MODEL_NAME, f'{CUSTOM_MODEL_NAME}Insert', f'{CUSTOM_MODEL_NAME}Update'})
+        for table in schema.tables:
+            reserved.add(self._class_name(table))
+            reserved.update(self._write_name(table, variant) for variant in _ClassVariant)
+        return reserved
+
+    def _enum_section(self, enum_classes: Sequence[EnumClass]) -> str | None:
         r"""Render the enum classes from the IR's deduplicated, sorted enum registry.
 
         The member **name** comes from :func:`~castiron.utils.naming.python_member_names`, which
@@ -368,14 +492,38 @@ class PydanticEmitter(Emitter):
         split the ``#`` comment across lines and break the module, which is CI-009's standing
         lesson: a renderer injecting user text into generated source must be total over its input
         domain, not over its best-behaved caller.
+
+        🔴 **The class header carries an** ``# original name was …`` **comment too, whenever the
+        emitted class name is not the straight transform of the Postgres type name** (``CI-128``).
+        Unlike a member line, a class header carries **nothing** of the source: after sanitization
+        the Postgres type name is otherwise unrecoverable from the module, so the comment is what
+        keeps the transform non-lossy. The same ``_py_string`` escaping applies for the same reason,
+        and the reason text (:func:`~castiron.utils.naming.enum_class_reason`) is composed once and
+        shared with the CLI notice so the two cannot say different things.
+
+        ⚠ It cannot move a committed golden: the note is ``None`` for every name that is already a
+        valid identifier and uncollided, which is every enum in the corpus.
+
+        Args:
+            enum_classes: The resolved classes from :meth:`enum_classes` -- **not** ``schema.enums``.
+                Empty means no enum section, which is the same condition :meth:`_imports` gates the
+                ``from enum import Enum`` line on (``CI-114``: one predicate, read by both sites).
+
+        Returns:
+            The rendered section, or ``None`` when there are no enum classes.
         """
-        if not self._emits_enums(schema):
+        if not enum_classes:
             return None
 
         classes = []
-        for enum in schema.enums:
-            lines = [f'class {python_class_name(enum)}(str, Enum):']
-            members = python_member_names(enum)
+        for entry in enum_classes:
+            lines = []
+            reason = enum_class_reason(entry, _py_string)
+            if reason is not None:
+                source_name = _py_string(f'{entry.enum.schema}.{entry.enum.name}')
+                lines.append(f'# original name was {source_name} ({reason})')
+            lines.append(f'class {entry.name}(str, Enum):')
+            members = python_member_names(entry.enum, entry.name)
             for member in members:
                 comment = ''
                 if member.note is not None:
@@ -419,12 +567,12 @@ class PydanticEmitter(Emitter):
 
     # ------------------------------------------------------------------ base/CRUD classes
 
-    def _base_section(self, schema: Schema) -> str | None:
+    def _base_section(self, schema: Schema, enum_names: Mapping[tuple[str, str], str]) -> str | None:
         """Render the Parent (optional), Base, Insert, and Update class sections."""
         subsections: list[str] = []
 
         if self.config.add_null_parent_classes:
-            parent_classes = [self._render_class(t, _ClassVariant.PARENT) for t in schema.tables]
+            parent_classes = [self._render_class(t, _ClassVariant.PARENT, enum_names) for t in schema.tables]
             if parent_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -441,7 +589,7 @@ class PydanticEmitter(Emitter):
         else:
             base_variant = _ClassVariant.BASE
 
-        base_classes = [self._render_class(t, base_variant) for t in schema.tables]
+        base_classes = [self._render_class(t, base_variant, enum_names) for t in schema.tables]
         if base_classes:
             subsections.append(
                 '\n\n\n'.join(
@@ -453,7 +601,7 @@ class PydanticEmitter(Emitter):
             )
 
         if self.config.generate_crud_models:
-            insert_classes = [self._render_class(t, _ClassVariant.INSERT) for t in schema.tables]
+            insert_classes = [self._render_class(t, _ClassVariant.INSERT, enum_names) for t in schema.tables]
             if insert_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -466,7 +614,7 @@ class PydanticEmitter(Emitter):
                         ]
                     )
                 )
-            update_classes = [self._render_class(t, _ClassVariant.UPDATE) for t in schema.tables]
+            update_classes = [self._render_class(t, _ClassVariant.UPDATE, enum_names) for t in schema.tables]
             if update_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -481,7 +629,7 @@ class PydanticEmitter(Emitter):
 
         return '\n\n\n'.join(subsections) if subsections else None
 
-    def _render_class(self, table: TableInfo, variant: _ClassVariant) -> str:
+    def _render_class(self, table: TableInfo, variant: _ClassVariant, enum_names: Mapping[tuple[str, str], str]) -> str:
         """Render one model class (header, docstring, optional config, body sections)."""
         null_defaults = variant == _ClassVariant.PARENT
         name = self._write_name(table, variant)
@@ -492,46 +640,55 @@ class PydanticEmitter(Emitter):
         blocks: list[str] = []
         if self.config.disable_model_prefix_protection and self._has_model_prefix_columns(table):
             blocks.append(f'{IND}model_config = ConfigDict(protected_namespaces=())')
-        blocks.extend(self._body_sections(table, variant, null_defaults))
+        blocks.extend(self._body_sections(table, variant, null_defaults, enum_names))
 
         if blocks:
             return f'{header}\n{docstring}\n\n' + '\n\n'.join(blocks)
         return f'{header}\n{docstring}'
 
-    def _body_sections(self, table: TableInfo, variant: _ClassVariant, null_defaults: bool) -> list[str]:
+    def _body_sections(
+        self,
+        table: TableInfo,
+        variant: _ClassVariant,
+        null_defaults: bool,
+        enum_names: Mapping[tuple[str, str], str],
+    ) -> list[str]:
         """Render the column sections (primary keys, columns, required/optional) for a class."""
         separated: SortedColumns = table.sort_and_separate_columns(separate_primary_key=True)
 
         if variant in (_ClassVariant.INSERT, _ClassVariant.UPDATE):
-            return self._crud_sections(separated, variant)
+            return self._crud_sections(separated, variant, enum_names)
 
         sections: list[str] = []
         pk = self._column_section(
-            'Primary Keys', [self._render_column(c, variant, null_defaults) for c in separated.primary_keys]
+            'Primary Keys', [self._render_column(c, variant, null_defaults, enum_names) for c in separated.primary_keys]
         )
         if pk:
             sections.append(pk)
         cols = self._column_section(
-            'Columns', [self._render_column(c, variant, null_defaults) for c in separated.remaining]
+            'Columns', [self._render_column(c, variant, null_defaults, enum_names) for c in separated.remaining]
         )
         if cols:
             sections.append(cols)
         return sections
 
-    def _crud_sections(self, separated: SortedColumns, variant: _ClassVariant) -> list[str]:
+    def _crud_sections(
+        self, separated: SortedColumns, variant: _ClassVariant, enum_names: Mapping[tuple[str, str], str]
+    ) -> list[str]:
         """Render the Insert/Update column sections (identity omitted; optionality bucketed)."""
         sections: list[str] = []
 
         pk = self._column_section(
             'Primary Keys',
-            [self._render_column(c, variant, False) for c in separated.primary_keys if not c.is_identity],
+            [self._render_column(c, variant, False, enum_names) for c in separated.primary_keys if not c.is_identity],
         )
         if pk:
             sections.append(pk)
 
         if variant == _ClassVariant.UPDATE:
             cols = self._column_section(
-                'Columns', [self._render_column(c, variant, False) for c in separated.remaining if not c.is_identity]
+                'Columns',
+                [self._render_column(c, variant, False, enum_names) for c in separated.remaining if not c.is_identity],
             )
             if cols:
                 sections.append(cols)
@@ -547,10 +704,14 @@ class PydanticEmitter(Emitter):
             else:
                 required.append(column)
 
-        req = self._column_section('Required fields', [self._render_column(c, variant, False) for c in required])
+        req = self._column_section(
+            'Required fields', [self._render_column(c, variant, False, enum_names) for c in required]
+        )
         if req:
             sections.append(req)
-        opt = self._column_section('Optional fields', [self._render_column(c, variant, False) for c in optional])
+        opt = self._column_section(
+            'Optional fields', [self._render_column(c, variant, False, enum_names) for c in optional]
+        )
         if opt:
             sections.append(opt)
         return sections
@@ -563,13 +724,19 @@ class PydanticEmitter(Emitter):
         body = '\n'.join(f'{IND}{c}' for c in rendered)
         return f'{IND}# {title}\n{body}'
 
-    def _render_column(self, column: ColumnInfo, variant: _ClassVariant, null_defaults: bool) -> str:
+    def _render_column(
+        self,
+        column: ColumnInfo,
+        variant: _ClassVariant,
+        null_defaults: bool,
+        enum_names: Mapping[tuple[str, str], str],
+    ) -> str:
         """Render a single field line for a column.
 
         Identity columns are pre-filtered by the Insert/Update section builder, so they
         never reach this method for a CRUD variant.
         """
-        base_type = self._base_type(column)
+        base_type = self._base_type(column, enum_names)
 
         force_optional = variant == _ClassVariant.UPDATE
         if variant == _ClassVariant.INSERT and (column.has_default or column.is_generated):
@@ -594,8 +761,20 @@ class PydanticEmitter(Emitter):
             line += ' ' + _field_call(', '.join(f'{key}={value}' for key, value in field_args.items()))
         return line
 
-    def _base_type(self, column: ColumnInfo) -> str:
-        """Resolve the column's base type string, overlaying an enum class when present."""
+    def _base_type(self, column: ColumnInfo, enum_names: Mapping[tuple[str, str], str]) -> str:
+        """Resolve the column's base type string, overlaying an enum class when present.
+
+        Args:
+            column: The column to resolve.
+            enum_names: The resolved enum class names from :meth:`_write`, keyed on
+                ``(schema, name)``. Reading them rather than calling
+                :func:`~castiron.utils.naming.python_class_name` again is the point of the whole
+                threading: after ``CI-128``'s collision rule the annotation and the class header can
+                only agree if they come from **one** derivation.
+
+        Returns:
+            The base type string for the column.
+        """
         resolution = resolve_column_type(column, PYDANTIC_TYPE_MAP)
         is_array = resolution.python_type.startswith('list[') or column.raw_type.lower().endswith('[]')
 
@@ -603,7 +782,14 @@ class PydanticEmitter(Emitter):
             return resolution.python_type
 
         if self.config.generate_enums:
-            enum_type = python_class_name(column.enum_info)
+            # ⚠ The `.get(...)` fallback keeps a column whose enum is NOT in the registry
+            # byte-identical to what castiron has always emitted. That case is a known, separately
+            # rowed defect (the mirror image of `CI-114`: `enums=[]` plus a column carrying
+            # `enum_info` emits an annotation with no class and no import -> `NameError` at exit 0).
+            # It is not reachable through the OpenAPI source, it is not this row's to fix, and this
+            # line must not make it worse.
+            key = (column.enum_info.schema, column.enum_info.name)
+            enum_type = enum_names.get(key, python_class_name(column.enum_info))
             return f'list[{enum_type}]' if is_array else enum_type
         return 'list[str]' if is_array else 'str'
 

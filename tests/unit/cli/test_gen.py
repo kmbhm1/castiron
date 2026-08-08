@@ -1131,3 +1131,67 @@ class TestFilenameGuards:
         result = run(runner, '--output', 'out')
         assert result.exit_code == 1
         assert 'This is a bug' not in result.output
+
+
+@pytest.mark.unit
+class TestCi128TheEnumClassRenameIsSurfaced:
+    """``CI-128``: a repaired or suffixed enum class name is told to the user, not repaired silently.
+
+    Same channel and same voice as the ``CI-085`` column notice -- one aggregated ``castiron: …``
+    line on stderr per run, at most three names spelled out. The end-to-end assertion matters
+    because the notice is computed from the emitter that is about to run: a unit test on
+    ``notices.py`` cannot prove the CLI hands it the names the emitter will actually write.
+    """
+
+    #: A PostgREST document whose enum columns carry hostile pg type names in `format`, verbatim --
+    #: which is exactly how PostgREST reports them.
+    DOCUMENT = {
+        'swagger': '2.0',
+        'info': {'title': 'PostgREST API', 'version': '11'},
+        'definitions': {
+            'orders': {
+                'type': 'object',
+                'properties': {
+                    'id': {'type': 'integer', 'format': 'bigint', 'description': 'Note:\nThis is a Primary Key.<pk/>'},
+                    'a': {'type': 'string', 'format': 'public.order status', 'enum': ['pending']},
+                    'b': {'type': 'string', 'format': 'public.order_status', 'enum': ['shipped']},
+                },
+            }
+        },
+        'paths': {'/orders': {'get': {}}},
+    }
+
+    def _write_document(self, project: Path) -> None:
+        (project / 'hostile.json').write_text(json.dumps(self.DOCUMENT), encoding='utf-8')
+
+    def test_the_notice_names_the_rename_and_its_cause(self, runner: CliRunner, project: Path) -> None:
+        self._write_document(project)
+        result = run(runner, '--from', 'hostile.json', '--output', 'out')
+        assert result.exit_code == 0
+        assert 'castiron: 1 enum type is not emitted under the class name' in result.output
+        assert 'public.order status -> PublicOrderStatusEnum_2' in result.output
+        assert 'PublicOrderStatusEnum is taken by public.order_status' in result.output
+
+    def test_the_written_module_imports_and_binds_both_types(self, runner: CliRunner, project: Path) -> None:
+        # The notice is only worth anything if the artifact it describes actually works. Before
+        # CI-128 this document produced a SyntaxError at exit 0.
+        self._write_document(project)
+        assert run(runner, '--from', 'hostile.json', '--output', 'out').exit_code == 0
+        text = (project / 'out' / 'schema.py').read_text(encoding='utf-8')
+        namespace: dict[str, Any] = {}
+        exec(compile(text, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+        assert namespace['PublicOrderStatusEnum']('shipped').value == 'shipped'
+        assert namespace['PublicOrderStatusEnum_2']('pending').value == 'pending'
+        assert '# original name was "public.order status"' in text
+
+    def test_a_well_behaved_schema_prints_no_enum_notice(self, runner: CliRunner, project: Path) -> None:
+        # The counter-witness: the shipped fixture must stay silent, or every user sees the line.
+        result = run(runner, '--from', 'openapi.json', '--output', 'out')
+        assert result.exit_code == 0
+        assert 'not emitted under the class name' not in result.output
+
+    def test_the_notice_stays_quiet_when_enums_are_not_emitted(self, runner: CliRunner, project: Path) -> None:
+        self._write_document(project)
+        result = run(runner, '--from', 'hostile.json', '--output', 'out', '--no-enums')
+        assert result.exit_code == 0
+        assert 'not emitted under the class name' not in result.output

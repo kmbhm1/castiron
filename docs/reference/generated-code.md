@@ -42,6 +42,114 @@ Until `0.1.0` it covered three: the hostile input emitted a module that did not 
 linter has nothing to say about a file it cannot read. [Column names are now
 repaired](#column-names), so the carve-out is gone rather than merely unused.
 
+## Enum class names
+
+The class header is built from two pieces of raw Postgres text — the **schema** and the **type
+name** — and PostgREST reports both verbatim. A Postgres type name is a quoted identifier, so
+`CREATE TYPE public."order status"` and `CREATE SCHEMA "2fa"` are both perfectly legal and neither
+produces a usable Python class name on its own.
+
+The rule, in order:
+
+1. **PascalCase assembly** — `public.order_status` → `PublicOrderStatusEnum`. snake_case,
+   camelCase (`thirdType` → `PublicThirdTypeEnum`), PascalCase and a leading underscore
+   (`_first_type` → `PublicFirstTypeEnum`) are each handled; the schema is capitalized and
+   prefixed, and `Enum` is always appended.
+2. **Identifier repair** — every character that cannot appear in a Python identifier becomes `_`,
+   and a leading digit gains one `_`. Unicode is **kept**, not folded to ASCII: `public.Ünïcödé`
+   stays `PublicÜnïcödéEnum`.
+3. **Collision resolution** — see below.
+
+This is the same character map the [column](#column-names) and [enum label](#enum-member-names)
+paths use, so a name that is repaired one way in one place is repaired the same way everywhere.
+
+| Postgres type | Class name |
+| --- | --- |
+| `public.order_status` | `PublicOrderStatusEnum` |
+| `public."order status"` | `PublicOrderStatusEnum` |
+| `public."order-status"` | `PublicOrderStatusEnum` |
+| `public."a""b"` | `PublicABEnum` |
+| `"my schema".order_status` | `My_schemaOrderStatusEnum` |
+| `"2fa".mood` | `_2faMoodEnum` |
+
+!!! warning "Until `0.1.0` these emitted a module that did not parse"
+    `public."order status"` emitted `class PublicOrder statusEnum(str, Enum):` — a `SyntaxError`,
+    with `castiron gen` exiting `0`. A type name containing a newline split the header across two
+    lines. The bad name also propagated into every column annotation referencing the type, so a
+    fix that repaired only the header would not have been one. **No name that was already valid
+    changed**, so regenerating moves nothing unless your schema contains one of these.
+
+### Collisions get an ordinal suffix
+
+Two distinct Postgres types can want the same class name, and this is not exotic:
+`order_status`, `orderStatus`, `OrderStatus`, `Order_Status`, `_order_status` and `ORDER_STATUS`
+all assemble to `PublicOrderStatusEnum`. The collision domain is the **whole module**, not just
+the enums — a table named `order_status_enum` produces a model class called `OrderStatusEnum`,
+which an enum `order.status` also wants.
+
+Nothing is ever dropped or merged. Every type gets its own class; the ones that cannot keep the
+natural name get `_2`, `_3`, … and a comment saying what took it.
+
+!!! note "Well-behaved names are allocated first"
+    Enum types whose name needed **no repair** claim their class name **before** repaired ones do.
+    Without that, adding `CREATE TYPE "order status"` to a database that already had `order_status`
+    would hand the new hostile type the clean `PublicOrderStatusEnum` and silently rename the
+    working one — because `' '` and `'-'` sort before `'_'`. A schema addition should not rename a
+    class you already import.
+
+    Two *equally* well-behaved colliders still need an arbitration, and there the first in schema
+    order keeps the name.
+
+**Table model class names always win.** An enum yields to them, because a table's model is the
+stable thing your imports point at.
+
+```sql
+CREATE TYPE public."order status" AS ENUM ('open');
+CREATE TYPE public."order-status" AS ENUM ('shut');
+CREATE TYPE public.order_status   AS ENUM ('done');
+CREATE TYPE "2fa".mood            AS ENUM ('ok');
+```
+
+```python
+# original name was "public.order status" (name collision, PublicOrderStatusEnum is taken by "public.order_status")
+class PublicOrderStatusEnum_2(str, Enum):
+    OPEN_ = "open"  # original name was "open" (reserved keyword)
+
+
+# original name was "public.order-status" (name collision, PublicOrderStatusEnum is taken by "public.order_status")
+class PublicOrderStatusEnum_3(str, Enum):
+    SHUT = "shut"
+
+
+class PublicOrderStatusEnum(str, Enum):
+    DONE = "done"
+
+
+# original name was "2fa.mood" (identifier repair)
+class _2faMoodEnum(str, Enum):
+    OK = "ok"
+```
+
+A class header carries nothing else of the source, so the `# original name was …` comment is the
+only record of which Postgres type a class came from — unlike a member line, where the value
+literal on the same line already is the label. It is emitted **only** when the name changed.
+
+`castiron gen` also prints one aggregated line to stderr when this happens, so a rename is not
+something you have to find by reading the file:
+
+```
+castiron: 1 enum type is not emitted under the class name their Postgres type name suggests
+(public.order status -> PublicOrderStatusEnum_2 (name collision, PublicOrderStatusEnum is taken by
+public.order_status)) -- the original type name is preserved in a comment above each class, so the
+generated module still records which type it came from; only the Python class name differs.
+```
+
+!!! warning "The same positional caveat as label collisions"
+    Ordinal suffixes are positional. Adding a type upstream that sorts before an existing collider
+    renumbers the later ones, so `PublicOrderStatusEnum_2` can come to mean a different Postgres
+    type after a `CREATE TYPE`. Allocating unrepaired names first removes the common case — a
+    hostile name displacing a well-behaved one — but not the general one.
+
 ## Enum member names
 
 A Postgres enum becomes a `str, Enum` class. The **member value is always the label, verbatim** —
@@ -108,9 +216,9 @@ would do it at exit code `0`, which is why the repair exists rather than a warni
 
 !!! note "The fourth shape depends on the class name, not just the label"
     `Enum`'s private-name check also consults the **enclosing class name**, so whether a name is
-    reserved is a property of the *pair*. castiron derives the class name from the same enum it is
-    naming members for — the very name it writes in the `class` header — so the two cannot
-    disagree.
+    reserved is a property of the *pair*. castiron checks members against the class name it
+    **actually writes in the header** — including the `_2` a [collision](#collisions-get-an-ordinal-suffix)
+    allocated — so the two cannot disagree.
 
     Reaching this shape takes deliberately-crafted Unicode and is **impossible from ASCII-only
     labels**: the generated class name always ends in `Enum`, whose lowercase `num` cannot survive

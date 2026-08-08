@@ -96,6 +96,7 @@ stopped meaning anything.
   CI-105, in the same stanza.
 """
 
+import ast
 import re
 import shlex
 import subprocess
@@ -125,6 +126,7 @@ UV_LOCK = REPO_ROOT / 'uv.lock'
 PYPROJECT = REPO_ROOT / 'pyproject.toml'
 RELEASE_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'release.yml'
 SRC_DIR = REPO_ROOT / 'src'
+UNIT_TEST_DIR = REPO_ROOT / 'tests' / 'unit'
 
 #: Repo-relative names, for failure messages that a reader can act on without decoding a path.
 CI_NAME = '.github/workflows/ci.yml'
@@ -173,6 +175,11 @@ VALIDATE_TARGET = 'validate'
 #: literals scattered through the guards.
 VALIDATE_FAST_TARGET = 'validate-fast'
 VULTURE_TARGET = 'vulture'
+
+#: The convenience target whose ``-m`` expression decides what "a unit test" means (CI-134). Named
+#: here because the marker is NOT hard-coded below: the guard reads it back out of this target, so
+#: renaming the marker in one place cannot leave the other silently selecting nothing.
+UNIT_TARGET = 'test-unit'
 
 #: Paths that must stay trackable. The first is the first mate's minimal reproduction; the second
 #: is the real one -- what the CI-007 corpus dispatch tried to commit before renaming the
@@ -260,6 +267,23 @@ SETUP_UV_ACTION = 'astral-sh/setup-uv'
 #: ``upload_to_release`` is ``[tool.semantic_release.publish].upload_to_vcs_release``, which
 #: already defaults to ``True``.
 DEAD_SEMANTIC_RELEASE_KEYS = ('branch', 'upload_to_pypi', 'upload_to_release')
+
+#: The same trap from the other direction (CI-119), and the reason it needs its own entry: these
+#: keys are **real**, just not at this level. A bare ``changelog_file = "CHANGELOG.md"`` under
+#: ``[tool.semantic_release]`` sat directly beneath ``version_toml`` and ``version_variables``,
+#: which really do decide where the version is written, and read exactly like the line that names
+#: the changelog. It named nothing: ``'changelog_file' in RawConfig.model_fields`` is ``False`` on
+#: **both** PSR majors this repo touches -- 9.21.2 (what the ``@v9`` action runs) and 10.6.1 (what
+#: ``uv.lock`` resolves) -- so ``extra="ignore"`` dropped it, silently, through two shipped
+#: releases that wrote ``CHANGELOG.md`` anyway.
+#:
+#: Mapped to the **live** table rather than merely listed, because "move it there" is the obvious
+#: fix and the obvious target is the wrong one: ``[tool.semantic_release.changelog].changelog_file``
+#: exists but is deprecated in 9.21.2's own source ("Deprecated! Moved to
+#: 'default_templates.changelog_file'", with a ``field_validator`` that logs "compatibility will
+#: break in v10" on every load). The live spelling is one table deeper, where the default is
+#: already ``CHANGELOG.md``, so the key was deleted instead of moved.
+MISPLACED_SEMANTIC_RELEASE_KEYS = {'changelog_file': 'tool.semantic_release.changelog.default_templates'}
 
 #: Matches ``$VAR`` and ``${VAR}`` -- how an unset variable enters a shell command silently.
 ENV_REFERENCE = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?')
@@ -1153,6 +1177,53 @@ def make_pytest_commands(target: str) -> list[str]:
     return commands
 
 
+def selected_marker(target: str) -> str | None:
+    """Return the marker expression one Make target selects with ``-m``.
+
+    Args:
+        target: The target name, e.g. ``'test-unit'``.
+
+    Returns:
+        The ``-m`` value of that target's pytest invocation, or ``None`` when the target runs no
+        pytest or passes no ``-m`` -- both of which mean the target no longer selects by marker,
+        which the caller asserts on rather than papering over with a default.
+    """
+    commands = make_pytest_commands(target)
+    if not commands:
+        return None
+    return parse_pytest_flags(commands[0]).get('-m')
+
+
+def unmarked_test_objects(source: str, marker: str) -> list[tuple[str, int]]:
+    """Return the top-level test classes and functions in one module that lack a marker.
+
+    Reads the source rather than importing it: an import would run module-level code in every test
+    file in the tree, and the property being checked is a property of the text a reviewer sees.
+
+    Only module-level definitions are inspected. That is what pytest collects here -- no test class
+    in this repository nests another -- and it keeps the scan from descending into the helper
+    classes that live inside test bodies.
+
+    Args:
+        source: The module's source text.
+        marker: The bare marker name, e.g. ``'unit'``.
+
+    Returns:
+        ``(name, line number)`` for each unmarked definition, in file order.
+    """
+    wanted = f'pytest.mark.{marker}'
+    unmarked: list[tuple[str, int]] = []
+    for node in ast.parse(source).body:
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.lower().startswith('test'):
+            continue
+        applied = {ast.unparse(getattr(decorator, 'func', decorator)) for decorator in node.decorator_list}
+        if wanted not in applied:
+            unmarked.append((node.name, node.lineno))
+    return unmarked
+
+
 def release_workflow_text() -> str:
     """Return the release workflow, whole.
 
@@ -1855,6 +1926,21 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
             f'`[tool.semantic_release.publish].upload_to_vcs_release` (already defaults to true).'
         )
 
+    @pytest.mark.parametrize(('key', 'live_table'), sorted(MISPLACED_SEMANTIC_RELEASE_KEYS.items()))
+    def test_no_bare_key_belongs_to_a_sub_table_instead(self, key: str, live_table: str) -> None:
+        table = pyproject_table('tool', 'semantic_release')
+        assert key not in table, (
+            f'{PYPROJECT_NAME}: `[tool.semantic_release].{key}` is not a field of `RawConfig` at '
+            f'this level -- on either PSR major this repo runs -- so `extra="ignore"` drops it '
+            f'without an error or a warning. It is worse than a stale key: it sits next to '
+            f'`version_toml` and `version_variables`, which ARE read, so it reads as the line that '
+            f'configures the changelog while configuring nothing.\n'
+            f'The live spelling is `[{live_table}].{key}`, whose default is already the value this '
+            f'line was setting -- which is why CI-119 deleted it rather than moving it. Moving it '
+            f'one table up instead, to `[tool.semantic_release.changelog].{key}`, would land on a '
+            f'field PSR itself marks deprecated and slates for removal.'
+        )
+
     def test_these_guards_can_still_see_the_original_bugs(self) -> None:
         """Positive control: prove the assertions above go red on the config CI-115 replaced.
 
@@ -1896,6 +1982,21 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
             'a table that plainly contains `upload_to_pypi` does not read as containing it, so '
             'test_no_dead_semantic_release_key_returns is theatre.'
         )
+        # 4. And a restored MISPLACED key -- same mechanism, different species (CI-119). Spelled
+        #    out separately because this one is a bare key sharing its name with a real field in a
+        #    nested table, which is exactly the shape a lookup that walked into sub-tables would
+        #    report as "present" no matter where it sat.
+        for key in MISPLACED_SEMANTIC_RELEASE_KEYS:
+            misplaced = tomllib.loads(f'[tool.semantic_release]\n{key} = "CHANGELOG.md"\n')
+            assert key in misplaced['tool']['semantic_release'], (
+                f'a table whose only key is `{key}` does not read as containing it, so '
+                f'test_no_bare_key_belongs_to_a_sub_table_instead is theatre.'
+            )
+            nested = tomllib.loads(f'[tool.semantic_release.changelog]\n{key} = "CHANGELOG.md"\n')
+            assert key not in nested['tool']['semantic_release'], (
+                f'`{key}` inside `[tool.semantic_release.changelog]` reads as a bare key of '
+                f'`[tool.semantic_release]`, so the guard would go red on config that is fine.'
+            )
 
 
 @pytest.mark.unit
@@ -2632,6 +2733,7 @@ class TestTheRehearsalCannotFireOnARealRelease:
         assert workflow_steps(f'      # - name: R\n      #   if: ${{{{ !inputs.{REHEARSE_INPUT} }}}}\n') == []
 
 
+@pytest.mark.unit
 class TestThePreCommitRuffHookIsNotTheLegacyAlias:
     """CI-108 -- the lint hook must be declared as ``ruff-check``, upstream's current id.
 
@@ -2734,6 +2836,7 @@ class TestThePreCommitRuffHookIsNotTheLegacyAlias:
         assert hosted_hook_ids(text, 'https://github.com/pre-commit/pre-commit-hooks') == ['check-yaml']
 
 
+@pytest.mark.unit
 class TestTheVultureAllowlistIsExactlyWhatSrcNeeds:
     """CI-107 -- ``uv run vulture src/`` must be able to exit 0, and for auditable reasons.
 
@@ -2993,4 +3096,91 @@ class TestTheDeadCodeCheckIsPartOfThePrePushGate:
         assert not [line for line in make_recipe(hollow, VULTURE_TARGET) if 'vulture' in command_tokens(line)], (
             'the control could not reproduce a hollow `vulture` target, so '
             'test_the_gated_target_actually_invokes_vulture cannot be shown to fail.'
+        )
+
+
+@pytest.mark.unit
+class TestEveryUnitTestIsSelectedByTheUnitTarget:
+    """CI-134 -- two guard classes in this very file were invisible to ``make test-unit``.
+
+    ``TestThePreCommitRuffHookIsNotTheLegacyAlias`` and
+    ``TestTheVultureAllowlistIsExactlyWhatSrcNeeds`` shipped without ``@pytest.mark.unit`` while
+    the other ten classes here carried it. Neither weakened the **gate** -- ``make test`` and
+    ``make validate`` select ``-m "not integration"``, which an unmarked test satisfies -- so this
+    is not the CI-081 shape. It is the quieter one: ``make test-unit`` is the target a developer
+    reaches for while iterating, and there it reported success having never run them.
+
+    Nothing announces that. A deselected test is not a failure, and the count it moves
+    (``1471 passed`` -> ``1469 passed``) is not a number anyone reads. The same silence is what
+    ``CI-083`` describes from the other end.
+
+    ⚠ The marker is **read back out of the Makefile** rather than written here as a literal. A
+    guard that hard-codes ``'unit'`` proves the files agree with this file; deriving it proves they
+    agree with the target that actually selects them, which is the property that failed.
+    """
+
+    def test_the_unit_target_still_selects_by_marker(self) -> None:
+        marker = selected_marker(UNIT_TARGET)
+        assert marker is not None, (
+            f'the `{UNIT_TARGET}` target of {MAKE_NAME} no longer runs pytest with `-m`, so '
+            f'"the marker" has no definition and the scan below would assert nothing. If the '
+            f'target deliberately stopped selecting by marker, this guard should go with it.'
+        )
+        assert marker in {
+            name.split(':', 1)[0]
+            for name in pyproject_string_list(pyproject_table('tool', 'pytest', 'ini_options'), 'markers')
+        }, (
+            f'the `{UNIT_TARGET}` target selects `-m {marker}`, which is not registered in '
+            f'`[tool.pytest.ini_options].markers` of {PYPROJECT_NAME}. An unregistered marker '
+            f'selects nothing and pytest reports it as a warning, not an error.'
+        )
+
+    def test_no_test_under_tests_unit_escapes_that_marker(self) -> None:
+        marker = selected_marker(UNIT_TARGET)
+        assert marker is not None
+        modules = sorted(UNIT_TEST_DIR.rglob('test_*.py'))
+        assert len(modules) > 1, (
+            f'{UNIT_TEST_DIR} yielded {len(modules)} test modules, so this scan is close to '
+            f'vacuous -- the glob, not the tree, is what changed.'
+        )
+        escaped = {
+            str(module.relative_to(REPO_ROOT)): unmarked_test_objects(module.read_text(encoding='utf-8'), marker)
+            for module in modules
+        }
+        offenders = {path: found for path, found in escaped.items() if found}
+        assert not offenders, (
+            f'these top-level test definitions under {UNIT_TEST_DIR.relative_to(REPO_ROOT)} carry '
+            f'no `@pytest.mark.{marker}`, so `make {UNIT_TARGET}` silently skips them: '
+            f'{offenders}. They still run under `make test` / `make validate`, which select '
+            f'`-m "not integration"` -- which is exactly why nobody notices. Add the decorator.'
+        )
+
+    def test_this_scan_can_still_see_a_missing_marker(self) -> None:
+        """Positive control (CI-072): both assertions above are "found nothing", the shape that
+        passes loudest when the parser under it has stopped working.
+
+        So the two real omissions are reconstructed verbatim and shown to be visible, and a
+        correctly marked module is shown to be clean -- a scanner that reported *everything* as
+        unmarked would satisfy the first half of this control while making the guard cry wolf.
+        """
+        marked = 'import pytest\n\n\n@pytest.mark.unit\nclass TestFine:\n    pass\n'
+        assert unmarked_test_objects(marked, 'unit') == [], (
+            'a class that plainly carries `@pytest.mark.unit` reads as unmarked, so '
+            'test_no_test_under_tests_unit_escapes_that_marker would fail on a clean tree.'
+        )
+        bare = 'import pytest\n\n\nclass TestThePreCommitRuffHookIsNotTheLegacyAlias:\n    pass\n'
+        assert unmarked_test_objects(bare, 'unit') == [('TestThePreCommitRuffHookIsNotTheLegacyAlias', 4)], (
+            'the CI-134 omission, reproduced exactly as it shipped, does not read as unmarked -- '
+            'so this guard could not have caught the bug it was written for.'
+        )
+        wrong = 'import pytest\n\n\n@pytest.mark.integration\ndef test_thing() -> None:\n    pass\n'
+        assert unmarked_test_objects(wrong, 'unit') == [('test_thing', 5)], (
+            'a module-level test function marked with a DIFFERENT marker reads as marked, so any '
+            'decorator at all would satisfy the scan.'
+        )
+        # And the marker itself must come from the Makefile, not from this file's imagination.
+        assert selected_marker('coverage') is not None and selected_marker('help') is None, (
+            'selected_marker no longer distinguishes a target that selects by marker from one '
+            'that runs no pytest at all, so reading the marker back out of the Makefile proves '
+            'nothing.'
         )

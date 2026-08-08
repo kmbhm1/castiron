@@ -18,7 +18,8 @@ from castiron.ir import (
     build_schema,
 )
 from castiron.sources.openapi import build_schema_from_document
-from tests.unit.utils.test_naming import ENUM_LABEL_CORPUS
+from castiron.utils.naming import python_class_name
+from tests.unit.utils.test_naming import ENUM_LABEL_CORPUS, crafted_class_private_label
 
 Row = tuple[object, ...]
 GOLDEN = Path(__file__).parent / 'golden' / 'schema.py.txt'
@@ -1591,3 +1592,124 @@ class TestAnEmptyEnumStillEmitsAParseableModule:
         out = _emit(build_schema_from_document(self._document(['ok'])))
         assert 'class PublicJobStateEnum(str, Enum):\n    OK = "ok"' in out
         assert 'Enum):\n    pass' not in out
+
+
+@pytest.mark.unit
+class TestCi114TheEnumImportTracksTheRegistry:
+    """``CI-114``: the ``Enum`` import and the enum classes had **two sources of truth**.
+
+    ``_imports`` gated ``from enum import Enum`` on a **column** carrying ``enum_info``, while
+    :meth:`~castiron.emitters.pydantic.emitter.PydanticEmitter._enum_section` renders from
+    ``schema.enums``. An enum reachable only through the registry therefore emitted its class with
+    no import, and the module raised ``NameError: name 'Enum' is not defined`` at import -- with
+    ``castiron gen`` exiting **0**. Same defect class as CI-080 and CI-110: output that does not
+    run, reported as success.
+
+    🔴 **Why the existing tests did not catch it, stated so it is not repeated.**
+    :class:`TestCi080TheCommentIsTotalOverItsInput` builds *exactly* this shape (a table whose only
+    column is a bare ``USER-DEFINED`` with ``enum_info=None``, plus a registry enum) and stayed
+    green throughout, because every one of its assertions ``compile()``s. **A missing import is
+    invisible to a parse** -- it is a ``NameError`` at *execution*. Hence
+    :meth:`test_an_enum_with_no_referencing_column_executes_at_import` below, which is the
+    assertion that would have caught this.
+    """
+
+    #: A registry enum with **no** column referencing it -- `enum_info` is None everywhere.
+    @staticmethod
+    def _schema() -> Schema:
+        return Schema(
+            tables=[TableInfo(name='users', columns=[ColumnInfo(name='id', raw_type='integer', primary=True)])],
+            enums=[EnumInfo(name='order_status', values=['pending', 'active'], schema='public')],
+        )
+
+    def test_the_reproducer_really_has_no_column_carrying_enum_info(self) -> None:
+        # The premise, asserted rather than assumed: if a future edit to `_schema` attached the
+        # enum to the column, every test below would pass for the wrong reason.
+        schema = self._schema()
+        assert all(c.enum_info is None for t in schema.tables for c in t.columns)
+        assert [e.name for e in schema.enums] == ['order_status']
+
+    def test_an_enum_with_no_referencing_column_still_imports_Enum(self) -> None:
+        out = _emit(self._schema())
+        assert 'class PublicOrderStatusEnum(str, Enum):' in out
+        assert 'enum.Enum' in _imported(out)
+
+    def test_an_enum_with_no_referencing_column_executes_at_import(self) -> None:
+        # ⚠ Deliberately an execution, not a parse -- see the class docstring. On `main` this
+        # raised `NameError: name 'Enum' is not defined` while `compile()` was perfectly happy.
+        out = _emit(self._schema())
+        namespace: dict[str, object] = {}
+        exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+        enum_class = namespace['PublicOrderStatusEnum']
+        assert [m.name for m in enum_class] == ['PENDING', 'ACTIVE']  # type: ignore[union-attr]
+        for label in ('pending', 'active'):
+            assert enum_class(label).value == label  # type: ignore[operator]
+
+    @pytest.mark.parametrize(
+        ('config', 'enums'),
+        [
+            (EmitterConfig(generate_enums=False), [EnumInfo(name='order_status', values=['pending'])]),
+            (None, []),
+        ],
+        ids=['generate_enums=False', 'no enums in the registry'],
+    )
+    def test_the_import_is_absent_when_there_are_no_enum_classes(
+        self, config: EmitterConfig | None, enums: list[EnumInfo]
+    ) -> None:
+        # The counter-witness, over BOTH axes that can suppress the enum section. Without it,
+        # "always import Enum" would satisfy every assertion above -- and an unconditional import
+        # is an F401 in every user's file, which the corpus ruff sweep would then have to catch.
+        schema = Schema(
+            tables=[TableInfo(name='users', columns=[ColumnInfo(name='id', raw_type='integer', primary=True)])],
+            enums=enums,
+        )
+        out = _emit(schema, config)
+        assert 'enum.Enum' not in _imported(out)
+        assert '(str, Enum):' not in out
+
+
+@pytest.mark.unit
+class TestCi113TheEmitterPassesTheClassNameItRenders:
+    """``CI-113`` end to end: the member names and the class header must agree.
+
+    ``naming.py``'s own tests cannot establish this. They prove
+    :func:`~castiron.utils.naming.python_member_names` repairs a class-private name **for the class
+    name it derived**; they cannot prove the emitter renders the header from that *same* name. Only
+    driving :class:`~castiron.emitters.PydanticEmitter` and executing its output can, and the label
+    below is the one that made the two disagree.
+
+    On ``main`` this module executed fine and **silently lost a label** on py3.11+, while py3.10
+    kept it under a mangled name -- ``castiron gen`` exit 0 either way. That is ``CI94-Q1``'s one
+    non-negotiable ("never drop a variant") and Hard Rule #9's interpreter-independence, breached
+    together. **There is deliberately no ``sys.version_info`` branch below**: one unbranched
+    assertion, green on all four gate legs, is the statement that the interpreter-dependence is
+    gone.
+    """
+
+    ENUM = EnumInfo(name='order_status', values=[], schema='public')
+
+    def test_a_crafted_label_survives_the_real_emitted_class_name(self) -> None:
+        class_name = python_class_name(self.ENUM)
+        label = crafted_class_private_label(class_name)
+        labels = [label, 'ok']
+        schema = Schema(
+            tables=[TableInfo(name='t', columns=[ColumnInfo(name='c', raw_type='USER-DEFINED', is_nullable=True)])],
+            enums=[EnumInfo(name='order_status', values=labels, schema='public')],
+        )
+        out = _emit(schema)
+
+        # The class really is emitted under the name the member transform was derived from.
+        assert f'class {class_name}(str, Enum):' in out
+
+        # ⚠ `simplefilter('error')` is part of the assertion, not hygiene: on py3.10 a
+        # class-private member is KEPT and announced only by a DeprecationWarning, so silence is
+        # the only evidence that leg agrees with the other three.
+        namespace: dict[str, object] = {}
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+
+        enum_class = namespace[class_name]
+        assert len(list(enum_class)) == len(labels), 'a label was swallowed by the class-name clause'  # type: ignore[call-overload]
+        for value in labels:
+            assert enum_class(value).value == value  # type: ignore[operator]

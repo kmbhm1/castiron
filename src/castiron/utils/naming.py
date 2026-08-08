@@ -72,36 +72,36 @@ class EnumMember:
             emitted value literal carries -- so the transform below is never lossy, however much
             it mangles the name.
         name: The Python identifier. Guaranteed ``name.isidentifier()``, guaranteed **usable as a
-            member of a ``str``-mixin ``Enum``** (a strictly stronger claim -- see
-            :func:`_is_enum_reserved_shape`), and guaranteed unique within one
-            :func:`python_member_names` call **after NFKC normalization**.
+            member of a ``str``-mixin ``Enum`` of the class name this enum is emitted under** (a
+            strictly stronger claim -- see :func:`_is_enum_reserved_shape`), and guaranteed unique
+            within one :func:`python_member_names` call **after NFKC normalization**.
 
-            🔴 The ``Enum`` half of that guarantee has **one known exception, filed as CI-113**,
-            and it is stated here because a guarantee without its limits is the sentence
-            ``CI-077`` exists to punish. CPython's ``_is_private`` takes the **enclosing class
-            name** and also swallows a member already spelled ``_<ClassName>__x``. This function
-            does not receive the class name, so it cannot see that shape.
+            🔴 **The ``Enum`` half of that guarantee is over the ``(name, class name)`` pair, and
+            the class name half of it is what ``CI-113`` closed.** CPython's ``_is_private`` takes
+            the **enclosing class name** and swallows a member already spelled
+            ``_<ClassName>__x``. :func:`python_member_names` now derives that class name itself
+            via :func:`python_class_name` -- the same call :meth:`_enum_section` renders the
+            header from -- so the predicate tests the pair, not the spelling alone.
 
-            ⚠ **It is reachable, and an earlier revision of this docstring claimed the opposite
-            "(verified)".** That claim was wrong. It reasoned that ``str.upper()`` cannot produce
-            the lowercase letters a class name needs -- true -- and missed that **NFKC runs
-            after** it, in the compiler. **389** codepoints the character map keeps are
-            ``upper()``-invariant *and* NFKC-fold to an ASCII lowercase letter (``ª``->``a``,
-            ``ᵘ``->``u``, ``ⁿ``->``n``, ...), covering all 26 letters, so any class name is
-            spellable. Driven through the real emitter: the label
-            ``'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'`` normalizes to ``_PublicOrderStatusEnum__X``, and
-            ``castiron gen`` exits **0** while py3.10 keeps the member and py3.11+ **silently drop
-            the label** -- both ``CI94-Q1``'s "never drop a variant" and Hard Rule #9's
-            interpreter-independence, at once.
+            ⚠ **Why the guard is necessary, kept because it is the fact an earlier revision got
+            wrong.** That revision called the shape "unreachable through the Pydantic emitter
+            (verified)", reasoning that ``str.upper()`` cannot produce the lowercase letters a
+            class name needs. True, and beside the point: **NFKC runs after** ``.upper()``, in the
+            compiler. **389** codepoints the character map keeps are ``upper()``-invariant *and*
+            NFKC-fold to an ASCII lowercase letter (``ª``->``a``, ``ᵘ``->``u``, ``ⁿ``->``n``,
+            ...), covering **all 26** letters, so any class name is spellable. Driven through the
+            real emitter, the label ``'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'`` normalizes to
+            ``_PublicOrderStatusEnum__X``; before the fix ``castiron gen`` exited **0** while
+            py3.10 kept the member and py3.11+ **silently dropped the label** -- both
+            ``CI94-Q1``'s "never drop a variant" and Hard Rule #9's interpreter-independence, at
+            once. It now repairs to ``_PublicOrderStatusEnum__X__`` and survives identically on
+            3.10 / 3.11 / 3.12 / 3.13.
 
-            **The true condition:** reachable only when a label's NFKC form spells
-            ``_<ClassName>__…`` for the class it is emitted into. **Unreachable from ASCII-only
-            labels**, because the generated suffix ``Enum`` always contributes lowercase ``num``
-            that ``.upper()`` would destroy -- so it takes deliberately-crafted modifier-letter
-            Unicode. Left open rather than closed in code: threading the class name through would
-            be a signature change on the last row before an immutable publish, for an adversarial
-            input. Pinned as present by ``TestCi113`` in ``tests/unit/utils/test_naming.py``, the
-            way ``CI-085`` and ``CI-100`` are pinned, so the gap stays visible.
+            **Exposure bound, still true and still worth stating:** the shape is **unreachable
+            from ASCII-only labels**, because the generated suffix ``Enum`` always contributes
+            lowercase ``num`` that ``.upper()`` would destroy -- it takes deliberately-crafted
+            modifier-letter Unicode. Pinned by ``TestCi113TheClassNameAxisIsClosed`` in
+            ``tests/unit/utils/test_naming.py``.
         note: Why ``name`` is not the straight transform of ``label`` -- ``'reserved by Enum'``,
             ``'reserved keyword'`` or ``'name collision'`` -- or ``None`` when it is. When more
             than one applies (labels ``['import_', 'import']``, where the second is renamed
@@ -114,11 +114,11 @@ class EnumMember:
     note: str | None = None
 
 
-def _is_enum_reserved_shape(name: str) -> bool:
+def _is_enum_reserved_shape(name: str, class_name: str) -> bool:
     """Whether ``name`` is unusable as an ``Enum`` member, even though it is a valid identifier.
 
-    ``str.isidentifier()`` is necessary and **not sufficient**. Three *shapes* are reserved on
-    top of Python's identifier rules, and :func:`~castiron.ir.build.identifier_characters` produces all three
+    ``str.isidentifier()`` is necessary and **not sufficient**. Four *shapes* are reserved on
+    top of Python's identifier rules, and :func:`~castiron.ir.build.identifier_characters` produces all four
     freely -- from labels as ordinary as a **trailing space** nobody noticed in a ``CREATE TYPE``:
 
     * ``_sunder_`` (``'(none)'`` -> ``_NONE_``) -- ``ValueError`` when the class body runs, so
@@ -132,9 +132,15 @@ def _is_enum_reserved_shape(name: str) -> bool:
       then happens to be sunder (``__2_`` -> ``_E__2_``) 3.10 raises instead. Output whose
       meaning depends on the running interpreter is a Hard Rule #9 problem on top of a
       correctness one.
+    * **class-private** (``_<ClassName>__x``) -- the fourth shape, and the one ``CI-113`` closed.
+      ``EnumMeta`` calls ``_is_private(cls_name, name)``, which treats any member already spelled
+      ``_<ClassName>__…`` (and not ending ``__``) as a normal attribute rather than a member. It
+      is the **only** shape that depends on something other than the name's own spelling, which is
+      why ``class_name`` is a **required** parameter here rather than a defaulted one: a default
+      would let a future call site silently reacquire the blindness this clause exists to remove.
 
-    All three are CI-080's failure mode relocated, not closed: ``compile()`` passes and
-    ``castiron gen`` still exits 0. Two of them violate ``CI94-Q1``'s one non-negotiable
+    All four are CI-080's failure mode relocated, not closed: ``compile()`` passes and
+    ``castiron gen`` still exits 0. Three of them violate ``CI94-Q1``'s one non-negotiable
     ("never drop a variant") outright.
 
     ⚠ **Deliberately re-implemented rather than importing ``enum._is_sunder`` /
@@ -161,35 +167,57 @@ def _is_enum_reserved_shape(name: str) -> bool:
     load-bearing for the uniqueness key in :func:`python_member_names`, and it belongs on both
     consumers or neither.
 
-    ⚠ **"Sees what the compiler sees" is true modulo the ENCLOSING CLASS NAME, which ``Enum``
-    also consults, and this predicate does not receive.** An earlier revision said it
-    unqualified, in this docstring, which is where a maintainer reads it. ``_is_private`` swallows
-    a member already spelled ``_<ClassName>__x``; that shape is **filed as CI-113**, reachable
-    only from deliberately-crafted Unicode, and pinned as present by a test rather than fixed
-    here. So: total over spelling, **not** total over the (name, class name) pair.
+    ✅ **The predicate is now total over the ``(name, class name)`` pair, not only over spelling**
+    (``CI-113``). The class-private rule is CPython's ``_is_private`` restated, per ``CI94-D8`` --
+    restate, never import -- and ``class_name`` is NFKC-normalized for the same reason ``name`` is:
+    :func:`python_class_name` does not sanitize its input, so a non-ASCII type name can reach here.
+
+    ⚠ **The interpreter-dependence this clause removes, recorded because it is the Hard Rule #9
+    half of the defect.** A class-private member is **kept** by py3.10 (under the mangled name,
+    with a ``DeprecationWarning``) and **dropped** by py3.11+. So before this fix the *meaning* of
+    an emitted module depended on which interpreter imported it, at ``castiron gen`` exit 0. All
+    four gate legs now agree.
+
+    ⚠ **Measured equivalence of ``enum._is_private`` across the gate legs**, since ``CI94-D8``
+    obliges this restatement to track reality rather than one interpreter: the source is
+    **identical on 3.10 / 3.11 / 3.12**, and **3.13 drops one clause**
+    (``name[pat_len:pat_len+1] != ['_']``). That delta is **behaviourally inert** -- it compares a
+    ``str`` to a ``list``, so it was always ``True``. ``_is_private`` therefore behaves identically
+    on all four legs, and one restatement is correct for all of them.
 
     Args:
         name: A candidate member name, already known to be a valid identifier.
+        class_name: The enclosing ``Enum`` subclass's name -- the one the member will actually be
+            emitted under. **Required**, deliberately: see the class-private bullet above.
 
     Returns:
         ``True`` when ``Enum`` would reject, rename or swallow ``name``.
     """
     name = unicodedata.normalize('NFKC', name)
+    class_name = unicodedata.normalize('NFKC', class_name)
     sunder = len(name) > 2 and name[0] == name[-1] == '_' and name[1] != '_' and name[-2] != '_'
     dunder = len(name) > 4 and name[:2] == name[-2:] == '__' and name[2] != '_' and name[-3] != '_'
     private = name.startswith('__') and not name.endswith('__')
-    return sunder or dunder or private
+    mangled = f'_{class_name}__'
+    # `len(name) > len(mangled)` is what makes `name[-2]` safe as well as excluding the bare prefix.
+    class_private = len(name) > len(mangled) and name.startswith(mangled) and (name[-1] != '_' or name[-2] != '_')
+    return sunder or dunder or private or class_private
 
 
-def _repair_enum_shape(name: str) -> str:
-    """Append ``'_'`` until ``name`` is usable as an ``Enum`` member.
+def _repair_enum_shape(name: str, class_name: str) -> str:
+    """Append ``'_'`` until ``name`` is usable as an ``Enum`` member of ``class_name``.
 
     **Terminates in at most three appends, and that bound is a proof rather than an observation.**
-    A name whose NFKC form ends in three or more underscores can be none of the three shapes:
+    A name whose NFKC form ends in three or more underscores can be none of the four shapes:
     sunder needs ``name[-2] != '_'``, dunder needs ``name[-3] != '_'``, and private needs the name
     *not* to end ``'__'``. Every iteration adds one trailing underscore, so the loop cannot run
     more than three times. (``__2`` is the worst case and needs all three: ``__2_`` is still
     private, ``__2__`` is then dunder, ``__2___`` is finally clean.)
+
+    **The fourth (class-private) clause does not weaken that bound and cannot become the binding
+    constraint**: it is false as soon as the NFKC form ends in **two** underscores, which is a
+    weaker requirement than the three the other clauses need. Measured: ``max_append == 3`` over
+    the full generated sweep on 3.10 / 3.11 / 3.12 / 3.13, both before and after ``CI-113``.
 
     ⚠ **One append is NOT enough** -- a claim that used to appear on
     :func:`python_member_names` and was wrong. It holds for sunder and dunder and fails for the
@@ -205,11 +233,12 @@ def _repair_enum_shape(name: str) -> str:
 
     Args:
         name: A candidate member name.
+        class_name: The enclosing ``Enum`` subclass's name, threaded straight into the predicate.
 
     Returns:
         ``name``, with as many trailing underscores as it takes.
     """
-    while _is_enum_reserved_shape(name):
+    while _is_enum_reserved_shape(name, class_name):
         name = f'{name}_'
     return name
 
@@ -234,9 +263,10 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
        name-mangled and is addressable as ``E._2ND_PASS``; whether it is *also* a ``_sunder_``
        name is step 5's problem, not this step's.
     5. Enum-shape guard (:func:`_repair_enum_shape`) -- append ``'_'`` while the name is
-       ``_sunder_``, ``__dunder__`` or **private/name-mangled**. ``str.isidentifier()`` is
-       **necessary but not sufficient**: ``Enum`` raises on the first and silently drops the other
-       two.
+       ``_sunder_``, ``__dunder__``, **private/name-mangled**, or **class-private**
+       (``_<ClassName>__x``, the fourth shape, ``CI-113``). ``str.isidentifier()`` is **necessary
+       but not sufficient**: ``Enum`` raises on the first and silently drops the other three.
+       The class name that guard needs is derived here, from the ``enum`` already in hand.
     6. Reserved guard, **carried over verbatim from the emitter** (see the note below).
     7. Uniquify **last**, over the final names, keyed on the NFKC-normalized candidate -- and
        every candidate is re-repaired, because the ordinal suffix can itself create shape 3.
@@ -254,14 +284,14 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     (``'ﬁ'.upper() == 'FI'``, ``'ß'.upper() == 'SS'``). A raw uniqueness check would emit a module
     that raises ``TypeError`` at **import** -- CI-080's own failure mode in a new costume.
 
-    ⚠ **Step 6 is ``string_is_reserved(...) or column_name_reserved_exceptions(...)``, byte-for-byte
-    as the emitter had it, and that ``or`` is KNOWN-WRONG.** The exceptions list exists to *exempt*
-    names from renaming (``ir/build.py``'s ``standardize_column_name`` reads it as ``and not``),
-    so the enum path treats an exemption as an addition and an enum label ``id`` emits
-    ``ID_ = "id"  # original name was "id" (reserved keyword)`` -- a comment stating the opposite
-    of the truth. It is filed as **CI-100** (``CI94-Q4``) and is deliberately **left visible**:
-    this row is identifier safety, and quietly correcting an unrelated logic error inside it is
-    the ``CI-074`` trap. Do not "tidy" it here.
+    ⚠ **Step 6 reads the exemption list the same way the column path does** --
+    ``string_is_reserved(...) and not column_name_reserved_exceptions(...)``, matching
+    ``ir/build.py``'s ``standardize_column_name``. It was ``or`` until ``CI-100``, which treated an
+    *exemption* list as an *addition* list: the label ``id`` emitted
+    ``ID_ = "id"  # original name was "id" (reserved keyword)``, a comment stating the opposite of
+    the truth. Note what the ``or`` did **not** do -- every name on the exemption list is already a
+    builtin, so it never actually added anything; its only observable effect was the missing
+    exemption.
 
     Determinism (Hard Rule #9): the result is a pure function of the ordered ``enum.values``
     list. That order is contractual (pg's ``enumsortorder``, preserved end to end by the OpenAPI
@@ -274,6 +304,13 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     Returns:
         One :class:`EnumMember` per label, in ``enum.values`` order.
     """
+    # ⚠ Derived here rather than accepted as a parameter, and that is deliberate (`CI-113`). The
+    # class name is a pure function of the `EnumInfo` this function already receives,
+    # `python_class_name` is the single authority for it, and `_enum_section` renders the class
+    # header from that same call -- so computing it internally makes it IMPOSSIBLE for a caller to
+    # supply a class name the emitter will not use. A parameter would create exactly that
+    # possibility, for no gain; add one if a non-Python emitter ever needs a different name.
+    class_name = python_class_name(enum)
     used: set[str] = set()
     members: list[EnumMember] = []
 
@@ -285,21 +322,21 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
             name = f'_{name}'
 
         note: str | None = None
-        if _is_enum_reserved_shape(name):
-            name = _repair_enum_shape(name)
+        if _is_enum_reserved_shape(name, class_name):
+            name = _repair_enum_shape(name, class_name)
             note = 'reserved by Enum'
-        if string_is_reserved(name.lower()) or column_name_reserved_exceptions(name.lower()):
+        if string_is_reserved(name.lower()) and not column_name_reserved_exceptions(name.lower()):
             name = f'{name}_'
             note = 'reserved keyword'
 
         # ⚠ The ordinal suffix can itself create a reserved shape -- `_` plus `_2` is `__2`,
         # which Python name-mangles -- so every candidate is repaired again, and the loop
         # re-checks uniqueness afterwards rather than assuming the repair kept it unique.
-        candidate = _repair_enum_shape(name)
+        candidate = _repair_enum_shape(name, class_name)
         ordinal = 1
         while unicodedata.normalize('NFKC', candidate) in used:
             ordinal += 1
-            candidate = _repair_enum_shape(f'{name}_{ordinal}')
+            candidate = _repair_enum_shape(f'{name}_{ordinal}', class_name)
             note = 'name collision'
 
         used.add(unicodedata.normalize('NFKC', candidate))

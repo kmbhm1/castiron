@@ -300,7 +300,7 @@ class PydanticEmitter(Emitter):
         if self.config.include_foreign_keys and any(t.foreign_keys or t.relationships for t in schema.tables):
             imports.add('from __future__ import annotations')
 
-        if self.config.generate_enums and any(c.enum_info is not None for t in schema.tables for c in t.columns):
+        if self._emits_enums(schema):
             imports.add('from enum import Enum')
 
         if self.config.disable_model_prefix_protection and any(
@@ -319,6 +319,24 @@ class PydanticEmitter(Emitter):
                 imports.update(resolve_column_type(column, PYDANTIC_TYPE_MAP).imports)
 
         return render_import_block(imports)
+
+    def _emits_enums(self, schema: Schema) -> bool:
+        """Whether the module will carry enum classes -- the ONE condition, read by both sites.
+
+        ⚠ :meth:`_imports` and :meth:`_enum_section` used to test different things: the import
+        block gated ``from enum import Enum`` on a **column** carrying ``enum_info``, while the
+        section renders from ``schema.enums``. An enum reachable only through the registry
+        therefore emitted its class with no import -- ``NameError: name 'Enum' is not defined`` at
+        import, with ``castiron gen`` exiting 0 (``CI-114``). Two sources of truth for one import
+        is the defect; one predicate is the fix.
+
+        Args:
+            schema: The schema being emitted.
+
+        Returns:
+            ``True`` when :meth:`_enum_section` will render at least one enum class.
+        """
+        return bool(self.config.generate_enums and schema.enums)
 
     def _needs_string_constraints(self, schema: Schema) -> bool:
         """Whether any ``text`` column carries a ``length()`` CHECK constraint."""
@@ -351,7 +369,7 @@ class PydanticEmitter(Emitter):
         lesson: a renderer injecting user text into generated source must be total over its input
         domain, not over its best-behaved caller.
         """
-        if not self.config.generate_enums or not schema.enums:
+        if not self._emits_enums(schema):
             return None
 
         classes = []

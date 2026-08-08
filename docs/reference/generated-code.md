@@ -82,12 +82,13 @@ In this order:
 4. **Leading-digit guard.** `'2nd pass'` → `_2ND_PASS`, addressable as `E._2ND_PASS`.
 5. **Enum-shape repair** — see below.
 6. **Reserved-name guard.** A name that spells a Python keyword or builtin gets a trailing
-   underscore: `import` → `IMPORT_`.
+   underscore: `import` → `IMPORT_`. A short curated list of builtins — `id`, `credits`,
+   `copyright`, `license`, `help`, `property`, `sum` — is **exempt** and keeps its plain name.
 7. **Collision resolution** — see below.
 
 ### `Enum` reserves shapes that Python allows
 
-`str.isidentifier()` is necessary and **not sufficient**. Three name shapes are legal Python
+`str.isidentifier()` is necessary and **not sufficient**. Four name shapes are legal Python
 identifiers that `EnumMeta` will not give you back, and step 1 produces all of them from
 ordinary labels — a trailing space in a `CREATE TYPE` is enough:
 
@@ -96,13 +97,28 @@ ordinary labels — a trailing space in a `CREATE TYPE` is enough:
 | `_sunder_` | **raises `ValueError` when the class body runs** — the whole generated module is unusable at import | `'(none)'` → `_NONE_` |
 | `__dunder__` | the member is **silently dropped** | `'__init__'` → `__INIT__` |
 | `__private` (two leading underscores, fewer than two trailing) | name-mangled at compile time, so the member never has the name that was written; 3.11+ drop it, 3.10 keeps it under a different name | the collision suffix itself: `_` + `_2` → `__2` |
+| `_<ClassName>__x` (**class-private**) | treated as a normal attribute rather than a member — 3.11+ drop it, 3.10 keeps it mangled | a label whose NFKC form spells the enclosing class name; see below |
 
 castiron repairs those shapes by appending `_` until the name is usable — at most three times,
 which is a bound rather than an observation. That is why `'(none)'` emits `_NONE__` and not
 `_NONE_`.
 
-Two of those three would violate the one thing enum naming never does — drop a label — and they
+Three of those four would violate the one thing enum naming never does — drop a label — and they
 would do it at exit code `0`, which is why the repair exists rather than a warning.
+
+!!! note "The fourth shape depends on the class name, not just the label"
+    `Enum`'s private-name check also consults the **enclosing class name**, so whether a name is
+    reserved is a property of the *pair*. castiron derives the class name from the same enum it is
+    naming members for — the very name it writes in the `class` header — so the two cannot
+    disagree.
+
+    Reaching this shape takes deliberately-crafted Unicode and is **impossible from ASCII-only
+    labels**: the generated class name always ends in `Enum`, whose lowercase `num` cannot survive
+    `.upper()`. But 389 codepoints are `upper()`-invariant *and* NFKC-fold to an ASCII lowercase
+    letter, so `'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'` normalizes to `_PublicOrderStatusEnum__X`. It is
+    repaired to `_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X__` and the label survives **identically on Python 3.10
+    through 3.13** — before this was repaired, the generated module's meaning depended on which
+    interpreter imported it.
 
 ### Names are compared after NFKC normalization
 
@@ -119,7 +135,7 @@ With it:
 class PublicKindEnum(str, Enum):
     FI = "ﬁ"
     FI_2 = "fi"  # original name was "fi" (name collision)
-    ID_ = "id"  # original name was "id" (reserved keyword)
+    ID = "id"
     SS = "ß"
     SS_2 = "SS"  # original name was "SS" (name collision)
 ```
@@ -138,29 +154,17 @@ re-repaired before it is accepted.
     suffix, is stable but permanently unreadable; refusing to generate is not an option while there
     is no override mechanism to point you at.
 
-!!! note "`id`, `license`, `help` and four others"
-    A short curated list — `id`, `credits`, `copyright`, `license`, `help`, `property`, `sum` —
-    also picks up the trailing underscore, and the comment reads `(reserved keyword)` even though
-    those are not keywords. That list exists to *exempt* column names from renaming, and the enum
-    path reads it as an addition instead. It is a known defect, tracked, and deliberately left
-    visible rather than quietly patched inside an unrelated change. The label in the value literal
-    is unaffected.
+!!! note "`id`, `license`, `help` and four others are *exempt*"
+    A short curated list — `id`, `credits`, `copyright`, `license`, `help`, `property`, `sum` — is
+    **exempt** from step 6, so those labels keep their plain names: `id` emits `ID = "id"`, with no
+    trailing underscore and no comment. The same list exempts the same names on the [column
+    path](#column-names), so the two read it identically.
 
-## Known limitations
-
-### The class-name axis is not covered
-
-`Enum`'s private-name check also consults the **enclosing class name**, and castiron's member
-naming does not receive it. A label whose NFKC form spells `_<ClassName>__something` for the class
-it is being emitted into will therefore slip past the repair — the member is dropped on Python
-3.11+ and kept under a mangled name on 3.10, at exit code `0`.
-
-**This is unreachable from ASCII-only labels.** The generated class name always ends in `Enum`,
-whose lowercase `num` cannot survive `.upper()`. Reaching it takes deliberately-crafted Unicode:
-389 codepoints are `upper()`-invariant *and* NFKC-fold to an ASCII lowercase letter, so
-`'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'` normalizes to `_PublicOrderStatusEnum__X`.
-
-It is **filed and pinned by a test, not fixed**, in `0.1.0`.
+    Until `0.1.0` the enum path applied that list as an *addition* rather than an exemption, so
+    `id` emitted `ID_ = "id"  # original name was "id" (reserved keyword)` — a rename the list
+    exists to prevent, annotated with the opposite of the reason. **If you generated with `0.1.0`,
+    regenerating will drop the trailing underscore from those seven names.** The label in the value
+    literal was never affected.
 
 ## Column names
 

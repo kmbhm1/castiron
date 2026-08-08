@@ -756,6 +756,12 @@ class TestFunctions:
         assert function(rows, 'get_user_stats')[5] is None
         assert function(rows, 'get_user_stats')[6] is True
 
+    # ⚠ The three parameter-order expectations below read the hand-authored CI-005 fixture,
+    # whose RPC bodies are in DECLARATION order -- an order a real PostgREST never emits, since
+    # it alphabetizes them. They pin "castiron preserves whatever order the document gives",
+    # which is true, and nothing more; they are **not** evidence about argument order. Reality
+    # is pinned in TestRpcParameterOrderInTheRealCaptures. Re-ordering the fixture to match
+    # the generator is open row `CI-133`.
     def test_parameter_order_is_preserved_and_has_default_comes_from_required(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'get_user_stats')[7] == [
@@ -911,6 +917,142 @@ class TestFunctions:
 
 
 # ---------------------------------------------------------------------------
+# RPC parameter order, against the REAL captures (``CI-133``, pinning ``CI-078``).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRpcParameterOrderInTheRealCaptures:
+    """What a real PostgREST emits for function-parameter order, asserted from real bytes.
+
+    ⚠ **Every assertion above this class about parameter order reads the hand-authored CI-005
+    fixture, and that fixture cannot settle this question** -- an author who believes a false
+    thing about a generator writes the false thing into their fixture, and the test then agrees
+    with them forever. That is exactly how ``CI-078`` survived two corrections: the parser
+    docstring claimed ``properties`` order was pg argument position, and nothing in the unit
+    suite could contradict it. This is the same shape as ``CI-076`` (a fixture carrying a shape
+    the real source cannot emit), so the remedy is the one ``CI-076`` established: **assert it
+    against a capture.**
+
+    These read ``tests/unit/corpus/inputs/testbed-*.openapi.json`` -- documents produced by a
+    real PostgREST against the seeded testbed, committed and key-free. They need no live server,
+    and one of them is **self-proving**: ``search_products`` carries the same signature twice, in
+    two different orders, in a single document. No outside knowledge is needed to see that at
+    most one of them can be the declaration order.
+
+    The live suite (``tests/integration/test_openapi_live.py:762``) pins this too, but only
+    under ``RUN_DB_TESTS=1``, so it is absent from the gate that actually runs on every push.
+    """
+
+    #: The captures only. The CI-005 fixture is hand-authored (``origin='synthetic'`` in
+    #: ``tests/unit/corpus/cases.py``), so it is evidence about castiron, never about PostgREST.
+    CAPTURES = sorted(CORPUS_INPUTS.glob('testbed-*.openapi.json'))
+
+    #: Captured ``/rpc/*`` bodies with >1 parameter -- the only ones whose order carries any
+    #: information. Asserted by name, so the sweep below cannot pass vacuously if a capture is
+    #: replaced by one with no multi-argument function (``CI-072``, ``CI-091``).
+    INFORMATIVE_BODIES = ('create_order', 'get_customer_stats', 'reserved_args', 'search_products')
+
+    @staticmethod
+    def _document(path: Path) -> dict[str, Any]:
+        """Load one committed capture."""
+        loaded: dict[str, Any] = json.loads(path.read_text(encoding='utf-8'))
+        return loaded
+
+    @classmethod
+    def _body_properties(cls, path_item: dict[str, Any]) -> list[str]:
+        """Return the POST body schema's ``properties`` keys, in document order."""
+        for parameter in path_item.get('post', {}).get('parameters', []):
+            if parameter.get('in') == 'body':
+                return list(parameter['schema'].get('properties', {}))
+        return []
+
+    @classmethod
+    def _get_parameter_names(cls, path_item: dict[str, Any]) -> list[str]:
+        """Return the GET operation's query-parameter names, in document order."""
+        return [
+            parameter['name'] for parameter in path_item.get('get', {}).get('parameters', []) if 'name' in parameter
+        ]
+
+    @classmethod
+    def _rpc_items(cls, document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Return ``{function name: path item}`` for every ``/rpc/*`` key."""
+        return {key[len('/rpc/') :]: item for key, item in document['paths'].items() if key.startswith('/rpc/')}
+
+    def test_the_sweep_covers_both_committed_captures(self) -> None:
+        assert [path.name for path in self.CAPTURES] == [
+            'testbed-inventory.openapi.json',
+            'testbed-public.openapi.json',
+        ]
+
+    def test_every_captured_rpc_body_is_in_alphabetical_order(self) -> None:
+        # The systematic claim, swept over every real function in both captures rather than
+        # argued from one example: PostgREST alphabetizes the POST body. If a future capture
+        # contains a body that is NOT sorted, the generator's behaviour has changed and CI-078's
+        # whole premise needs re-deriving -- do not "fix" this test to accommodate it.
+        informative: list[str] = []
+        for path in self.CAPTURES:
+            for name, item in self._rpc_items(self._document(path)).items():
+                properties = self._body_properties(item)
+                assert properties == sorted(properties), (
+                    f'{path.name}:/rpc/{name} has a POST body in {properties}, which is not '
+                    f'alphabetical. Every captured body has been alphabetical until now.'
+                )
+                if len(properties) > 1:
+                    informative.append(name)
+
+        assert sorted(informative) == list(self.INFORMATIVE_BODIES), sorted(informative)
+
+    def test_search_products_carries_two_orders_and_they_disagree(self) -> None:
+        # ⚠ The self-proving witness, and the reason this class needs no live server. ONE
+        # document describes ONE function twice: the POST body and the GET query parameters.
+        # They are in different orders, so at most one of them can be the declaration order --
+        # and the sorted one is the body.
+        item = self._rpc_items(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))['search_products']
+        body = self._body_properties(item)
+        query = self._get_parameter_names(item)
+
+        assert body == ['p_limit', 'p_terms']
+        assert query == ['p_terms', 'p_limit']
+        assert body == sorted(body), 'the POST body is the alphabetized one'
+        assert query != sorted(query), (
+            'the GET parameters are NOT alphabetized -- that asymmetry is what proves the body '
+            'order is imposed by the generator rather than inherited from the function.'
+        )
+        # The function is declared `(p_terms, p_limit)` in the testbed seed, which is the GET
+        # order: PostgREST emits `parameters` in declaration order for a STABLE/IMMUTABLE
+        # function. Asserted from the document above, not from that outside knowledge.
+
+    def test_castiron_takes_the_alphabetical_order_even_when_the_real_one_is_present(self) -> None:
+        # ⚠ **This pins a DEFECT.** castiron reads the body, so it reports `search_products` as
+        # `(p_limit, p_terms)` -- the reverse of how it is declared -- even though the same
+        # document carries the true order in the GET operation that `_parse_body_parameters`
+        # ALREADY reads (it takes VARIADIC from there). A positional RPC call generated from
+        # this (CI-012) would type-check, run, and return the wrong answer.
+        #
+        # When `CI-078` lands this goes RED, and that is GOOD NEWS: change the expectation to
+        # ['p_terms', 'p_limit'], re-baseline the RPC-bearing goldens, and say so in the PR.
+        rows = parse_openapi_document(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        assert [parameter[0] for parameter in function(rows, 'search_products')[7]] == ['p_limit', 'p_terms']
+
+    def test_a_volatile_functions_declaration_order_is_absent_from_the_document(self) -> None:
+        # The other half of CI-078, and why it splits: `create_order` is VOLATILE, so PostgREST
+        # emits no GET operation for it and the declaration order is not merely discarded --
+        # it is structurally unrecoverable from this source. (The testbed declares it
+        # `(p_customer_id, p_status, p_lines)`; the document cannot show that, which is the
+        # point, so nothing here asserts it.)
+        item = self._rpc_items(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))['create_order']
+        assert 'get' not in item, 'create_order stopped being VOLATILE; the CI-078 split changes shape'
+
+        body = self._body_properties(item)
+        assert body == ['p_customer_id', 'p_lines', 'p_status']
+        assert body == sorted(body)
+
+        rows = parse_openapi_document(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        assert [parameter[0] for parameter in function(rows, 'create_order')[7]] == body
+
+
+# ---------------------------------------------------------------------------
 # Determinism (Hard Rule #9 -- the ``check`` drift-guard depends on this).
 # ---------------------------------------------------------------------------
 
@@ -922,8 +1064,10 @@ class TestDeterminism:
 
     def test_parsing_a_key_reordered_copy_is_identical(self, document: dict[str, Any]) -> None:
         # PostgREST builds ``definitions`` and ``paths`` from a Haskell hash map, so their
-        # document order is NOT contractual -- castiron sorts both. Column and parameter
-        # order, by contrast, is real (pg ordinal / argument position) and is preserved.
+        # document order is NOT contractual -- castiron sorts both. ``properties`` order is
+        # preserved as given: real for a table's columns (pg ordinal), but for a function's
+        # parameters it is only ALPHABETICAL, never argument position (CI-078 -- see
+        # TestRpcParameterOrderInTheRealCaptures, which proves it from a capture).
         reordered = reorder_keys(document)
         assert list(reordered['definitions']) != list(document['definitions'])
         assert list(reordered['paths']) != list(document['paths'])

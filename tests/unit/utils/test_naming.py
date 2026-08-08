@@ -153,7 +153,7 @@ class TestPythonMemberNames:
             ('class', 'CLASS_'),  # step 6: a keyword
             ('import', 'IMPORT_'),  # step 6: a keyword
             ('None', 'NONE'),  # step 6: `none` is not reserved; `None` is
-            ('sum', 'SUM_'),  # step 6: a builtin (and see the CI-100 note below)
+            ('sum', 'SUM'),  # step 6: a builtin, but on the exemption list -- CI-100
         ],
     )
     def test_one_label_at_a_time(self, label: str, expected: str) -> None:
@@ -236,18 +236,29 @@ class TestPythonMemberNames:
         assert _members('a-b', 'a b')[1].label == 'a b'
 
     @pytest.mark.parametrize('label', ['id', 'credits', 'copyright', 'license', 'help', 'property', 'sum'])
-    def test_the_exemption_list_is_carried_verbatim_bug_and_all(self, label: str) -> None:
-        # ⚠ NOT an endorsement. `column_name_reserved_exceptions` is an EXEMPTION list -- names
-        # that need NOT be renamed -- and the enum path applies it with `or`, i.e. as an ADDITION
-        # list, so `id` gets suffixed and annotated "reserved keyword" when it is the opposite.
-        # That is filed as CI-100 (CI94-Q4) and is deliberately out of scope: CI-080 rewrote the
-        # surrounding lines and tidying it in passing is the CI-074 trap.
+    def test_an_exempted_label_is_not_renamed(self, label: str) -> None:
+        # ✅ CI-100, closed. `column_name_reserved_exceptions` is an EXEMPTION list -- names that
+        # need NOT be renamed -- and the enum path used to apply it with `or`, i.e. as an ADDITION
+        # list, so `id` was suffixed and annotated "reserved keyword" when the list says the
+        # opposite. The enum path and the column path (`ir/build.py:341`) now read it the same
+        # way: `string_is_reserved(...) and not column_name_reserved_exceptions(...)`.
         #
-        # This test pins the bug as PRESENT so CI-100 has a red test to turn green -- it does not
-        # pin it as correct, and the assertion below is written so that fixing CI-100 fails it.
+        # ⚠ Note what the `or` did NOT do. Every name on the exemption list is already a builtin
+        # (`credits`/`copyright`/`license`/`help` come from `site`), so the `or` never actually
+        # ADDED anything -- its only observable effect was the missing exemption.
+        #
+        # Dropping the note is correct under CI94-D3: `ID` IS the straight transform of `id`, so
+        # there is nothing to gloss.
         member = _members(label)[0]
-        assert member.name == f'{label.upper()}_'
-        assert member.note == 'reserved keyword', 'CI-100 (still open) makes this annotation false'
+        assert member.name == label.upper()
+        assert member.note is None
+
+    def test_a_reserved_label_not_on_the_exemption_list_is_still_renamed(self) -> None:
+        # 🔴 The counter-witness, and it is load-bearing: without it, DELETING the reserved guard
+        # outright would satisfy every assertion above. The captain ruled on 2026-08-08 that the
+        # enum path KEEPS its reserved guard, so CI-100 is a boolean correction and not a removal.
+        assert _members('class') == [EnumMember(label='class', name='CLASS_', note='reserved keyword')]
+        assert _members('import') == [EnumMember(label='import', name='IMPORT_', note='reserved keyword')]
 
 
 #: The character classes that decide every reserved shape, for the generated name/label sweeps.

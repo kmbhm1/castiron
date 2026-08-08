@@ -254,14 +254,14 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
     (``'ﬁ'.upper() == 'FI'``, ``'ß'.upper() == 'SS'``). A raw uniqueness check would emit a module
     that raises ``TypeError`` at **import** -- CI-080's own failure mode in a new costume.
 
-    ⚠ **Step 6 is ``string_is_reserved(...) or column_name_reserved_exceptions(...)``, byte-for-byte
-    as the emitter had it, and that ``or`` is KNOWN-WRONG.** The exceptions list exists to *exempt*
-    names from renaming (``ir/build.py``'s ``standardize_column_name`` reads it as ``and not``),
-    so the enum path treats an exemption as an addition and an enum label ``id`` emits
-    ``ID_ = "id"  # original name was "id" (reserved keyword)`` -- a comment stating the opposite
-    of the truth. It is filed as **CI-100** (``CI94-Q4``) and is deliberately **left visible**:
-    this row is identifier safety, and quietly correcting an unrelated logic error inside it is
-    the ``CI-074`` trap. Do not "tidy" it here.
+    ⚠ **Step 6 reads the exemption list the same way the column path does** --
+    ``string_is_reserved(...) and not column_name_reserved_exceptions(...)``, matching
+    ``ir/build.py``'s ``standardize_column_name``. It was ``or`` until ``CI-100``, which treated an
+    *exemption* list as an *addition* list: the label ``id`` emitted
+    ``ID_ = "id"  # original name was "id" (reserved keyword)``, a comment stating the opposite of
+    the truth. Note what the ``or`` did **not** do -- every name on the exemption list is already a
+    builtin, so it never actually added anything; its only observable effect was the missing
+    exemption.
 
     Determinism (Hard Rule #9): the result is a pure function of the ordered ``enum.values``
     list. That order is contractual (pg's ``enumsortorder``, preserved end to end by the OpenAPI
@@ -288,7 +288,7 @@ def python_member_names(enum: EnumInfo) -> list[EnumMember]:
         if _is_enum_reserved_shape(name):
             name = _repair_enum_shape(name)
             note = 'reserved by Enum'
-        if string_is_reserved(name.lower()) or column_name_reserved_exceptions(name.lower()):
+        if string_is_reserved(name.lower()) and not column_name_reserved_exceptions(name.lower()):
             name = f'{name}_'
             note = 'reserved keyword'
 

@@ -69,6 +69,12 @@ half-released state (bumped version, pushed tag, created Release) that two sessi
 unwinding, and a real release whose publish step named the test index would report success while
 publishing nothing anyone can install. So the mode separation is asserted structurally, from a
 step-level parse of the workflow.
+
+A third family covers the **local dev tooling**. **CI-108** -- the lint hook was declared as
+``ruff``, which upstream retains only as a deprecated alias of ``ruff-check``. Nothing was
+broken; both ids run ``ruff check --force-exclude`` at ``v0.16.0``. It is asserted because of
+*when* it would break: on the alias's removal, at pre-push, on whichever PR next moves ``rev``
+-- the same deferred, misattributed failure as CI-105, in the same stanza.
 """
 
 import re
@@ -119,6 +125,16 @@ RELEASE_NAME = '.github/workflows/release.yml'
 #: calls every decorated CLI function untyped). Bumping its ``rev`` alone would not align it.
 #: Tracked as CI-105's sibling; asserting it here before it is fixed would only add a red test.
 RUFF_HOOK_REPO = 'https://github.com/astral-sh/ruff-pre-commit'
+
+#: The linting hook's current id, and the deprecated spelling it replaced (CI-108). Upstream's
+#: ``.pre-commit-hooks.yaml`` at ``v0.16.0`` declares ``ruff-check``, ``ruff-format``, and then
+#: ``ruff`` under a literal ``# Legacy alias`` heading. All three resolve to
+#: ``ruff check --force-exclude`` today, so this is asserted for durability rather than behaviour:
+#: an id upstream itself calls legacy is a removal waiting to happen, and its removal would land as
+#: a bare "hook id not found" on whichever unrelated PR next moves ``rev``.
+RUFF_LINT_HOOK_ID = 'ruff-check'
+RUFF_LEGACY_HOOK_ID = 'ruff'
+RUFF_FORMAT_HOOK_ID = 'ruff-format'
 
 #: The hosted mypy hook CI-105 replaced with a ``repo: local`` one. Asserted **absent**: it is
 #: the shape of the bug, not a specific bad version. Re-adding it at any ``rev`` re-creates a
@@ -435,6 +451,36 @@ def pinned_hook_rev(text: str, repo: str) -> str | None:
         if inside and stripped.startswith('rev:'):
             return stripped.partition('rev:')[2].strip().strip('\'"').lstrip('v')
     return None
+
+
+def hosted_hook_ids(text: str, repo: str) -> list[str]:
+    """Return the ``id:`` of every hook declared under one hosted pre-commit repo.
+
+    Parsed textually, for the reason ``pinned_hook_rev`` gives. Skipping comment lines is once
+    again load-bearing rather than tidy, and this time the trap is *in the stanza being read*: the
+    ruff block carries a comment explaining that ``ruff-check`` replaced the legacy ``ruff``, so a
+    parser that matched any line mentioning an id would report the very alias the test forbids --
+    and ``test_the_lint_hook_uses_the_current_id_not_the_legacy_alias`` would fail on prose.
+
+    Args:
+        text: The whole ``.pre-commit-config.yaml``.
+        repo: The repo URL, exactly as it appears after ``- repo:``.
+
+    Returns:
+        The hook ids in declaration order. Empty when the repo has no stanza.
+    """
+    ids = []
+    inside = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith('- repo:'):
+            inside = stripped.partition('- repo:')[2].strip() == repo
+            continue
+        if inside and stripped.startswith('- id:'):
+            ids.append(stripped.partition('- id:')[2].strip().strip('\'"'))
+    return ids
 
 
 def local_hook_entry(text: str, hook_id: str) -> str | None:
@@ -2471,3 +2517,105 @@ class TestTheRehearsalCannotFireOnARealRelease:
         )
         # 6. ...and a commented-out step must not be read as configuration at all.
         assert workflow_steps(f'      # - name: R\n      #   if: ${{{{ !inputs.{REHEARSE_INPUT} }}}}\n') == []
+
+
+class TestThePreCommitRuffHookIsNotTheLegacyAlias:
+    """CI-108 -- the lint hook must be declared as ``ruff-check``, upstream's current id.
+
+    Nothing is broken today: ``v0.16.0`` still ships ``ruff`` as an alias with an identical
+    ``entry``, so both spellings lint the same files with the same ruff. This is asserted because
+    the failure it prevents is *deferred and misattributed*. The alias is labelled "Legacy" in
+    upstream's own hook manifest; when it goes, pre-commit fails with "hook id `ruff` not found in
+    repo" -- at **pre-push**, on whichever PR next bumps ``rev``, whose author changed nothing to
+    do with it. That is the same shape as CI-105: a lint-stage trap armed at rest, disarmed only by
+    someone who happens to read this file.
+    """
+
+    def test_the_lint_hook_uses_the_current_id_not_the_legacy_alias(self) -> None:
+        ids = hosted_hook_ids(PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), RUFF_HOOK_REPO)
+        # Anti-vacuity (CI-083): an empty list satisfies "the alias is absent" while meaning
+        # nothing lints at all, which is a strictly worse state than the one under test.
+        assert ids, (
+            f'{PRE_COMMIT_NAME} declares no hooks under {RUFF_HOOK_REPO}. Either the stanza was '
+            f'removed -- in which case nothing lints at pre-push -- or the repo URL changed and '
+            f'RUFF_HOOK_REPO needs to change with it.'
+        )
+        assert RUFF_LINT_HOOK_ID in ids, (
+            f'{PRE_COMMIT_NAME}: the ruff stanza declares {ids} but not `{RUFF_LINT_HOOK_ID}`, so '
+            f'nothing runs `ruff check` at pre-push. `make lint` would still catch a violation '
+            f'locally; the push would not.'
+        )
+        assert RUFF_LEGACY_HOOK_ID not in ids, (
+            f'{PRE_COMMIT_NAME}: the ruff stanza declares the deprecated `{RUFF_LEGACY_HOOK_ID}` '
+            f'id. Upstream keeps it only as an alias (its .pre-commit-hooks.yaml files it under '
+            f'"# Legacy alias") and both ids run `ruff check --force-exclude` today, so this is a '
+            f'pure rename -- but when upstream drops it, pre-push fails with "hook id '
+            f'`{RUFF_LEGACY_HOOK_ID}` not found" on an unrelated PR.\n'
+            f'Fix: `- id: {RUFF_LINT_HOOK_ID}`.'
+        )
+
+    def test_the_stanza_still_declares_the_formatter_too(self) -> None:
+        """The linter and the formatter are separate hooks; renaming one must not drop the other."""
+        ids = hosted_hook_ids(PRE_COMMIT_CONFIG.read_text(encoding='utf-8'), RUFF_HOOK_REPO)
+        assert RUFF_FORMAT_HOOK_ID in ids, (
+            f'{PRE_COMMIT_NAME}: no `{RUFF_FORMAT_HOOK_ID}` hook under {RUFF_HOOK_REPO}. `ruff '
+            f'check` does not reformat, so without it `make format` is the only thing keeping the '
+            f'tree formatted and a push can land unformatted code.'
+        )
+
+    def test_a_comment_naming_the_legacy_alias_is_not_read_as_a_hook_id(self) -> None:
+        """The parser must read configuration, not the prose explaining it (CI-072).
+
+        This is not hypothetical: the real stanza carries a comment that names both ids in order to
+        explain the rename. A parser that matched any line containing an id would report the alias
+        from that comment and redden the assertion above on a file that is already correct.
+        """
+        stanza = '\n'.join(
+            [
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    rev: v0.16.0',
+                '    hooks:',
+                f'      # `{RUFF_LINT_HOOK_ID}`, not `{RUFF_LEGACY_HOOK_ID}`: upstream renamed it.',
+                f'      # - id: {RUFF_LEGACY_HOOK_ID}',
+                f'      - id: {RUFF_LINT_HOOK_ID}',
+            ]
+        )
+        assert hosted_hook_ids(stanza, RUFF_HOOK_REPO) == [RUFF_LINT_HOOK_ID]
+
+    def test_this_guard_can_still_see_the_legacy_alias(self) -> None:
+        """Positive control (CI-072): prove the assertion can go red.
+
+        ``RUFF_LEGACY_HOOK_ID not in ids`` is an absence, the shape that passes loudest once the
+        parser underneath it stops parsing. The pre-CI-108 stanza is pushed back through the same
+        helper and the alias asserted VISIBLE, so a helper that silently returned ``[]`` -- a
+        renamed repo, a restructured file -- fails here instead of passing forever.
+        """
+        pre_fix = '\n'.join(
+            [
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    rev: v0.16.0',
+                '    hooks:',
+                f'      - id: {RUFF_LEGACY_HOOK_ID}',
+                '        stages: [pre-push]',
+                f'      - id: {RUFF_FORMAT_HOOK_ID}',
+                '        stages: [pre-push]',
+            ]
+        )
+        assert hosted_hook_ids(pre_fix, RUFF_HOOK_REPO) == [RUFF_LEGACY_HOOK_ID, RUFF_FORMAT_HOOK_ID]
+
+    def test_another_repos_hooks_are_never_returned(self) -> None:
+        """Ids are attributed to the stanza that declares them, not to whatever preceded them."""
+        text = '\n'.join(
+            [
+                '  - repo: https://github.com/pre-commit/pre-commit-hooks',
+                '    rev: v5.0.0',
+                '    hooks:',
+                '      - id: check-yaml',
+                f'  - repo: {RUFF_HOOK_REPO}',
+                '    rev: v0.16.0',
+                '    hooks:',
+                f'      - id: {RUFF_LINT_HOOK_ID}',
+            ]
+        )
+        assert hosted_hook_ids(text, RUFF_HOOK_REPO) == [RUFF_LINT_HOOK_ID]
+        assert hosted_hook_ids(text, 'https://github.com/pre-commit/pre-commit-hooks') == ['check-yaml']

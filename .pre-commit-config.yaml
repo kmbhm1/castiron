@@ -64,7 +64,13 @@ repos:
     # together, in one commit.
     rev: v0.16.0
     hooks:
-      - id: ruff
+      # `ruff-check`, not `ruff`: upstream renamed the linting hook and kept `ruff` only as a
+      # deprecated alias (v0.16.0's .pre-commit-hooks.yaml literally labels it "# Legacy alias").
+      # Both spellings run `ruff check --force-exclude` today, so this is a rename with no
+      # behavioural change -- taken now because an alias upstream calls legacy is a removal
+      # waiting to happen, and it would land as a confusing "hook id not found" on whatever
+      # unrelated PR next bumps `rev`.
+      - id: ruff-check
         stages: [pre-push]
         types_or: [python, pyi]
       - id: ruff-format

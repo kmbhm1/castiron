@@ -1,6 +1,7 @@
 import ast
 import warnings
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -1713,3 +1714,95 @@ class TestCi113TheEmitterPassesTheClassNameItRenders:
         assert len(list(enum_class)) == len(labels), 'a label was swallowed by the class-name clause'  # type: ignore[call-overload]
         for value in labels:
             assert enum_class(value).value == value  # type: ignore[operator]
+
+
+def _enum_schema(*enums: EnumInfo, table: str = 'orders') -> Schema:
+    """A schema whose single table carries one column per enum, plus the matching registry.
+
+    Mirrors what ``ir/build.py``'s ``_collect_enum_registry`` produces from a real PostgREST
+    document: every registry entry is referenced by a column, so both consumers of the resolved
+    class name -- the class header and the column annotation -- are exercised at once.
+    """
+    columns = [
+        ColumnInfo(name=f'c{index}', raw_type='USER-DEFINED', is_nullable=True, enum_info=enum)
+        for index, enum in enumerate(enums)
+    ]
+    return Schema(tables=[TableInfo(name=table, columns=columns)], enums=list(enums))
+
+
+def _executed(text: str) -> dict[str, object]:
+    """Execute an emitted module and return its namespace.
+
+    ⚠ Execution, not ``compile()``. ``CI-114`` shipped because every assertion in the area only
+    parsed: a missing import, a shadowed class name and a swallowed member are all invisible to a
+    parse and all fatal at import.
+    """
+    namespace: dict[str, object] = {}
+    exec(compile(text, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+    return namespace
+
+
+def _emitted_enums(namespace: dict[str, object]) -> dict[str, type[Enum]]:
+    """Every ``Enum`` subclass the executed module bound, excluding ``Enum`` itself."""
+    return {
+        name: value
+        for name, value in namespace.items()
+        if isinstance(value, type) and issubclass(value, Enum) and value is not Enum
+    }
+
+
+@pytest.mark.unit
+class TestCi128TheEnumClassHeaderIsSanitized:
+    """``CI-128``, first half: the class **header** is built from raw Postgres text and did not parse.
+
+    PostgREST reports the pg type name in ``format`` verbatim and ``sources/openapi/parse.py``
+    splits it on the last ``'.'`` keeping both halves byte-for-byte, so ``CREATE TYPE "order
+    status"`` reached the emitter intact and produced ``class PublicOrder statusEnum(str, Enum):``
+    -- ``SyntaxError``, at ``castiron gen`` exit **0**. Same emit-invalid-Python-at-exit-0 family as
+    ``CI-080`` (labels), ``CI-085`` (columns) and ``CI-110`` (the empty label list), and equally
+    source-reachable.
+
+    ⚠ Every test here **executes** the module. A repair that fixed only the class header would
+    still leave the bad name in every column annotation, and a parse cannot tell the difference.
+    """
+
+    def test_a_type_name_with_a_space_emits_a_module_that_executes(self) -> None:
+        namespace = _executed(_emit(_enum_schema(EnumInfo(name='order status', values=['open'], schema='public'))))
+        assert list(_emitted_enums(namespace)) == ['PublicOrderStatusEnum']
+        assert _emitted_enums(namespace)['PublicOrderStatusEnum']('open').value == 'open'
+
+    def test_a_type_name_with_a_hyphen_emits_a_module_that_executes(self) -> None:
+        namespace = _executed(_emit(_enum_schema(EnumInfo(name='order-status', values=['open'], schema='public'))))
+        assert list(_emitted_enums(namespace)) == ['PublicOrderStatusEnum']
+
+    def test_a_schema_name_with_a_leading_digit_emits_a_module_that_executes(self) -> None:
+        # `CREATE SCHEMA "2fa"` is legal, and the schema is the SECOND unsanitized input -- a fix
+        # that sanitized only the type name would still emit `class 2faMoodEnum(str, Enum):`.
+        namespace = _executed(_emit(_enum_schema(EnumInfo(name='mood', values=['ok'], schema='2fa'))))
+        assert list(_emitted_enums(namespace)) == ['_2faMoodEnum']
+
+    def test_a_type_name_with_a_newline_does_not_split_the_class_header(self) -> None:
+        out = _emit(_enum_schema(EnumInfo(name='mood\n', values=['ok'], schema='public')))
+        namespace = _executed(out)
+        assert list(_emitted_enums(namespace)) == ['PublicMoodEnum']
+        # The header is one line: a raw newline used to split `class PublicMood` from `Enum):`.
+        assert 'class PublicMoodEnum(str, Enum):' in out.splitlines()
+
+    def test_the_annotation_and_the_class_header_agree(self) -> None:
+        # 🔴 The property the two call sites exist for. `_enum_section` renders the header and
+        # `_base_type` renders the annotation; they must never disagree. Asserted through the
+        # EXECUTED model's resolved field annotation, not by matching the source text -- a string
+        # match would pass on a module that does not import.
+        schema = _enum_schema(EnumInfo(name='order status', values=['open'], schema='public'))
+        namespace = _executed(_emit(schema))
+        model = namespace['OrdersBaseSchema']
+        annotation = model.model_fields['c0'].annotation  # type: ignore[union-attr]
+        assert namespace['PublicOrderStatusEnum'] in annotation.__args__  # type: ignore[union-attr]
+
+    def test_an_ordinary_type_name_is_untouched(self) -> None:
+        # The counter-witness. Without it, a sanitizer that mangled EVERY name would satisfy
+        # every assertion above. This is also the unit-level statement of the byte-stability
+        # property the four committed enum goldens depend on.
+        out = _emit(_enum_schema(EnumInfo(name='order_status', values=['pending'], schema='public')))
+        assert 'class PublicOrderStatusEnum(str, Enum):' in out
+        assert '# original name was' not in out

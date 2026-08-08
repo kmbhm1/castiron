@@ -33,6 +33,86 @@ def to_pascal_case(value: str) -> str:
     return ''.join(word.capitalize() for word in value.split('_'))
 
 
+def python_identifier(text: str) -> str:
+    """Repair ``text`` into a valid Python identifier, keeping every character it legally can.
+
+    **The shared identifier-repair primitive.** It is the *only* place the
+    character-map-plus-leading-position repair is written; :func:`python_class_name` calls it, and
+    ``CI-130`` (table / model class names, the same defect family) is expected to call it rather
+    than fork it. Two rules, in this order:
+
+    1. **Character map** -- :func:`~castiron.ir.build.identifier_characters`, one character out per
+       character in, every non-identifier character replaced by ``'_'``, **Unicode kept**
+       (``CI94-D2``), no run-collapsing and no stripping. Deliberately the *same* map the column
+       path (:func:`~castiron.ir.build.standardize_column_name`) and the enum-label path
+       (:func:`python_member_names`) use -- ``CI85-D1`` put it in ``ir/build.py`` precisely so
+       there would be one algorithm and one set of bugs. This is its **third** consumer.
+    2. **Leading-position guard.** After the map, every character is XID_Continue, so the only
+       remaining failure is a first character that is not XID_Start -- a digit. One ``'_'`` prefix
+       repairs it.
+
+    ⚠ **The test is on the NFKC form**, because CPython normalizes identifiers to NFKC *at compile
+    time*: the name the compiler judges is not always the string castiron wrote. Same reason
+    :func:`_is_enum_reserved_shape` and ``ir/build.py``'s ``_repair_column_shape`` normalize.
+
+    **One prefix is provably enough, and it is pinned rather than believed.** Every character
+    surviving ``identifier_characters`` satisfies ``('_' + c).isidentifier()``, i.e. is
+    XID_Continue; prefixing the XID_Start character ``'_'`` therefore yields an identifier, and
+    ``'_'`` is itself NFKC-invariant so the prefix cannot change how the tail normalizes.
+    ``TestPythonIdentifier`` falsifies that over a generated hostile alphabet rather than trusting
+    the argument -- an identical "one pass is enough" claim was made on the enum **member** path
+    and was wrong.
+
+    **Total over its input domain**: it never raises and never returns a non-identifier. The empty
+    string becomes ``'_'``. That case is unreachable from :func:`python_class_name` (the ``Enum``
+    suffix is always appended, so the assembled string is never empty), but it is reachable from
+    ``CI-130``'s table-name path, where an empty name is a different question.
+
+    Args:
+        text: The raw source name -- a Postgres type name, schema name, or assembled class name.
+
+    Returns:
+        A string ``s`` for which ``unicodedata.normalize('NFKC', s).isidentifier()`` holds.
+    """
+    repaired = identifier_characters(text)
+    if not repaired:
+        return '_'
+    if not unicodedata.normalize('NFKC', repaired).isidentifier():
+        repaired = f'_{repaired}'
+    return repaired
+
+
+def _assemble_class_name(schema: str, name: str) -> str:
+    """PascalCase-assemble a schema-prefixed, ``Enum``-suffixed class name from clean parts.
+
+    The transform itself, extracted verbatim from :func:`python_class_name` so that the sanitizing
+    wrapper and the "was this name repaired?" predicate (:func:`_class_name_is_repaired`) share
+    **one** assembly rather than each carrying a copy. Two derivations of one name is the defect
+    ``CI-114`` was; this keeps there being exactly one.
+
+    Args:
+        schema: The enum's schema, already through :func:`~castiron.ir.build.identifier_characters`.
+        name: The enum's type name, already through ``identifier_characters``.
+
+    Returns:
+        The assembled name -- **not** yet guaranteed to be a valid identifier (a leading-digit
+        schema such as ``2fa`` survives the character map untouched).
+    """
+    if not name:
+        return f'{schema.capitalize()}Enum'
+
+    clean_name = name
+    if clean_name.startswith('_'):
+        clean_name = clean_name[1:]
+
+    if '_' not in clean_name and any(c.isupper() for c in clean_name):
+        class_name = clean_name[0].upper() + clean_name[1:] + 'Enum'
+    else:
+        class_name = ''.join(word.capitalize() for word in clean_name.split('_')) + 'Enum'
+
+    return f'{schema.capitalize()}{class_name}'
+
+
 def python_class_name(enum: EnumInfo) -> str:
     """Build a PascalCase, schema-prefixed, ``Enum``-suffixed class name for an enum.
 
@@ -42,25 +122,40 @@ def python_class_name(enum: EnumInfo) -> str:
     The final name is prefixed by the (capitalized) schema, e.g.
     ``public.order_status`` -> ``PublicOrderStatusEnum``.
 
+    🔴 **Both inputs are sanitized and the assembled name is repaired** (``CI-128``). Neither was,
+    and both are raw Postgres text: PostgREST reports the pg type name in ``format`` verbatim, so
+    ``CREATE TYPE "order status"`` emitted ``class PublicOrder statusEnum(str, Enum):`` --
+    ``SyntaxError``, with ``castiron gen`` exiting **0**. The **schema** is the second input and is
+    just as reachable (``CREATE SCHEMA "2fa"`` is legal and produced the leading-digit name
+    ``2faMoodEnum``). Both now go through :func:`python_identifier`.
+
+    **The transform is the identity on every name that already produced a valid identifier** --
+    ``identifier_characters`` is the identity on such text and the leading-position guard does not
+    fire, so no previously-valid output moves. That is the byte-stability property (Hard Rule #9)
+    the committed goldens pin, and the five pre-existing ``TestPythonClassName`` cases are its
+    unit-level pins.
+
+    ⚠ **This is the per-name form, and it cannot see a collision** -- it does not know what other
+    types exist. ``python_class_name`` is not injective (``order_status``, ``orderStatus``,
+    ``OrderStatus``, ``Order_Status``, ``_order_status`` and ``ORDER_STATUS`` all map to
+    ``PublicOrderStatusEnum``), and sanitization widens that set further. **A caller that owns a
+    whole schema must use :func:`python_class_names`**, which allocates a unique name per type.
+    Same division of labour, and same warning, as ``standardize_column_name`` vs
+    ``column_identifiers`` in ``ir/build.py``.
+
+    **No reserved-word guard is needed here**, unlike the member path: every name this returns ends
+    in the literal ``Enum`` (both branches append it), so it can never be a Python keyword or
+    builtin. The one degenerate case -- schema ``''`` and name ``''`` producing ``Enum``, which
+    would shadow ``from enum import Enum`` -- is handled by :func:`python_class_names`' collision
+    rule, which seeds itself with the module's import-bound names, not by a special case here.
+
     Args:
         enum: The enum whose Python class name to build.
 
     Returns:
-        The Python enum class name.
+        The Python enum class name, guaranteed to be a valid identifier after NFKC normalization.
     """
-    if not enum.name:
-        return f'{enum.schema.capitalize()}Enum'
-
-    clean_name = enum.name
-    if clean_name.startswith('_'):
-        clean_name = clean_name[1:]
-
-    if '_' not in clean_name and any(c.isupper() for c in clean_name):
-        class_name = clean_name[0].upper() + clean_name[1:] + 'Enum'
-    else:
-        class_name = ''.join(word.capitalize() for word in clean_name.split('_')) + 'Enum'
-
-    return f'{enum.schema.capitalize()}{class_name}'
+    return python_identifier(_assemble_class_name(identifier_characters(enum.schema), identifier_characters(enum.name)))
 
 
 @dataclass(frozen=True)

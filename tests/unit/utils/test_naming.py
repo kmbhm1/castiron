@@ -16,6 +16,7 @@ from castiron.utils.naming import (
     _is_enum_reserved_shape,
     pluralize,
     python_class_name,
+    python_identifier,
     python_member_names,
     singularize,
     to_pascal_case,
@@ -157,6 +158,10 @@ class TestPythonClassName:
     @pytest.mark.parametrize(
         ('name', 'schema', 'expected'),
         [
+            # 🔴 These five are the BYTE-STABILITY PINS and must not be edited. They are every
+            # shape that already produced a valid identifier before `CI-128` sanitized this
+            # transform, so they are what proves the sanitizer is the IDENTITY on valid input --
+            # the property the four committed enum-class goldens depend on.
             ('order_status', 'public', 'PublicOrderStatusEnum'),
             ('thirdType', 'public', 'PublicThirdTypeEnum'),
             ('FourthType', 'public', 'PublicFourthTypeEnum'),
@@ -167,8 +172,61 @@ class TestPythonClassName:
     def test_class_names(self, name: str, schema: str, expected: str) -> None:
         assert python_class_name(EnumInfo(name=name, values=[], schema=schema)) == expected
 
+    @pytest.mark.parametrize(
+        ('name', 'schema', 'expected'),
+        [
+            # More byte-stability pins: the remaining currently-valid shapes, including the
+            # non-ASCII one `CI94-D2` protects.
+            ('2fa_mode', 'public', 'Public2faModeEnum'),
+            ('Ünïcödé', 'public', 'PublicÜnïcödéEnum'),
+            ('task_state', 'public', 'PublicTaskStateEnum'),
+            ('status', 'audit', 'AuditStatusEnum'),
+        ],
+    )
+    def test_a_valid_name_is_untouched_by_the_sanitizer(self, name: str, schema: str, expected: str) -> None:
+        assert python_class_name(EnumInfo(name=name, values=[], schema=schema)) == expected
+
+    @pytest.mark.parametrize(
+        ('name', 'schema', 'expected'),
+        [
+            # `CI-128`: every one of these emitted a class header that did not parse, at exit 0.
+            ('order status', 'public', 'PublicOrderStatusEnum'),
+            ('order-status', 'public', 'PublicOrderStatusEnum'),
+            ('2fa mode', 'public', 'Public2faModeEnum'),
+            ('mood\n', 'public', 'PublicMoodEnum'),
+            ('a"b', 'public', 'PublicABEnum'),
+            ('emoji\U0001f642', 'public', 'PublicEmojiEnum'),
+            (' ', 'public', 'PublicEnum'),
+            ('!!!', 'public', 'PublicEnum'),
+            # ⚠ The SCHEMA is the second unsanitized input, and it is just as reachable:
+            # `CREATE SCHEMA "my schema"` and `CREATE SCHEMA "2fa"` are both legal Postgres.
+            ('order_status', 'my schema', 'My_schemaOrderStatusEnum'),
+            ('mood', '2fa', '_2faMoodEnum'),
+            ('2fa', '', '_2faEnum'),
+        ],
+    )
+    def test_a_hostile_name_is_repaired(self, name: str, schema: str, expected: str) -> None:
+        resolved = python_class_name(EnumInfo(name=name, values=[], schema=schema))
+        assert resolved == expected
+        assert unicodedata.normalize('NFKC', resolved).isidentifier()
+
     def test_empty_name_edge(self) -> None:
         assert python_class_name(EnumInfo(name='', values=[], schema='public')) == 'PublicEnum'
+
+    def test_empty_schema_edge(self) -> None:
+        # Both parts empty -> the bare `Enum`, which SHADOWS `from enum import Enum`. It is not a
+        # special case here on purpose: `python_class_names` seeds itself with the module's
+        # import-bound names, so the collision rule is what resolves it. See
+        # `TestPythonClassNames.test_the_bare_Enum_name_is_reserved_by_the_import`.
+        assert python_class_name(EnumInfo(name='', values=[], schema='')) == 'Enum'
+
+    def test_it_is_not_injective_which_is_why_python_class_names_exists(self) -> None:
+        # Measured on `main` BEFORE any sanitization: six legal, distinct Postgres type names
+        # already collapsed onto one class name. Sanitization widens this set; it did not create
+        # it. The per-name form cannot see that -- only the per-container form can.
+        variants = ['order_status', 'orderStatus', 'OrderStatus', 'Order_Status', '_order_status', 'ORDER_STATUS']
+        resolved = {python_class_name(EnumInfo(name=v, values=[], schema='public')) for v in variants}
+        assert resolved == {'PublicOrderStatusEnum'}
 
 
 @pytest.mark.unit
@@ -361,6 +419,99 @@ def _generated_names(max_length: int = 5) -> list[str]:
 def _generated_labels(max_length: int = 4) -> list[str]:
     """Every string over :data:`LABEL_ALPHABET` up to ``max_length``."""
     return [''.join(p) for size in range(1, max_length + 1) for p in itertools.product(LABEL_ALPHABET, repeat=size)]
+
+
+#: Alphabet for the generated :func:`python_identifier` sweep. Every class of character that can
+#: defeat ``str.isidentifier()`` is represented, plus the two that defeat a naive check of it:
+#: ``NFKC_UNDERSCORE`` (a *valid* identifier character that normalizes to ``'_'``) and ``ﬁ`` (a
+#: valid identifier character that NFKC-expands to **two** characters). A leading digit is the
+#: only failure the character map itself cannot fix, so ``'2'`` is what exercises the second rule.
+IDENTIFIER_ALPHABET = ('_', NFKC_UNDERSCORE, 'ﬁ', 'A', '2', ' ', '-', '"', '\n', '\t', '\x00', '.', '\U0001f642')
+
+
+def _generated_identifier_inputs(max_length: int = 3) -> list[str]:
+    """Every string over :data:`IDENTIFIER_ALPHABET` up to ``max_length``, plus the empty string."""
+    return [''] + [
+        ''.join(p) for size in range(1, max_length + 1) for p in itertools.product(IDENTIFIER_ALPHABET, repeat=size)
+    ]
+
+
+@pytest.mark.unit
+class TestPythonIdentifier:
+    """``CI-128``: the shared identifier-repair primitive, which ``CI-130`` will also call.
+
+    ``python_identifier`` has to be **total** over arbitrary Postgres text, because that is what
+    reaches it: a pg type name, a schema name, and (next row) a table name are all raw user text
+    that PostgREST hands over verbatim. The sweep below is the assertion that carries the weight --
+    the parametrized cases only name the shapes someone thought of.
+    """
+
+    @pytest.mark.parametrize('text', ['order_status', 'OrderStatus', '_x', 'Ünïcödé', 'ﬁ', 'a2', '__init__'])
+    def test_it_is_the_identity_on_a_valid_identifier(self, text: str) -> None:
+        # Including non-ASCII (`CI94-D2`, ruled by the captain: Unicode is KEPT, not folded to
+        # ASCII) -- destroying an international name to satisfy a lint rule is the worse trade.
+        assert python_identifier(text) == text
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('order status', 'order_status'),
+            ('order-status', 'order_status'),
+            ('a"b', 'a_b'),
+            ('a\nb', 'a_b'),
+            ('a\tb', 'a_b'),
+            ('a\x00b', 'a_b'),
+            ('a.b', 'a_b'),
+            ('emoji\U0001f642', 'emoji_'),
+        ],
+    )
+    def test_it_repairs_every_hostile_character(self, text: str, expected: str) -> None:
+        # One character out per character in: no run-collapsing and no stripping, so `'a  b'` and
+        # `'a b'` stay DISTINGUISHABLE attempts and the collision rule -- not this function --
+        # resolves them when they are not.
+        assert python_identifier(text) == expected
+
+    def test_a_leading_digit_gains_exactly_one_underscore(self) -> None:
+        assert python_identifier('2fa') == '_2fa'
+        assert python_identifier('2') == '_2'
+
+    def test_the_empty_string_becomes_an_underscore(self) -> None:
+        # Unreachable from `python_class_name` (the `Enum` suffix means the string is never
+        # empty); reachable from `CI-130`'s table-name path, where it is a different question.
+        assert python_identifier('') == '_'
+
+    def test_the_alphabet_covers_the_classes_that_matter(self) -> None:
+        # A sweep that silently narrows passes vacuously -- the standing lesson from `CI-080`
+        # round 2, where the corpus could not spell the shape the test claimed to guard.
+        assert NFKC_UNDERSCORE in IDENTIFIER_ALPHABET
+        assert unicodedata.normalize('NFKC', NFKC_UNDERSCORE) == '_'
+        assert unicodedata.normalize('NFKC', 'ﬁ') == 'fi', 'the NFKC-expanding character must stay'
+        assert any(c.isdigit() for c in IDENTIFIER_ALPHABET), 'the leading-digit rule needs a digit'
+        assert any(not ('_' + c).isidentifier() for c in IDENTIFIER_ALPHABET), 'the map needs something to repair'
+        assert len(_generated_identifier_inputs()) == 2380
+
+    def test_no_generated_input_survives_as_a_non_identifier(self) -> None:
+        # 🔴 The oracle. The test is on the NFKC form because CPython normalizes identifiers at
+        # COMPILE time -- the name the compiler judges is not always the string castiron wrote.
+        for text in _generated_identifier_inputs():
+            repaired = python_identifier(text)
+            assert unicodedata.normalize('NFKC', repaired).isidentifier(), f'{text!r} -> {repaired!r}'
+
+    def test_one_prefix_is_always_enough(self) -> None:
+        # ⚠ The spec's proof said one `'_'` prefix suffices; an IDENTICAL "one pass is enough"
+        # claim was made on the enum MEMBER path and was wrong (`_repair_enum_shape` needs up to
+        # three). Idempotence is that proof made falsifiable: a second pass changing anything
+        # would mean the first was insufficient.
+        for text in _generated_identifier_inputs():
+            once = python_identifier(text)
+            assert python_identifier(once) == once, f'{text!r} needed a second pass'
+
+    def test_it_never_collapses_a_run_or_strips(self) -> None:
+        # The length invariant the character map promises, which is what keeps two distinct
+        # Postgres names distinguishable for the collision rule to arbitrate.
+        for text in _generated_identifier_inputs():
+            if text:
+                assert len(python_identifier(text)) in (len(text), len(text) + 1)
 
 
 def fold_map() -> dict[str, str]:

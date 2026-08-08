@@ -10,7 +10,7 @@ castiron uses [`uv`](https://docs.astral.sh/uv/) + `hatchling`.
 ```bash
 uv sync                    # environment + dev dependencies
 uv run pytest              # tests
-make validate              # ruff + mypy + pytest — run before every push
+make validate              # ruff + vulture + mypy + pytest — run before every push
 make help                  # list all targets
 ```
 

@@ -36,16 +36,20 @@ from enum import Enum
 from castiron.emitters.base import EmittedFile, Emitter, _split_import, render_import_block, section_comment
 from castiron.emitters.config import EmitterConfig
 from castiron.ir import ColumnInfo, RelationType, Schema, SortedColumns, TableInfo
+from castiron.ir.build import standardize_column_name
 from castiron.types import PYDANTIC_TYPE_MAP, resolve_column_type
 from castiron.utils.naming import (
+    ClassStem,
     EnumClass,
+    class_stem_reason,
     enum_class_reason,
     pluralize,
     python_class_name,
     python_class_names,
+    python_class_stem,
+    python_class_stems,
     python_member_names,
     singularize,
-    to_pascal_case,
 )
 
 #: Indentation unit for generated code (4 spaces -- clean, PEP 8-style output).
@@ -128,6 +132,34 @@ class _ClassVariant(Enum):
     PARENT = 'parent'
     INSERT = 'insert'
     UPDATE = 'update'
+
+
+#: The suffix each variant appends to a table's class stem, in one place so
+#: :meth:`PydanticEmitter._write_name` and :data:`_STEM_SUFFIXES` cannot disagree about what a stem
+#: binds. ``BASE`` and ``BASE_WITH_PARENT`` deliberately share a suffix: they differ only in which
+#: class they inherit from.
+_VARIANT_SUFFIX: Mapping[_ClassVariant, str] = {
+    _ClassVariant.BASE: 'BaseSchema',
+    _ClassVariant.BASE_WITH_PARENT: 'BaseSchema',
+    _ClassVariant.PARENT: 'Parent',
+    _ClassVariant.INSERT: 'Insert',
+    _ClassVariant.UPDATE: 'Update',
+}
+
+#: 🔴 **Every top-level class name ONE table stem binds.** ``''`` is the operational class, which
+#: carries the bare stem (``class Orders(OrdersBaseSchema):``).
+#:
+#: This is what makes the table allocator a *stem* allocator rather than a name allocator: a stem is
+#: free only when all five derived names are. Measured on ``main``, the tables ``order`` and
+#: ``order_insert`` have obviously distinct stems and still emit **two** ``class OrderInsert``
+#: definitions -- the insert model of one and the operational class of the other -- with the second
+#: silently winning the binding.
+#:
+#: ⚠ Derived from :data:`_VARIANT_SUFFIX` rather than hand-listed (``dict.fromkeys`` dedupes the
+#: shared ``BaseSchema`` and preserves literal order, so it is deterministic), and cross-checked
+#: against :meth:`PydanticEmitter._write_name` by a test -- the ``CI94-D8`` pattern: restate the
+#: rule in ``src/``, falsify it against reality in a test that runs on all four legs.
+_STEM_SUFFIXES: tuple[str, ...] = ('', *dict.fromkeys(_VARIANT_SUFFIX.values()))
 
 
 def _parse_length_constraint(constraint_def: str | None) -> dict[str, int] | None:
@@ -313,17 +345,19 @@ class PydanticEmitter(Emitter):
         written. ``ruff format`` agrees with the one-blank form, so there is no check-vs-format
         conflict to trade off.
 
-        🔴 **The enum class names are resolved exactly ONCE here and threaded to both consumers.**
-        The class header (:meth:`_enum_section`) and the column annotation (:meth:`_base_type`) each
-        used to call :func:`~castiron.utils.naming.python_class_name` independently; the moment a
-        collision rule can allocate ``…Enum_2`` for one of them, two independent derivations of one
-        name is a module that does not import. That is ``CI-114`` exactly, and the fix is the same
-        shape: one derivation, read twice.
+        🔴 **The class stems and the enum class names are resolved exactly ONCE here and threaded
+        to every consumer.** A table's stem reaches five class headers, every ``Inherits from …``
+        docstring, and the type annotation of every relationship field pointing at that table; the
+        enum class name reaches its header and every column annotation. The moment a collision rule
+        can allocate ``OrderLines_2`` or ``…Enum_2``, two independent derivations of one name is a
+        module that does not import. That is ``CI-114`` exactly, and the fix is the same shape: one
+        derivation, read many times.
 
-        ⚠ The map is a **local**, not per-render state on ``self``. The emitter holds only
+        ⚠ Both maps are **locals**, not per-render state on ``self``. The emitter holds only
         ``config`` and treats the ``Schema`` as read-only; giving it mutable per-render state would
         make a reused emitter instance order-dependent.
         """
+        stems: Mapping[str, ClassStem] = self._resolved_stems(schema)
         enum_classes: Sequence[EnumClass] = self.enum_classes(schema)
         enum_names: Mapping[tuple[str, str], str] = {
             (entry.enum.schema, entry.enum.name): entry.name for entry in enum_classes
@@ -334,10 +368,10 @@ class PydanticEmitter(Emitter):
         if enum_section:
             sections.append(enum_section)
         sections.append(self._custom_section())
-        base_section = self._base_section(schema, enum_names)
+        base_section = self._base_section(schema, enum_names, stems)
         if base_section:
             sections.append(base_section)
-        operational_section = self._operational_section(schema)
+        operational_section = self._operational_section(schema, stems)
         if operational_section:
             sections.append(operational_section)
         body = '\n\n\n'.join(sections)
@@ -417,6 +451,58 @@ class PydanticEmitter(Emitter):
             for column in table.columns
         )
 
+    # ------------------------------------------------------------------ class-name allocation
+
+    def _module_reserved_names(self) -> set[str]:
+        """Every top-level name the module binds independently of any table or enum.
+
+        The import block plus the ``CustomModel`` bases. Seeded into **both** allocators, so a table
+        named ``custom_model`` or ``field`` cannot rebind a name the module already needs. Measured
+        on ``main``, a table called ``custom_model`` emits ``class CustomModelInsert(CustomModelInsert)``
+        and rebinds every one of the three shared bases.
+
+        Returns:
+            The reserved names. Consumed by membership only -- never iterated into the output, so it
+            cannot reach the emitted bytes (Hard Rule #9).
+        """
+        return set(_IMPORT_BOUND_NAMES) | {
+            CUSTOM_MODEL_NAME,
+            f'{CUSTOM_MODEL_NAME}Insert',
+            f'{CUSTOM_MODEL_NAME}Update',
+        }
+
+    def class_stems(self, schema: Schema) -> list[ClassStem]:
+        """Resolve the class stem for every table this module will emit -- the **single authority**.
+
+        Public for the same reason :meth:`enum_classes` is: the CLI's fidelity notices
+        (:mod:`castiron.cli.notices`) tell the user which tables were renamed, and they must report
+        the stems actually written rather than re-deriving them (``CI-114``).
+
+        ⚠ **Deduplicated on the raw table name, in ``Schema.tables`` order.** The emitter's whole
+        relationship layer is name-keyed and schema-blind (``rel.related_table_name``,
+        ``fk.foreign_table_name``, the self-reference test), so allocating per ``(schema, name)``
+        would hand the second of two same-named tables a stem nothing could ever point at.
+        Same-named tables in two Postgres schemas therefore still share one set of model classes --
+        **unchanged from ``main``**, unreachable through the OpenAPI source (``build_schema`` reads
+        one schema), and reported rather than fixed here.
+
+        Args:
+            schema: The schema being emitted (treated as read-only).
+
+        Returns:
+            One :class:`~castiron.utils.naming.ClassStem` per distinct table name.
+        """
+        return python_class_stems(
+            list(dict.fromkeys(table.name for table in schema.tables)),
+            singular_names=self.config.singular_names,
+            suffixes=_STEM_SUFFIXES,
+            reserved=self._module_reserved_names(),
+        )
+
+    def _resolved_stems(self, schema: Schema) -> dict[str, ClassStem]:
+        """Index :meth:`class_stems` by table name, for the lookups the render path does."""
+        return {entry.source: entry for entry in self.class_stems(schema)}
+
     # ------------------------------------------------------------------ enum classes
 
     def enum_classes(self, schema: Schema) -> list[EnumClass]:
@@ -457,8 +543,12 @@ class PydanticEmitter(Emitter):
         and buys flag-independence.
 
         ⚠⚠ **Built by calling :meth:`_class_name` / :meth:`_write_name`, never by re-deriving the
-        strings.** This is what makes ``CI-130`` (sanitizing table stems) a safe follow-up rather
-        than a merge conflict: when those two methods change, the seed follows automatically.
+        strings.** That is what made ``CI-130`` (sanitizing table stems) a safe follow-up rather
+        than a merge conflict, and it is now load-bearing rather than merely prudent: those two
+        methods read the resolved stems, so **``OrderLines_2`` reaches this seed automatically** and
+        an enum can neither shadow a renamed model class nor be pushed aside by a stem the module
+        never binds. It is also why the seed is computed *after* the stems: table stems are the
+        stable anchor a user's imports point at, and enums yield to them.
 
         Args:
             schema: The schema being emitted (treated as read-only).
@@ -467,11 +557,11 @@ class PydanticEmitter(Emitter):
             The reserved names. Consumed by membership only -- never iterated into the output, so it
             cannot reach the emitted bytes (Hard Rule #9).
         """
-        reserved = set(_IMPORT_BOUND_NAMES)
-        reserved.update({CUSTOM_MODEL_NAME, f'{CUSTOM_MODEL_NAME}Insert', f'{CUSTOM_MODEL_NAME}Update'})
+        stems = self._resolved_stems(schema)
+        reserved = self._module_reserved_names()
         for table in schema.tables:
-            reserved.add(self._class_name(table))
-            reserved.update(self._write_name(table, variant) for variant in _ClassVariant)
+            reserved.add(self._class_name(table, stems))
+            reserved.update(self._write_name(table, variant, stems) for variant in _ClassVariant)
         return reserved
 
     def _enum_section(self, enum_classes: Sequence[EnumClass]) -> str | None:
@@ -567,12 +657,14 @@ class PydanticEmitter(Emitter):
 
     # ------------------------------------------------------------------ base/CRUD classes
 
-    def _base_section(self, schema: Schema, enum_names: Mapping[tuple[str, str], str]) -> str | None:
+    def _base_section(
+        self, schema: Schema, enum_names: Mapping[tuple[str, str], str], stems: Mapping[str, ClassStem]
+    ) -> str | None:
         """Render the Parent (optional), Base, Insert, and Update class sections."""
         subsections: list[str] = []
 
         if self.config.add_null_parent_classes:
-            parent_classes = [self._render_class(t, _ClassVariant.PARENT, enum_names) for t in schema.tables]
+            parent_classes = [self._render_class(t, _ClassVariant.PARENT, enum_names, stems) for t in schema.tables]
             if parent_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -589,7 +681,7 @@ class PydanticEmitter(Emitter):
         else:
             base_variant = _ClassVariant.BASE
 
-        base_classes = [self._render_class(t, base_variant, enum_names) for t in schema.tables]
+        base_classes = [self._render_class(t, base_variant, enum_names, stems) for t in schema.tables]
         if base_classes:
             subsections.append(
                 '\n\n\n'.join(
@@ -601,7 +693,7 @@ class PydanticEmitter(Emitter):
             )
 
         if self.config.generate_crud_models:
-            insert_classes = [self._render_class(t, _ClassVariant.INSERT, enum_names) for t in schema.tables]
+            insert_classes = [self._render_class(t, _ClassVariant.INSERT, enum_names, stems) for t in schema.tables]
             if insert_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -614,7 +706,7 @@ class PydanticEmitter(Emitter):
                         ]
                     )
                 )
-            update_classes = [self._render_class(t, _ClassVariant.UPDATE, enum_names) for t in schema.tables]
+            update_classes = [self._render_class(t, _ClassVariant.UPDATE, enum_names, stems) for t in schema.tables]
             if update_classes:
                 subsections.append(
                     '\n\n\n'.join(
@@ -629,13 +721,21 @@ class PydanticEmitter(Emitter):
 
         return '\n\n\n'.join(subsections) if subsections else None
 
-    def _render_class(self, table: TableInfo, variant: _ClassVariant, enum_names: Mapping[tuple[str, str], str]) -> str:
+    def _render_class(
+        self,
+        table: TableInfo,
+        variant: _ClassVariant,
+        enum_names: Mapping[tuple[str, str], str],
+        stems: Mapping[str, ClassStem],
+    ) -> str:
         """Render one model class (header, docstring, optional config, body sections)."""
         null_defaults = variant == _ClassVariant.PARENT
-        name = self._write_name(table, variant)
-        metaclass = self._metaclass(table, variant)
-        header = f'class {name}({metaclass}):'
-        docstring = _class_docstring(f'{self._class_name(table)} {self._qualifier(variant)} Schema.', table.description)
+        name = self._write_name(table, variant, stems)
+        metaclass = self._metaclass(table, variant, stems)
+        header = self._stem_header(f'class {name}({metaclass}):', table, stems)
+        docstring = _class_docstring(
+            f'{self._class_name(table, stems)} {self._qualifier(variant)} Schema.', table.description
+        )
 
         blocks: list[str] = []
         if self.config.disable_model_prefix_protection and self._has_model_prefix_columns(table):
@@ -809,22 +909,25 @@ class PydanticEmitter(Emitter):
 
     # ------------------------------------------------------------------ operational classes
 
-    def _operational_section(self, schema: Schema) -> str | None:
+    def _operational_section(self, schema: Schema, stems: Mapping[str, ClassStem]) -> str | None:
         """Render the operational classes (which carry FK relationship fields)."""
         if not schema.tables:
             return None
-        classes = [self._render_operational_class(t) for t in schema.tables]
+        classes = [self._render_operational_class(t, stems) for t in schema.tables]
         comment = section_comment(
             'Operational Classes',
             ['Extend these models to add custom behavior; they carry relationship fields.'],
         )
         return '\n\n\n'.join([comment, *classes])
 
-    def _render_operational_class(self, table: TableInfo) -> str:
+    def _render_operational_class(self, table: TableInfo, stems: Mapping[str, ClassStem]) -> str:
         """Render one operational class, appending FK relationship fields or ``pass``."""
-        name = self._class_name(table)
-        base_name = f'{name}BaseSchema'
-        header = f'class {name}({base_name}):'
+        name = self._class_name(table, stems)
+        # Through `_write_name`, not `f'{name}BaseSchema'`: the base class this inherits from is the
+        # same string `_base_section` writes as a header, and the stem allocator reserves it under
+        # that one derivation. Two spellings of one name is what `CI-114` was.
+        base_name = self._write_name(table, _ClassVariant.BASE, stems)
+        header = self._stem_header(f'class {name}({base_name}):', table, stems)
         # The description goes *before* the "Inherits from ..." trailer: the trailer is
         # castiron's boilerplate instruction to the reader and conventionally comes last,
         # while the substantive description belongs directly under the summary.
@@ -834,25 +937,32 @@ class PydanticEmitter(Emitter):
             f'{IND}Inherits from {base_name}. Add any customization here.',
         )
 
-        fields = self._foreign_columns(table) if self.config.include_foreign_keys else []
+        fields = self._foreign_columns(table, stems) if self.config.include_foreign_keys else []
         if fields:
             body = f'{IND}# Foreign Keys\n' + '\n'.join(f'{IND}{f}' for f in fields)
             return f'{header}\n{docstring}\n\n{body}'
         return f'{header}\n{docstring}\n\n{IND}pass'
 
-    def _foreign_columns(self, table: TableInfo) -> list[str]:
+    def _foreign_columns(self, table: TableInfo, stems: Mapping[str, ClassStem]) -> list[str]:
         """Build the nested relationship field lines for a table's operational class.
 
         Foreign keys map to a singular field (``author: User``) or a pluralized list
         (``posts: list[Post]``) by relationship type; reverse relationships not already
         covered by a foreign key are synthesized. The effective self-referential relation
         type is computed in a local variable -- the shared IR is never mutated.
+
+        ⚠ **``used`` keeps its shipped "first name wins, later duplicates are skipped" semantics.**
+        It already drops a second relationship to the same table (two foreign keys into ``users``
+        yield one ``user`` field), and turning it into an ordinal rule would change that shipped
+        behaviour for every schema. Sanitization widens it only for two *distinct* table names that
+        repair alike, which is strictly better than the module not parsing -- recorded as a
+        follow-up rather than absorbed here.
         """
         used: set[str] = set()
         fields: list[str] = []
 
         for fk in table.foreign_keys:
-            field_def = self._foreign_key_field(table, fk.foreign_table_name, fk.column_name, fk.relation_type)
+            field_def = self._foreign_key_field(table, fk.foreign_table_name, fk.column_name, fk.relation_type, stems)
             field_name = field_def.split(':', 1)[0].strip()
             if field_name not in used:
                 used.add(field_name)
@@ -863,19 +973,24 @@ class PydanticEmitter(Emitter):
             already_covered = any(fk.foreign_table_name == rel.related_table_name for fk in table.foreign_keys)
             if not is_self_ref and already_covered:
                 continue
-            field_name = pluralize(rel.related_table_name.lower())
+            field_name = self._field_name(pluralize(rel.related_table_name.lower()))
             if field_name not in used:
                 used.add(field_name)
-                target = self._proper_name(rel.related_table_name)
+                target = self._proper_name(rel.related_table_name, stems)
                 fields.append(f'{field_name}: list[{target}] | None {_field_call("default=None")}')
 
         return fields
 
     def _foreign_key_field(
-        self, table: TableInfo, foreign_table_name: str, column_name: str, relation_type: RelationType | None
+        self,
+        table: TableInfo,
+        foreign_table_name: str,
+        column_name: str,
+        relation_type: RelationType | None,
+        stems: Mapping[str, ClassStem],
     ) -> str:
         """Render one foreign-key relationship field line (name + type by relation type)."""
-        target = self._proper_name(foreign_table_name)
+        target = self._proper_name(foreign_table_name, stems)
         base_field_name = foreign_table_name.lower()
         table_name = table.name.lower()
         we_have_foreign_key = any(c.name == column_name and c.is_foreign_key for c in table.columns)
@@ -908,39 +1023,110 @@ class PydanticEmitter(Emitter):
             type_hint = f'list[{target}]'
             field_name = pluralize(base_field_name)
 
-        return f'{field_name}: {type_hint} | None {_field_call("default=None")}'
+        return f'{self._field_name(field_name)}: {type_hint} | None {_field_call("default=None")}'
 
     # ------------------------------------------------------------------ naming helpers
 
-    def _class_name(self, table: TableInfo) -> str:
-        """The PascalCase class stem for a table (singularized when configured)."""
-        name = singularize(table.name) if self.config.singular_names else table.name
-        return to_pascal_case(name)
+    def _class_name(self, table: TableInfo, stems: Mapping[str, ClassStem]) -> str:
+        """The resolved PascalCase class stem for a table."""
+        return self._proper_name(table.name, stems)
 
-    def _proper_name(self, name: str) -> str:
-        """The PascalCase class name for a related table name (singularized when configured)."""
-        processed = singularize(name) if self.config.singular_names else name
-        return to_pascal_case(processed)
+    def _proper_name(self, name: str, stems: Mapping[str, ClassStem]) -> str:
+        """The resolved PascalCase class stem for a table name, as a relationship annotation uses it.
 
-    def _write_name(self, table: TableInfo, variant: _ClassVariant) -> str:
+        🔴 **A lookup, not a second derivation.** This name is what a relationship field is
+        *annotated with* (``lines: list[OrderLines] | None``), so if it disagreed with the class
+        header the module would carry an annotation naming a class it never defines. That is
+        ``CI-114``'s shape, and the collision rule makes it reachable: once ``order_lines`` has been
+        allocated ``OrderLines_2``, recomputing ``to_pascal_case`` here would produce ``OrderLines``.
+
+        ⚠ **The fallback is the sanitized per-name transform, deliberately.** A foreign key can name
+        a table outside the emitted schema, which the allocator never saw. Such an annotation already
+        referenced an undefined class before this row; the fallback keeps that case byte-comparable
+        while guaranteeing what this row is about -- that the module **parses** -- rather than
+        silently reintroducing ``list[Order lines]``.
+
+        Args:
+            name: The table name, verbatim as the FK or relationship row spells it.
+            stems: The resolved stems from :meth:`_resolved_stems`.
+
+        Returns:
+            The class stem to write.
+        """
+        entry = stems.get(name)
+        return entry.name if entry is not None else python_class_stem(name, self.config.singular_names)
+
+    def _write_name(self, table: TableInfo, variant: _ClassVariant, stems: Mapping[str, ClassStem]) -> str:
         """The class name for a table + variant (e.g. ``UserBaseSchema``, ``UserInsert``)."""
-        stem = self._class_name(table)
-        if variant == _ClassVariant.INSERT:
-            return f'{stem}Insert'
-        if variant == _ClassVariant.UPDATE:
-            return f'{stem}Update'
-        if variant == _ClassVariant.PARENT:
-            return f'{stem}Parent'
-        return f'{stem}BaseSchema'
+        return f'{self._class_name(table, stems)}{_VARIANT_SUFFIX[variant]}'
 
-    def _metaclass(self, table: TableInfo, variant: _ClassVariant) -> str:
+    def _field_name(self, name: str) -> str:
+        """Repair a relationship field name into one Pydantic v2 will accept.
+
+        🔴 **A different namespace from the class one, under a different rule.** A relationship
+        field is a *model field*, so the rule is ``ir/build.py``'s -- the same
+        :func:`~castiron.ir.build.standardize_column_name` every column goes through (``CI-085``),
+        which additionally handles the two shapes the class rule does not care about: a **leading
+        underscore** (``NameError: Fields must not use names with leading underscores`` at import,
+        not at compile) and a **reserved word**. Both are reachable from an ordinary table name --
+        a table called ``class`` emitted ``class: list[Class] | None`` on ``main``, a
+        ``SyntaxError``, and ``"order lines"`` emitted ``order line: Order lines | None``.
+
+        Applied **last**, after ``singularize``/``pluralize``, so inflection still operates on the
+        real word rather than on a name with underscores punched through it.
+
+        Args:
+            name: The inflected, lowercased table name the relationship field is built from.
+
+        Returns:
+            The field name to write. The identity on every ordinary snake_case table name, which is
+            the byte-stability property the committed goldens pin.
+        """
+        return standardize_column_name(name, self.config.disable_model_prefix_protection) or name
+
+    def _stem_header(self, header: str, table: TableInfo, stems: Mapping[str, ClassStem]) -> str:
+        """Prefix a class header with ``# original name was …`` when the table's stem was renamed.
+
+        The table-side twin of the comment :meth:`_enum_section` writes, for the same reason: a
+        class header carries **nothing** of the source, so once the stem is repaired or suffixed the
+        Postgres table name is unrecoverable from the module and the comment is the only thing that
+        keeps the transform non-lossy. It is emitted above **every** class the stem produces, not
+        only the operational one -- a user importing ``OrderLines_2Insert`` needs the same
+        explanation as one importing ``OrderLines_2``.
+
+        ⚠ Both the table name and the holder's name go through :func:`_py_string`. That is not
+        decoration: a table name carrying a literal newline is legal Postgres, and a raw one would
+        split the ``#`` comment across two lines and break the module (``CI-009``'s standing lesson).
+
+        ⚠ It cannot move a committed golden: the note is ``None`` for every stem that is already a
+        valid identifier and uncollided, which is every table in the corpus.
+
+        Args:
+            header: The rendered ``class …:`` line.
+            table: The table being rendered. Indexed, **not** ``.get``: every rendered table comes
+                from ``schema.tables`` and ``stems`` is built from exactly that list, so a miss is a
+                broken invariant that should be loud rather than a silently omitted comment.
+                (:meth:`_proper_name`'s fallback is a different case -- a *foreign* table name,
+                which genuinely can name something outside the emitted schema.)
+            stems: The resolved stems from :meth:`_resolved_stems`.
+
+        Returns:
+            ``header``, with one comment line above it when the stem was renamed.
+        """
+        entry = stems[table.name]
+        reason = class_stem_reason(entry, _py_string)
+        if reason is None:
+            return header
+        return f'# original name was {_py_string(entry.source)} ({reason})\n{header}'
+
+    def _metaclass(self, table: TableInfo, variant: _ClassVariant, stems: Mapping[str, ClassStem]) -> str:
         """The parent class a variant inherits from."""
         if variant == _ClassVariant.INSERT:
             return f'{CUSTOM_MODEL_NAME}Insert'
         if variant == _ClassVariant.UPDATE:
             return f'{CUSTOM_MODEL_NAME}Update'
         if variant == _ClassVariant.BASE_WITH_PARENT:
-            return f'{self._class_name(table)}Parent'
+            return self._write_name(table, _ClassVariant.PARENT, stems)
         return CUSTOM_MODEL_NAME
 
     def _qualifier(self, variant: _ClassVariant) -> str:

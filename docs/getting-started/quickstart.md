@@ -131,7 +131,7 @@ class UsersBaseSchema(CustomModel):
 | Band | Classes | What it is for |
 | --- | --- | --- |
 | Enums | `PublicOrderStatusEnum` | One `str, Enum` per Postgres enum type the schema uses ([member naming](../reference/generated-code.md#enum-member-names)) |
-| Base (Row) | `UsersBaseSchema` | Every column, exactly as the row comes back |
+| Base (Row) | `UsersBaseSchema` | Every column, exactly as the row comes back ([class naming](../reference/generated-code.md#model-class-names)) |
 | Insert | `UsersInsert` | Insert payloads: server-defaulted columns are optional |
 | Update | `UsersUpdate` | Update payloads: every field optional |
 | Operational | `Users` | The Base model plus nested foreign-key relationship fields — extend this one |

@@ -11,6 +11,8 @@ from castiron.cli.notices import (
     OPENAPI_FIDELITY_NOTE,
     identity_pk_candidates,
     identity_pk_warning,
+    renamed_class_stem_warning,
+    renamed_class_stems,
     renamed_enum_class_warning,
     renamed_enum_classes,
     repaired_column_names,
@@ -20,7 +22,7 @@ from castiron.cli.notices import (
 from castiron.ir import ColumnInfo, EnumInfo, Schema, TableInfo
 from castiron.sources import build_schema_from_document
 from castiron.sources.openapi import INTEGER_FAMILY
-from castiron.utils.naming import EnumClass, python_class_names
+from castiron.utils.naming import ClassStem, EnumClass, python_class_names, python_class_stems
 
 
 def table(name: str, *columns: ColumnInfo) -> TableInfo:
@@ -352,3 +354,103 @@ class TestReportEnumClasses:
                 Schema(), infer_generated_primary_keys=True, from_openapi=True, disable_model_prefix_protection=False
             )
         assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def class_stems(*names: str, reserved: frozenset[str] = frozenset()) -> list[ClassStem]:
+    """Resolve stems for ``names`` through the real allocator -- never hand-built entries."""
+    return python_class_stems(list(names), suffixes=('', 'BaseSchema', 'Parent', 'Insert', 'Update'), reserved=reserved)
+
+
+@pytest.mark.unit
+class TestRenamedClassStems:
+    def test_a_well_behaved_schema_reports_nothing(self) -> None:
+        # The common case, and the one that must stay silent: a notice on every run is noise.
+        assert renamed_class_stems(class_stems('order_lines', 'users')) == []
+
+    def test_it_reports_a_repair_and_a_collision(self) -> None:
+        renamed = renamed_class_stems(class_stems('order lines', 'order-lines', 'order_lines'))
+        assert [entry.source for entry in renamed] == ['order lines', 'order-lines']
+
+    def test_the_default_reports_nothing(self) -> None:
+        assert renamed_class_stems(()) == []
+
+
+@pytest.mark.unit
+class TestRenamedClassStemWarning:
+    def test_one_table_reads_singular(self) -> None:
+        message = renamed_class_stem_warning(renamed_class_stems(class_stems('order lines')))
+        assert message.startswith('1 table is not emitted under the class name')
+
+    def test_it_names_up_to_three_tables(self) -> None:
+        renamed = renamed_class_stems(class_stems('a b', 'c d', 'e f'))
+        message = renamed_class_stem_warning(renamed)
+        assert 'a b -> AB (identifier repair)' in message
+        assert 'more' not in message
+
+    def test_beyond_three_it_collapses_the_tail(self) -> None:
+        renamed = renamed_class_stems(class_stems('a b', 'c d', 'e f', 'g h', 'i j'))
+        message = renamed_class_stem_warning(renamed)
+        assert f'and {5 - MAX_NAMED_TABLES} more)' in message
+        assert 'g h' not in message and 'i j' not in message
+
+    def test_a_suffixed_table_names_what_took_the_bare_name(self) -> None:
+        # 🔴 The captain's requirement (CI-128-Q4), carried to tables: the `_2` is baffling unless
+        # the message says what holds the bare name.
+        renamed = renamed_class_stems(class_stems('order lines', 'order_lines'))
+        message = renamed_class_stem_warning(renamed)
+        assert 'order lines -> OrderLines_2' in message
+        assert 'OrderLines is taken by order_lines' in message
+
+    def test_a_table_suffixed_by_a_module_name_says_so(self) -> None:
+        renamed = renamed_class_stems(class_stems('custom_model', reserved=frozenset({'CustomModel'})))
+        assert 'taken by another class in this module' in renamed_class_stem_warning(renamed)
+
+    def test_it_says_the_table_name_is_preserved(self) -> None:
+        message = renamed_class_stem_warning(renamed_class_stems(class_stems('order lines')))
+        assert 'preserved in a comment above each generated class' in message
+
+    def test_it_carries_no_documentation_url(self) -> None:
+        message = renamed_class_stem_warning(renamed_class_stems(class_stems('order lines')))
+        assert 'http' not in message
+
+
+@pytest.mark.unit
+class TestReportClassStems:
+    def test_the_table_warning_fires_once_for_the_whole_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+                class_stems=class_stems('order lines', 'order-lines', 'order_lines'),
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'CI5-D11: one aggregated warning per run -- got {warnings}'
+        assert warnings[0].startswith('2 tables are not emitted')
+
+    def test_it_stays_quiet_for_a_well_behaved_schema(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+                class_stems=class_stems('order_lines'),
+            )
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+    def test_the_table_warning_precedes_the_enum_one(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Allocation order, made visible: a stem displaces an enum class, never the other way round,
+        # so the message explaining the displacement should be read first.
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+                enum_classes=enum_classes('order status'),
+                class_stems=class_stems('order lines'),
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert [w.split()[1] for w in warnings] == ['table', 'enum']

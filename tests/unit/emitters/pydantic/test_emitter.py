@@ -1,15 +1,23 @@
 import ast
 import json
+import keyword
 import warnings
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 from pydantic import BaseModel
 
 from castiron.emitters import EmittedFile, EmitterConfig, PydanticEmitter
-from castiron.emitters.pydantic.emitter import _IMPORT_BOUND_NAMES, IND, _type_map_bound_names
+from castiron.emitters.pydantic.emitter import (
+    _IMPORT_BOUND_NAMES,
+    _STEM_SUFFIXES,
+    IND,
+    _ClassVariant,
+    _type_map_bound_names,
+)
 from castiron.ir import (
     ColumnInfo,
     EnumInfo,
@@ -612,7 +620,9 @@ class TestForeignKeyFieldBranches:
     )
     def test_relation_branches(self, relation: RelationType | None, has_fk: bool, expected: str) -> None:
         emitter = PydanticEmitter()
-        result = emitter._foreign_key_field(self._table(has_fk), 'Target', 'ref_id', relation)
+        # An empty stem map is the CI-130 fallback path -- a foreign key naming a table outside the
+        # emitted schema. It keeps this branch table byte-identical to what it pinned before.
+        result = emitter._foreign_key_field(self._table(has_fk), 'Target', 'ref_id', relation, {})
         assert result == expected
 
 
@@ -1738,8 +1748,16 @@ def _executed(text: str) -> dict[str, object]:
     ⚠ Execution, not ``compile()``. ``CI-114`` shipped because every assertion in the area only
     parsed: a missing import, a shadowed class name and a swallowed member are all invisible to a
     parse and all fatal at import.
+
+    ⚠ **``__name__`` is set, and it is not cosmetic.** Without it a class defined in this namespace
+    gets ``__module__ == 'builtins'``, so pydantic resolves its forward references against
+    ``sys.modules['builtins'].__dict__`` -- and ``eval`` then writes ``__builtins__`` **into the real
+    builtins module**. That is cross-test pollution with a witness:
+    ``test_the_reserved_corpus_cannot_silently_narrow`` counts ``dir(builtins)`` and saw 190 where
+    189 was expected, but only in a full-suite run. Any emitted module carrying a relationship field
+    (i.e. ``from __future__ import annotations``) triggers it.
     """
-    namespace: dict[str, object] = {}
+    namespace: dict[str, object] = {'__name__': 'castiron_generated'}
     exec(compile(text, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
     return namespace
 
@@ -2153,3 +2171,207 @@ class TestCi128TheMemberGuardSeesTheEmittedClassName:
         enum_class = namespace[resolved]
         assert len(list(enum_class)) == 2, 'a label was swallowed by the class-private clause'  # type: ignore[call-overload]
         assert enum_class(label).value == label  # type: ignore[operator]
+
+
+def _table_schema(*names: str, related: bool = False) -> Schema:
+    """A schema of ``names``, optionally wired so every table carries a relationship to the first.
+
+    ``related=True`` is what exercises the **second** namespace: a relationship field's *name* is
+    built from the target table name under Pydantic field rules, and its *type annotation* is built
+    from the target's class stem. Both were unrepaired before ``CI-130``.
+    """
+    tables = [
+        TableInfo(
+            name=name,
+            columns=[ColumnInfo(name='id', raw_type='integer', is_nullable=False)],
+            relationships=(
+                [RelationshipInfo(table_name=name, related_table_name=names[0], relation_type=RelationType.ONE_TO_MANY)]
+                if related and index
+                else []
+            ),
+        )
+        for index, name in enumerate(names)
+    ]
+    return Schema(tables=tables)
+
+
+@pytest.mark.unit
+class TestCi130TableClassNamesAreSanitized:
+    """``CI-130``: the last unrepaired identifier surface, and the whole family's final member.
+
+    ``to_pascal_case`` splits on ``'_'`` and capitalizes; it never removes a character. PostgREST
+    carries a table name verbatim as a ``definitions`` key, so ``CREATE TABLE "order lines"``
+    emitted ``class Order linesBaseSchema(CustomModel):`` -- ``SyntaxError``, with ``castiron gen``
+    exiting **0**. Every test here **executes** the module rather than merely compiling it: a
+    shadowed class and a dangling annotation are both invisible to a parse (``CI-114``).
+    """
+
+    @pytest.mark.parametrize(
+        ('table_name', 'stem'),
+        [
+            ('order lines', 'OrderLines'),
+            ('order-lines', 'OrderLines'),
+            ('2fast', '_2fast'),
+            ('a\nb', 'AB'),
+            ('a"b', 'AB'),
+        ],
+    )
+    def test_a_hostile_table_name_emits_a_module_that_executes(self, table_name: str, stem: str) -> None:
+        namespace = _executed(_emit(_table_schema(table_name), EmitterConfig(add_null_parent_classes=True)))
+        for suffix in ('', 'BaseSchema', 'Parent', 'Insert', 'Update'):
+            model = namespace[f'{stem}{suffix}']
+            assert isinstance(model, type) and issubclass(model, BaseModel)
+
+    def test_the_relationship_field_name_and_its_annotation_both_survive(self) -> None:
+        # The second half of the defect, and a second namespace: `order line: Order lines | None`
+        # was BOTH an invalid field name and an invalid annotation on `main`.
+        namespace = _executed(_emit(_table_schema('order lines', 'orders', related=True)))
+        # `get_type_hints` rather than `model_fields`: the module carries
+        # `from __future__ import annotations`, so a relationship field is a ForwardRef until it is
+        # RESOLVED -- and resolving it against the executed module is exactly the assertion. A
+        # dangling annotation compiles and imports fine and only fails here.
+        hints = get_type_hints(namespace['Orders'], namespace)  # type: ignore[arg-type]
+        target = next(a for a in hints['order_lines'].__args__ if a is not type(None)).__args__[0]
+        assert target is namespace['OrderLines'], 'the annotation must name the class actually emitted'
+
+    @pytest.mark.parametrize('table_name', ['class', '2fast', 'order lines', '_private'])
+    def test_a_relationship_field_name_is_repaired_by_the_column_rule(self, table_name: str) -> None:
+        # A relationship field is a MODEL FIELD, so the rule is `standardize_column_name`'s, not the
+        # class rule's -- it additionally covers a reserved word (`class: list[Class]` was a
+        # SyntaxError) and a leading underscore (`Fields must not use names with leading
+        # underscores`, a NameError at import that compiles cleanly).
+        namespace = _executed(_emit(_table_schema(table_name, 'orders', related=True)))
+        model = namespace['Orders']
+        assert len(model.model_fields) == 2  # type: ignore[union-attr]
+        (field,) = [name for name in model.model_fields if name != 'id']  # type: ignore[union-attr]
+        assert field.isidentifier() and not keyword.iskeyword(field) and not field.startswith('_')
+
+    def test_two_table_names_that_sanitize_alike_get_two_distinct_class_sets(self) -> None:
+        namespace = _executed(_emit(_table_schema('order lines', 'order-lines')))
+        assert issubclass(namespace['OrderLines'], BaseModel)  # type: ignore[arg-type]
+        assert issubclass(namespace['OrderLines_2'], BaseModel)  # type: ignore[arg-type]
+
+    def test_the_unrepaired_table_keeps_the_bare_class_name(self) -> None:
+        # 🔴 The captain's ruling on `CI-128-Q1` (Option B), carried to tables. A hostile name must
+        # not displace the class a user already imports.
+        out = _emit(_table_schema('order lines', 'order-lines', 'order_lines'))
+        assert 'class OrderLines(OrderLinesBaseSchema):' in out
+        assert '# original name was "order_lines"' not in out
+        assert [n for n in _top_level_bindings(out) if n.startswith('OrderLines')] == [
+            'OrderLines_2BaseSchema',
+            'OrderLines_3BaseSchema',
+            'OrderLinesBaseSchema',
+            'OrderLines_2Insert',
+            'OrderLines_3Insert',
+            'OrderLinesInsert',
+            'OrderLines_2Update',
+            'OrderLines_3Update',
+            'OrderLinesUpdate',
+            'OrderLines_2',
+            'OrderLines_3',
+            'OrderLines',
+        ]
+
+    def test_singularize_no_longer_merges_two_distinct_tables(self) -> None:
+        # 🔴 The table-vs-table collision with no enum analogue. Measured on `main`, this emitted
+        # TWO `class OrderBaseSchema` and TWO `class Order` and the second won every binding.
+        out = _emit(_table_schema('orders', 'order'), EmitterConfig(singular_names=True))
+        bindings = _top_level_bindings(out)
+        assert len(bindings) == len(set(bindings))
+        namespace = _executed(out)
+        assert namespace['Order'] is not namespace['Order_2']
+
+    def test_a_derived_class_name_cannot_be_stolen_by_another_table(self) -> None:
+        # 🔴 The stem-vs-name distinction, end to end. `order` and `order_insert` have obviously
+        # distinct stems; on `main` they emitted TWO `class OrderInsert` -- the insert model of one
+        # and the operational class of the other.
+        out = _emit(_table_schema('order', 'order_insert'))
+        bindings = _top_level_bindings(out)
+        assert len(bindings) == len(set(bindings))
+        namespace = _executed(out)
+        assert namespace['OrderInsert'].__bases__ == (namespace['CustomModelInsert'],)  # type: ignore[union-attr]
+
+    def test_a_table_cannot_rebind_castirons_own_base_classes(self) -> None:
+        # On `main` a table called `custom_model` emitted `class CustomModelInsert(CustomModelInsert)`
+        # and rebound all three shared bases.
+        out = _emit(_table_schema('custom_model'))
+        bindings = _top_level_bindings(out)
+        assert len(bindings) == len(set(bindings))
+        namespace = _executed(out)
+        assert namespace['CustomModel'].__bases__ == (BaseModel,)  # type: ignore[union-attr]
+
+    def test_a_table_cannot_shadow_an_import(self) -> None:
+        namespace = _executed(_emit(_table_schema('base_model', 'field')))
+        assert namespace['BaseModel'] is BaseModel
+        assert [n for n in _top_level_bindings(_emit(_table_schema('base_model')))].count('BaseModel') == 1
+
+    def test_an_enum_class_yields_to_a_renamed_table_stem(self) -> None:
+        # The CI-128 seam, exercised in the direction CI-130 created: `_reserved_class_names` is
+        # built by CALLING `_class_name`/`_write_name`, so a stem the collision rule renamed flows
+        # into the enum allocator automatically. Table stems are the stable anchor; enums yield.
+        enum = EnumInfo(name='status', values=['ok'], schema='order')
+        schema = Schema(
+            tables=[
+                TableInfo(name='order status enum', columns=[ColumnInfo(name='id', raw_type='integer')]),
+                TableInfo(
+                    name='order_status_enum',
+                    columns=[ColumnInfo(name='s', raw_type='USER-DEFINED', is_nullable=True, enum_info=enum)],
+                ),
+            ],
+            enums=[enum],
+        )
+        namespace = _executed(_emit(schema))
+        assert sorted(_emitted_enums(namespace)) == ['OrderStatusEnum_3']
+        assert issubclass(namespace['OrderStatusEnum'], BaseModel)  # type: ignore[arg-type]
+        assert issubclass(namespace['OrderStatusEnum_2'], BaseModel)  # type: ignore[arg-type]
+
+    def test_every_top_level_binding_is_unique_over_a_hostile_schema(self) -> None:
+        out = _emit(
+            _table_schema('order lines', 'order-lines', 'order_lines', 'custom_model', 'order', 'order_insert'),
+            EmitterConfig(add_null_parent_classes=True),
+        )
+        bindings = _top_level_bindings(out)
+        assert len(bindings) == len(set(bindings))
+        _executed(out)
+
+    @pytest.mark.parametrize('name', ['testbed-public', 'testbed-inventory', 'synthetic-torture'])
+    def test_every_top_level_binding_is_unique_over_each_corpus_input(self, name: str) -> None:
+        for config in (EmitterConfig(), EmitterConfig(singular_names=True, add_null_parent_classes=True)):
+            bindings = _top_level_bindings(_emit(_corpus_schema(name), config))
+            assert len(bindings) == len(set(bindings))
+
+    def test_an_ordinary_table_gains_no_comment_and_no_ordinal(self) -> None:
+        # The counter-witness (`CI94-D3`), and the byte-stability property the goldens pin: without
+        # it, "always comment" and "always suffix" would satisfy every assertion above.
+        out = _emit(_table_schema('order_lines'), EmitterConfig(add_null_parent_classes=True))
+        assert '# original name was' not in out
+        assert '_2' not in out
+
+    def test_a_renamed_table_carries_its_source_name_above_every_class(self) -> None:
+        out = _emit(_table_schema('order lines'), EmitterConfig(add_null_parent_classes=True))
+        assert out.count('# original name was "order lines" (identifier repair)') == 5
+        for suffix in ('', 'BaseSchema', 'Parent', 'Insert', 'Update'):
+            assert f'# original name was "order lines" (identifier repair)\nclass OrderLines{suffix}(' in out
+
+    def test_a_suffixed_table_names_what_took_its_class_name(self) -> None:
+        out = _emit(_table_schema('order_lines', 'order lines'))
+        assert '# original name was "order lines" (name collision, OrderLines is taken by "order_lines")' in out
+
+    @pytest.mark.parametrize('table_name', ['a\nb', 'a"b', 'a\\b'])
+    def test_the_comment_cannot_break_the_module(self, table_name: str) -> None:
+        # `CI-009`'s standing lesson: a renderer injecting user text into generated source must be
+        # total over its input domain. A raw newline would split the `#` comment across two lines.
+        out = _emit(_table_schema(table_name, 'ab'))
+        assert '# original name was' in out
+        assert all(line.startswith('# original name was') for line in out.splitlines() if 'original name was' in line)
+        _executed(out)
+
+    def test_the_stem_suffix_constant_covers_every_name_the_emitter_derives(self) -> None:
+        # The `CI94-D8` pattern: `_STEM_SUFFIXES` is a RESTATEMENT of what a stem binds, so it is
+        # cross-checked against the methods that actually write those names rather than trusted.
+        emitter = PydanticEmitter()
+        table = TableInfo(name='orders', columns=[ColumnInfo(name='id', raw_type='integer')])
+        stems = emitter._resolved_stems(Schema(tables=[table]))
+        stem = emitter._class_name(table, stems)
+        derived = {emitter._write_name(table, variant, stems) for variant in _ClassVariant} | {stem}
+        assert derived == {f'{stem}{suffix}' for suffix in _STEM_SUFFIXES}

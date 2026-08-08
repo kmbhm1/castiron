@@ -262,10 +262,10 @@ def gen(
             singular_names=singular_names,
             include_foreign_keys=foreign_keys,
         )
-        # Built before the notices, not after: the enum class-name notice must report the names the
+        # Built before the notices, not after: the class-name notices must report the names the
         # emitter will actually write, and asking the emitter is the only way to do that without a
         # second derivation (CI-114's defect). `isinstance` rather than a name string because the
-        # Pydantic emitter is currently the only one that binds Python enum class names -- a future
+        # Pydantic emitter is currently the only one that binds Python class names -- a future
         # emitter with the same property joins this test, it does not get its own notice.
         built = [spec.build(replace(base, output_filename=filename or spec.default_filename)) for spec in specs]
         pydantic = next((emitter for emitter in built if isinstance(emitter, PydanticEmitter)), None)
@@ -275,6 +275,7 @@ def gen(
             from_openapi=True,
             disable_model_prefix_protection=not model_prefix_protection,
             enum_classes=pydantic.enum_classes(schema_ir) if pydantic is not None else (),
+            class_stems=pydantic.class_stems(schema_ir) if pydantic is not None else (),
         )
 
         files: list[EmittedFile] = [emitted for emitter in built for emitted in emitter.emit(schema_ir)]

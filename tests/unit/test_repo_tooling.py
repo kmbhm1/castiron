@@ -70,11 +70,24 @@ unwinding, and a real release whose publish step named the test index would repo
 publishing nothing anyone can install. So the mode separation is asserted structurally, from a
 step-level parse of the workflow.
 
-A third family covers the **local dev tooling**. **CI-108** -- the lint hook was declared as
-``ruff``, which upstream retains only as a deprecated alias of ``ruff-check``. Nothing was
-broken; both ids run ``ruff check --force-exclude`` at ``v0.16.0``. It is asserted because of
-*when* it would break: on the alias's removal, at pre-push, on whichever PR next moves ``rev``
--- the same deferred, misattributed failure as CI-105, in the same stanza.
+A third family covers the **local dev tooling** (CI-107, CI-108), and it shares the release
+family's defining property rather than the first family's: both rows were checks that had quietly
+stopped meaning anything.
+
+* **CI-107** -- ``uv run vulture src/``, named in ``CLAUDE.md`` as the project's dead-code check
+  and shipped as ``make vulture``, could not pass. It exited 3 (vulture's ``DeadCode``: it ran
+  correctly and found something) with 22 findings, all at 60% confidence and all false positives,
+  against no ``[tool.vulture]`` config and no whitelist anywhere in the tree. A check that is
+  always red is indistinguishable from a check that is right, so the first true finding would have
+  read as more of the same. ``TestTheVultureAllowlistIsExactlyWhatSrcNeeds`` asserts the allowlist
+  covers exactly today's findings -- neither fewer (``make vulture`` goes red) nor more (a stale
+  entry mutes a name project-wide, forever, invisibly).
+
+* **CI-108** -- the lint hook was declared as ``ruff``, which upstream retains only as a deprecated
+  alias of ``ruff-check``. Nothing was broken; both ids run ``ruff check --force-exclude`` at
+  ``v0.16.0``. It is asserted because of *when* it would break: on the alias's removal, at
+  pre-push, on whichever PR next moves ``rev`` -- the same deferred, misattributed failure as
+  CI-105, in the same stanza.
 """
 
 import re
@@ -105,6 +118,7 @@ PRE_COMMIT_CONFIG = REPO_ROOT / '.pre-commit-config.yaml'
 UV_LOCK = REPO_ROOT / 'uv.lock'
 PYPROJECT = REPO_ROOT / 'pyproject.toml'
 RELEASE_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'release.yml'
+SRC_DIR = REPO_ROOT / 'src'
 
 #: Repo-relative names, for failure messages that a reader can act on without decoding a path.
 CI_NAME = '.github/workflows/ci.yml'
@@ -481,6 +495,41 @@ def hosted_hook_ids(text: str, repo: str) -> list[str]:
         if inside and stripped.startswith('- id:'):
             ids.append(stripped.partition('- id:')[2].strip().strip('\'"'))
     return ids
+
+
+def vulture_findings(paths: list[str], ignore_names: list[str], min_confidence: int) -> list[tuple[str, str]]:
+    """Return the ``(name, location)`` pairs vulture reports as unused, using vulture's own scanner.
+
+    The real check is re-run rather than approximated. A textual stand-in -- "does each allowlisted
+    name still appear in ``src/``?" -- would pass on a symbol that had been deleted but was still
+    named in a docstring, and three of the entries are named in ``ir/build.py`` docstrings, so the
+    cheap version would have a known blind spot on the exact rot it exists to catch.
+
+    ``vulture`` is imported inside the function so a missing dev dependency degrades to one failed
+    test rather than a collection error for the whole module. It is a *direct* ``[dependency-groups]
+    dev`` entry, so this is not the hidden transitive bet ``workflow_pytest_commands`` avoids.
+
+    Args:
+        paths: Paths to scan, as ``vulture`` would receive them on the command line.
+        ignore_names: Names to suppress, i.e. ``[tool.vulture] ignore_names``.
+        min_confidence: The confidence floor, i.e. ``[tool.vulture] min_confidence``.
+
+    Returns:
+        ``(name, location)`` pairs, de-duplicated and sorted. ``location`` is repo-relative where
+        the finding lies inside the repository, and absolute otherwise (a ``tmp_path`` fixture).
+        Three names are flagged at two sites each, so pairs are returned rather than names alone --
+        it lets a caller check *where* a suppression applies, not just that one exists.
+    """
+    from vulture import Vulture
+
+    scanner = Vulture(verbose=False, ignore_names=ignore_names, ignore_decorators=[])
+    scanner.scavenge(paths)
+    findings = set()
+    for item in scanner.get_unused_code(min_confidence=min_confidence):
+        path = Path(item.filename)
+        location = path.relative_to(REPO_ROOT).as_posix() if path.is_relative_to(REPO_ROOT) else path.as_posix()
+        findings.add((item.name, location))
+    return sorted(findings)
 
 
 def local_hook_entry(text: str, hook_id: str) -> str | None:
@@ -2619,3 +2668,134 @@ class TestThePreCommitRuffHookIsNotTheLegacyAlias:
         )
         assert hosted_hook_ids(text, RUFF_HOOK_REPO) == [RUFF_LINT_HOOK_ID]
         assert hosted_hook_ids(text, 'https://github.com/pre-commit/pre-commit-hooks') == ['check-yaml']
+
+
+class TestTheVultureAllowlistIsExactlyWhatSrcNeeds:
+    """CI-107 -- ``uv run vulture src/`` must be able to exit 0, and for auditable reasons.
+
+    Before ``[tool.vulture]`` existed this command -- named in ``CLAUDE.md`` as the project's
+    dead-code check and wired up as ``make vulture`` -- exited **3** with 22 findings, every one a
+    false positive. Exit 3 is vulture's ``DeadCode``, meaning it ran correctly and found something;
+    the distinction matters because exit 2 (``InvalidCmdlineArguments``) would have meant the
+    documented command was itself malformed, a different bug with a different fix.
+
+    A check that cannot pass is worse than an absent one: it trains its readers to expect red, so
+    the first *genuine* finding reads as more of the same. The allowlist restores a meaningful
+    baseline -- and these tests keep that baseline honest, because an allowlist is only as good as
+    its narrowness. ``ignore_names`` suppresses a bare name **everywhere in the project**, so a
+    stale entry is a permanent blind spot that no one would ever see reported.
+    """
+
+    def allowlist(self) -> list[str]:
+        """Return the configured ``ignore_names``."""
+        return pyproject_string_list(pyproject_table('tool', 'vulture'), 'ignore_names')
+
+    def min_confidence(self) -> int:
+        """Return the configured ``min_confidence``, defaulting to vulture's own default of 0."""
+        value = pyproject_table('tool', 'vulture').get('min_confidence', 0)
+        return value if isinstance(value, int) else 0
+
+    def test_the_allowlist_suppresses_every_finding_and_nothing_more(self) -> None:
+        """Set equality, not containment -- it asserts sufficiency and minimality at once.
+
+        Containment in one direction would let the allowlist rot: delete ``get_alias`` and its
+        entry lingers, silently muting any future ``get_alias`` anywhere in the package. Containment
+        in the other would let a new finding go unlisted. Equality is the only relation that keeps
+        ``make vulture`` green *and* keeps this file an accurate inventory of what is suppressed.
+        """
+        reported = {name for name, _ in vulture_findings([str(SRC_DIR)], [], self.min_confidence())}
+        configured = self.allowlist()
+        # Anti-vacuity (CI-083): equality between two empty sets would pass this test while meaning
+        # the scanner found nothing at all -- a moved src/, an unreadable tree.
+        assert reported, (
+            f'vulture reports nothing at all under {SRC_DIR}, so this comparison is vacuous. The '
+            f'scan path is probably wrong (SRC_DIR) rather than the source being pristine.'
+        )
+        stale = sorted(set(configured) - set(reported))
+        unlisted = sorted(set(reported) - set(configured))
+        assert not stale, (
+            f'{PYPROJECT_NAME} [tool.vulture] ignore_names lists {stale}, which vulture no longer '
+            f'reports. The symbol was probably deleted or given a real caller in src/. Remove the '
+            f'entry: `ignore_names` matches a bare name ANYWHERE, so a stale one silently hides a '
+            f'future symbol that happens to share the name.'
+        )
+        assert not unlisted, (
+            f'vulture reports {unlisted}, which {PYPROJECT_NAME} [tool.vulture] does not allowlist, '
+            f'so `make vulture` now exits 3.\n'
+            f'Do NOT reflexively add them here. Decide first: genuinely dead code should be '
+            f'DELETED, which is strictly better than allowlisting it. Allowlist only what vulture '
+            f'cannot see -- a field read reflectively by `Schema.as_dict()`, an attribute the '
+            f'stdlib reads back, or public API used by downstream code and not by src/ -- and say '
+            f'which of those it is in the comment above the entry.'
+        )
+
+    def test_no_entry_is_a_glob(self) -> None:
+        """``ignore_names`` accepts wildcards; this repo forbids them.
+
+        A pattern like ``EXIT_*`` or ``get_*`` would suppress names nobody has written yet, so the
+        allowlist would stop being reviewable -- and the equality test above would stop being able
+        to detect a stale entry, since a glob keeps matching long after its symbol is gone.
+        """
+        globbed = sorted(name for name in self.allowlist() if set(name) & set('*?[]'))
+        assert not globbed, (
+            f'{PYPROJECT_NAME} [tool.vulture] ignore_names contains glob patterns {globbed}. Spell '
+            f'every suppressed name out in full: a glob silently covers symbols that do not exist '
+            f'yet, and it can never be detected as stale.'
+        )
+
+    def test_min_confidence_is_not_raised_past_the_findings_it_must_catch(self) -> None:
+        """The tempting wrong fix, blocked.
+
+        Every one of the 22 original findings sat at exactly 60% -- and so does every unused
+        function, class, method and attribute vulture will ever report. ``min_confidence = 61``
+        would therefore turn all 22 green in one line while blinding the tool to nearly everything
+        it exists to find, leaving a check that runs, passes, and means nothing.
+        """
+        assert self.min_confidence() <= 60, (
+            f'{PYPROJECT_NAME} [tool.vulture] sets min_confidence = {self.min_confidence()}. '
+            f'Unused functions, classes, methods and attributes are ALL reported at 60% '
+            f'confidence, so anything above 60 suppresses them wholesale -- `make vulture` would '
+            f'pass by refusing to look rather than by being clean. Allowlist specific names '
+            f'instead, or delete the dead code.'
+        )
+
+    def test_this_guard_can_still_see_dead_code_the_allowlist_does_not_cover(self, tmp_path: Path) -> None:
+        """Positive control (CI-072): prove the configured allowlist still lets a finding through.
+
+        Every assertion above is an absence, and they share one dependency -- ``vulture_findings``
+        actually reporting something. A module with an unmistakably dead function is scanned
+        through the **real** ``ignore_names``, so a configuration that had grown broad enough to
+        mute everything (a stray glob, a raised floor, an ``exclude`` swallowing the tree) fails
+        here rather than reporting a clean ``src/`` forever.
+        """
+        (tmp_path / 'dead.py').write_text('def a_function_no_one_calls():\n    return 1\n', encoding='utf-8')
+        reported = {name for name, _ in vulture_findings([str(tmp_path)], self.allowlist(), self.min_confidence())}
+        assert 'a_function_no_one_calls' in reported, (
+            f'vulture did not report an obviously dead function while running under the configured '
+            f'ignore_names/min_confidence, so those settings suppress more than the '
+            f'{len(self.allowlist())} names they list and `make vulture` is now decoration. '
+            f'Reported: {reported}.'
+        )
+
+    def test_every_suppressed_file_is_named_in_the_comment(self) -> None:
+        """The block comment must account for every file the allowlist covers.
+
+        Asserted per **file** rather than per name, deliberately. Requiring each of the 19 names to
+        be repeated in the prose would only force the comment to restate the array underneath it,
+        and a comment that duplicates its data decays into noise nobody reads. The file is the unit
+        that carries the *reason*: ``ir/models.py`` is suppressed because ``Schema.as_dict()``
+        reads its fields reflectively, ``utils/logging.py`` because the stdlib reads the attributes
+        back. A finding appearing in some sixth file means a new reason exists and is unwritten.
+        """
+        text = PYPROJECT.read_text(encoding='utf-8')
+        block = text[text.index('[tool.vulture]') : text.index('[tool.pytest.ini_options]')]
+        prose = '\n'.join(line for line in text[: text.index('[tool.vulture]')].splitlines()[-40:] if '#' in line)
+        suppressed_files = sorted({location for _, location in vulture_findings([str(SRC_DIR)], [], 0)})
+        assert suppressed_files, f'no findings under {SRC_DIR}; this comparison would be vacuous.'
+        undocumented = [path for path in suppressed_files if path.removeprefix('src/castiron/') not in prose + block]
+        assert not undocumented, (
+            f'{PYPROJECT_NAME} [tool.vulture]: {undocumented} contain allowlisted findings but are '
+            f'not named in the comment. Say which of the four blind spots applies there -- '
+            f'reflective read, stdlib consumer, published API, or ported ahead of its caller -- so '
+            f'the next reader can tell a deliberate suppression from an abandoned one.'
+        )

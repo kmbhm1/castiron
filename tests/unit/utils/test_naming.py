@@ -1311,10 +1311,20 @@ class TestCi128TheMemberGuardSeesTheResolvedClassName:
     def test_the_derived_default_would_swallow_it(self) -> None:
         # 🔴 The falsification. Without this, passing the resolved name could be a no-op and the
         # whole §3.6 change would be unfalsifiable.
+        #
+        # ⚠ Judged by `_exec_enum_survives`, NOT by the member count -- and that is the whole
+        # CI-113 lesson repeated. py3.11+ DROP a class-private member while **py3.10 KEEPS it**
+        # under the mangled name with only a DeprecationWarning, so a count assertion says `1` on
+        # three legs and `2` on the fourth. A first draft of this test asserted the count and went
+        # green on 3.11/3.12/3.13 and red on 3.10 in the matrix gate. "Survived" means the
+        # interpreter warned about nothing and gave the member the name castiron wrote, which is
+        # the same statement on all four legs.
         enum, class_name, _ = self._collided()
-        members = python_member_names(enum)  # the CI-113 default -- the WRONG class name here
-        namespace, _caught = _exec_enum_capturing([(m.name, m.label) for m in members], class_name)
-        assert len(list(namespace[class_name])) == 1, 'the default must be demonstrably insufficient'  # type: ignore[call-overload]
+        default_name = python_member_names(enum)[0].name  # the CI-113 default -- the WRONG name here
+        resolved_name = python_member_names(enum, class_name)[0].name
+        assert default_name != resolved_name, 'the resolved class name must change the repair'
+        assert not _exec_enum_survives(default_name, class_name), 'the default must be demonstrably insufficient'
+        assert _exec_enum_survives(resolved_name, class_name)
 
     def test_the_default_is_unchanged_for_an_enum_alone_in_its_namespace(self) -> None:
         # Backward compatibility: the parameter is OPTIONAL because this is public API in a

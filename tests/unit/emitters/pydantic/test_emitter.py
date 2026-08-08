@@ -2090,3 +2090,66 @@ class TestCi128TheRenamedClassCarriesItsSourceTypeName:
         assert 'class PublicOrderStatusEnum(str, Enum):' in out.splitlines()
         assert '# original name was "public.order_status"' not in out
         assert 'PublicOrderStatusEnum_2' not in out
+
+
+@pytest.mark.unit
+class TestCi128TheMemberGuardSeesTheEmittedClassName:
+    """``CI-128`` §3.6, end to end: the member guard must test the name the header actually carries.
+
+    ``CI-113`` closed the class-name axis by having
+    :func:`~castiron.utils.naming.python_member_names` derive the class name itself, on the stated
+    grounds that this "makes it IMPOSSIBLE for a caller to supply a class name the emitter will not
+    use". ``CI-128``'s collision rule **falsifies that invariant**: the emitted header can be
+    ``PublicOrderStatusEnum_2`` while :func:`~castiron.utils.naming.python_class_name` still says
+    ``PublicOrderStatusEnum``, so the class-private clause would test a name the module never binds
+    and a crafted label would be silently swallowed again -- ``castiron gen`` exit 0.
+
+    🔴 **A ``naming.py`` unit test cannot establish this.** It can only prove the guard works *for
+    the class name it was handed*; only driving the real emitter proves the emitter hands it the
+    same name it renders the header from. Recorded because a first attempt at this row asserted the
+    property only at the naming level, and mutating the emitter's call site back to the derived
+    default reddened **nothing**.
+    """
+
+    #: Two type names that collide on `PublicOrderStatusEnum`, both already valid identifiers -- so
+    #: allocation is plain first-come and the SECOND one takes the ordinal.
+    COLLIDING = ('order_status', 'orderStatus')
+
+    @classmethod
+    def _schema(cls, labels: list[str]) -> Schema:
+        first, second = cls.COLLIDING
+        return _enum_schema(
+            EnumInfo(name=first, values=['x'], schema='public'),
+            EnumInfo(name=second, values=labels, schema='public'),
+        )
+
+    def _resolved_name(self) -> str:
+        """The class name the emitter will really write for the second, collided enum."""
+        return PydanticEmitter(EmitterConfig()).enum_classes(self._schema(['placeholder']))[1].name
+
+    def test_the_fixture_really_collides(self) -> None:
+        # The premise, asserted rather than assumed: with no ordinal the resolved name equals the
+        # derived one and every assertion below would pass for the wrong reason.
+        resolved = self._resolved_name()
+        assert resolved == 'PublicOrderStatusEnum_2'
+        assert resolved != python_class_name(EnumInfo(name=self.COLLIDING[1], values=[], schema='public'))
+
+    def test_a_label_crafted_for_the_resolved_name_survives_the_real_emission(self) -> None:
+        resolved = self._resolved_name()
+        label = crafted_class_private_label(resolved)
+        schema = self._schema([label, 'ok'])
+        out = _emit(schema)
+
+        assert f'class {resolved}(str, Enum):' in out.splitlines()
+
+        # ⚠ `simplefilter('error')` is part of the assertion, not hygiene: on py3.10 a
+        # class-private member is KEPT and announced only by a DeprecationWarning, so silence is
+        # the only evidence that leg agrees with the other three.
+        namespace: dict[str, object] = {}
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            exec(compile(out, '<generated>', 'exec'), namespace)  # noqa: S102 - executing IS the assertion
+
+        enum_class = namespace[resolved]
+        assert len(list(enum_class)) == 2, 'a label was swallowed by the class-private clause'  # type: ignore[call-overload]
+        assert enum_class(label).value == label  # type: ignore[operator]

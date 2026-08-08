@@ -399,12 +399,14 @@ class TestFunctions:
         assert create_order.return_type is None
         assert create_order.returns_set is None
         assert create_order.description == 'Create an order\n\nInserts a row and returns its id.'
+        # Alphabetical, because that is the order PostgREST puts the POST body in and castiron
+        # preserves whatever the document gives (`CI-133`; the open defect is `CI-078`).
         assert [(p.name, p.raw_type, p.mode, p.has_default) for p in create_order.parameters] == [
-            ('user_id', 'bigint', ParameterMode.IN, False),
-            ('status', 'order_status', ParameterMode.IN, False),
             ('items', 'text[]', ParameterMode.IN, True),
+            ('status', 'order_status', ParameterMode.IN, False),
+            ('user_id', 'bigint', ParameterMode.IN, False),
         ]
-        assert create_order.parameters[2].array_element_type == 'text'
+        assert next(p for p in create_order.parameters if p.name == 'items').array_element_type == 'text'
 
     def test_a_non_volatile_function_leaves_volatility_unknown(self, document: dict[str, Any]) -> None:
         # The document distinguishes VOLATILE from *not*, never STABLE from IMMUTABLE.
@@ -422,8 +424,8 @@ class TestFunctions:
     def test_a_variadic_parameter_is_recovered_from_the_get_operation(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)
         search = next(f for f in schema.functions if f.name == 'search_products')
-        assert search.parameters[0].mode is ParameterMode.VARIADIC
-        assert search.parameters[1].mode is ParameterMode.IN
+        modes = {p.name: p.mode for p in search.parameters}
+        assert modes == {'limit_to': ParameterMode.IN, 'terms': ParameterMode.VARIADIC}
 
     def test_a_no_argument_function_has_no_parameters(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)

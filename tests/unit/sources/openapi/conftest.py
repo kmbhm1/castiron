@@ -21,13 +21,14 @@ invisible *base table*, not the view. SQL cannot express it either -- a Postgres
 can only reference a table.
 
 This paragraph previously read *"Every shape in it is attested by the CI-005 spec's §3"*,
-which had become the fixture's own false certificate of authenticity. The bytes are unchanged
-deliberately: correcting them would move ``golden/schema.py.txt``, which three other test
-modules assert against, and CI-076 owns that change. What CI-007 does instead is stop the
-fixture *standing as evidence* -- the corpus records it as ``provenance='synthetic'``, and
-``tests/unit/corpus/test_witnesses.py`` asserts the fictional marker **is** present, so it is
-now documented as fiction rather than mistaken for fact. castiron's evidence about PostgREST
-comes from the real captures in ``tests/unit/corpus/inputs/``.
+which had become the fixture's own false certificate of authenticity. **The fictional FK
+marker's bytes are unchanged deliberately:** correcting them would move
+``golden/schema.py.txt``, which three other test modules assert against, and CI-076 owns that
+change. What CI-007 does instead is stop the fixture *standing as evidence* -- the corpus
+records it as ``provenance='synthetic'``, and ``tests/unit/corpus/test_witnesses.py`` asserts
+the fictional marker **is** present, so it is now documented as fiction rather than mistaken
+for fact. castiron's evidence about PostgREST comes from the real captures in
+``tests/unit/corpus/inputs/``.
 
 What the fixture deliberately exercises:
 
@@ -55,6 +56,14 @@ comment, so the golden proves an uncommented table gains nothing (CI-009).
   ``create_order`` (POST-only: volatile, an enum arg and an array arg), ``ping``
   (POST-only, zero args), and ``search_products`` (GET+POST with a VARIADIC arg visible
   only through the GET operation's ``collectionFormat: multi``).
+
+Every ``/rpc/*`` POST body's ``properties`` object is **alphabetical by argument name**, which
+is what PostgREST emits (measured in ``test_parse.py``'s
+``TestRpcParameterOrderInTheRealCaptures``, swept over both committed captures). Until
+``CI-133`` these were in *declaration* order -- a document shape the generator cannot produce
+-- so the parameter-order tests reading them agreed with a fiction. Keep new RPC bodies
+sorted. The GET operations keep declaration order, because that is what PostgREST does there,
+and that asymmetry is the point: it is the only place declaration order survives (``CI-078``).
 
 **Overloads are not representable.** PostgREST maps every overload of ``f`` to the single
 path key ``/rpc/f`` and the last one wins, so the fixture cannot contain two signatures for

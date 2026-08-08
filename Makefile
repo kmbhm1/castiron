@@ -112,9 +112,30 @@ typecheck-matrix: ## mypy --strict against every CI interpreter (3.10-3.13)
 # Note `mypy --python-version 3.13` was ALREADY clean for that change: the divergence was in
 # CPython's RUNTIME behaviour, invisible to any static check. Hence test-matrix, not just
 # typecheck-matrix.
-validate: lint typecheck-matrix test-matrix ## The pre-push gate: lint + typecheck + test, across py3.10-3.13
+#
+# ⚠ `vulture` JOINED THE GATE (CI-107, captain's ruling 2026-08-08), and the order is deliberate:
+# prerequisites run left to right, so the two sub-second static checks run before the ~17s matrix
+# and a dead-code finding surfaces in about a second instead of last.
+#
+# Why it was not here before: until PR #31 `uv run vulture src/` COULD NOT PASS. It exited 3 with
+# 22 findings, every one a false positive, against no `[tool.vulture]` config anywhere in the tree
+# — so CLAUDE.md named it as the project's dead-code check while nothing could ever enforce it.
+# `[tool.vulture] ignore_names` made it exit 0 on a clean tree; a check that can pass is a check
+# that can gate, and one left merely documented is the CI-081 shape (the gate omits an axis the
+# docs claim it covers). tests/unit/test_repo_tooling.py asserts the allowlist stays exactly as
+# wide as src/ needs, and that this target keeps running it.
+#
+# Deliberately NO vulture-matrix: vulture is a static AST scan with no runtime behaviour to
+# diverge across interpreters, so running it once IS the whole check. The CI-082 matrix argument
+# is about CPython runtime divergence (see above) and simply does not apply here.
+validate: lint vulture typecheck-matrix test-matrix ## The pre-push gate: lint + vulture + typecheck + test, across py3.10-3.13
 
-validate-fast: lint typecheck test ## Single-interpreter gate (3.12) — for iterating, NOT for push
+# validate-fast reduces validate along ONE axis — the interpreter — and no other. It carries
+# vulture for the same reason it carries lint: there is no cheaper single-interpreter version of a
+# scan that has no interpreter axis (measured ~0.3s, noise next to this target's pytest leg).
+# Dropping it here would make "fast" quietly mean "and also does not look at dead code", which is
+# how a check becomes optional again.
+validate-fast: lint vulture typecheck test ## Single-interpreter gate (3.12) — for iterating, NOT for push
 
 build: ## Build sdist + wheel with uv
 	@uv build

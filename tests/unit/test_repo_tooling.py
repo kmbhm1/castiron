@@ -83,6 +83,12 @@ stopped meaning anything.
   covers exactly today's findings -- neither fewer (``make vulture`` goes red) nor more (a stale
   entry mutes a name project-wide, forever, invisibly).
 
+  Fixing the check did not make anything *run* it, though, so the row had a second half (captain's
+  ruling, 2026-08-08): ``make validate`` and ``make validate-fast`` now invoke it, and
+  ``TestTheDeadCodeCheckIsPartOfThePrePushGate`` asserts they still do -- including that the target
+  they depend on is not a hollow one, since a prerequisite naming a target whose recipe checks
+  nothing passes just as green as one that works.
+
 * **CI-108** -- the lint hook was declared as ``ruff``, which upstream retains only as a deprecated
   alias of ``ruff-check``. Nothing was broken; both ids run ``ruff check --force-exclude`` at
   ``v0.16.0``. It is asserted because of *when* it would break: on the alias's removal, at
@@ -160,6 +166,13 @@ MYPY_MIRROR_REPO = 'https://github.com/pre-commit/mirrors-mypy'
 #: assertion is that whatever target the hook runs is one ``make validate`` *also* runs, which is
 #: what makes "the gate and the hook cannot disagree" structural rather than remembered.
 VALIDATE_TARGET = 'validate'
+
+#: The iterating variant of the gate, and the dead-code target both must run (CI-107). Named as
+#: constants for the same reason ``VALIDATE_TARGET`` is: the assertions are about the *relation*
+#: between these targets, so a rename should break one lookup here rather than five string
+#: literals scattered through the guards.
+VALIDATE_FAST_TARGET = 'validate-fast'
+VULTURE_TARGET = 'vulture'
 
 #: Paths that must stay trackable. The first is the first mate's minimal reproduction; the second
 #: is the real one -- what the CI-007 corpus dispatch tried to commit before renaming the
@@ -583,6 +596,36 @@ def make_prerequisites(text: str, target: str) -> list[str]:
             continue
         return line.partition(':')[2].partition('##')[0].split()
     return []
+
+
+def make_recipe(text: str, target: str) -> list[str]:
+    """Return the command lines in one Make target's recipe.
+
+    A recipe is the tab-indented block under a rule line, so the scan starts at the rule and stops
+    at the first line that is not tab-indented -- which is what keeps the *next* target's commands
+    out of this one's. Leading ``@`` (Make's echo suppression) is left on, since it is part of the
+    line a reader sees.
+
+    Args:
+        text: The whole ``Makefile``.
+        target: The target name, e.g. ``'vulture'``.
+
+    Returns:
+        The recipe lines, stripped and comment-free. Empty when the target does not exist, or is a
+        pure aggregate like ``validate`` whose work is all in its prerequisites.
+    """
+    recipe: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if re.match(rf'^{re.escape(target)}:', line):
+            inside = True
+            continue
+        if inside:
+            if not line.startswith('\t'):
+                break
+            if line.strip() and not line.strip().startswith('#'):
+                recipe.append(line.strip())
+    return recipe
 
 
 def locked_version(text: str, package: str) -> str | None:
@@ -1430,6 +1473,27 @@ class TestTheRevParserReadsPinsNotProse:
 
     def test_an_absent_target_has_no_prerequisites(self) -> None:
         assert make_prerequisites('validate: lint\n', 'nonexistent') == []
+
+    def test_a_recipe_stops_before_the_next_target(self) -> None:
+        # The hazard `make_recipe` exists to avoid: reading on past the blank line and crediting
+        # `vulture` with the *next* target's commands, so a hollowed-out target still looks alive.
+        makefile = '\n'.join(
+            [
+                'vulture: ## Find unused code',
+                '\t@uv run vulture src/',
+                '',
+                'typecheck: ## Type-check',
+                '\t@uv run mypy src',
+            ]
+        )
+        assert make_recipe(makefile, 'vulture') == ['@uv run vulture src/']
+        assert make_recipe(makefile, 'typecheck') == ['@uv run mypy src']
+
+    def test_an_aggregate_target_has_an_empty_recipe(self) -> None:
+        # `validate` is prerequisites only. An empty recipe must not read as an absent target,
+        # which is why the gate guards below assert on prerequisites and recipe separately.
+        assert make_recipe('validate: lint vulture\n\nvulture:\n\t@uv run vulture src/\n', 'validate') == []
+        assert make_recipe('vulture:\n\t@uv run vulture src/\n', 'nonexistent') == []
 
 
 @pytest.mark.unit
@@ -2798,4 +2862,135 @@ class TestTheVultureAllowlistIsExactlyWhatSrcNeeds:
             f'not named in the comment. Say which of the four blind spots applies there -- '
             f'reflective read, stdlib consumer, published API, or ported ahead of its caller -- so '
             f'the next reader can tell a deliberate suppression from an abandoned one.'
+        )
+
+
+@pytest.mark.unit
+class TestTheDeadCodeCheckIsPartOfThePrePushGate:
+    """CI-107, second half -- the allowlist made vulture *able* to pass; this makes it *run*.
+
+    PR #31 fixed the check and stopped there, which left the CI-081 shape intact on a new axis:
+    ``CLAUDE.md`` named ``uv run vulture src/`` as the project's dead-code check, ``make vulture``
+    shipped it, and nothing executed it on the way to a push. A check that is documented but
+    unenforced decays exactly like the check that could never pass -- silently, and only
+    detectably by the finding it failed to report.
+
+    The captain's ruling of 2026-08-08 put it in ``make validate``, and deliberately **nowhere
+    else**: not in ``.pre-commit-config.yaml`` and not in ``.github/workflows/ci.yml``. That is a
+    narrower coupling than the mypy hook's (see ``TestTheMypyHookAndTheMypyGateCannotDisagree``),
+    so these assertions stay inside the Makefile rather than reaching across to the hooks.
+    """
+
+    def prerequisites(self, target: str) -> list[str]:
+        """Return one gate target's prerequisites, asserting the target still exists."""
+        found = make_prerequisites(MAKEFILE.read_text(encoding='utf-8'), target)
+        # Anti-vacuity (CI-083): a renamed or deleted target yields [], and every membership
+        # assertion below would then be checking `in []` -- red for the right reason, here.
+        assert found, f'the `{target}` target of {MAKE_NAME} has no prerequisites -- was it renamed or removed?'
+        return found
+
+    def test_the_pre_push_gate_runs_the_dead_code_check(self) -> None:
+        prerequisites = self.prerequisites(VALIDATE_TARGET)
+        assert VULTURE_TARGET in prerequisites, (
+            f'`make {VALIDATE_TARGET}` runs {prerequisites}, which does not include '
+            f'`{VULTURE_TARGET}`. Dropping it returns the dead-code check to the state CI-107 was '
+            f'filed about: named in the docs, shipped as a target, and executed by nothing on the '
+            f'way to a push. If it is genuinely too noisy to gate on, that is a captain decision '
+            f'and the docs claiming it must change with it -- do not just delete it here.'
+        )
+
+    def test_the_fast_gate_runs_it_too(self) -> None:
+        """``validate-fast`` reduces ``validate`` along the interpreter axis and no other.
+
+        vulture has no interpreter axis to reduce -- it is a static AST scan, so the
+        single-interpreter version of it *is* the whole check (which is also why there is no
+        ``vulture-matrix``). Omitting it here would make ``validate-fast`` differ from
+        ``validate`` on the *check* axis as well, i.e. "fast" would quietly also mean "and does
+        not look at dead code" -- and an iterating developer would first learn about a finding at
+        push, which is the friction that gets a check deleted.
+        """
+        prerequisites = self.prerequisites(VALIDATE_FAST_TARGET)
+        assert VULTURE_TARGET in prerequisites, (
+            f'`make {VALIDATE_FAST_TARGET}` runs {prerequisites}, which does not include '
+            f'`{VULTURE_TARGET}`, while `make {VALIDATE_TARGET}` does. The two targets are meant '
+            f'to differ only in how many interpreters they cover; a check present in one and '
+            f'absent from the other is a second difference, and an undocumented one.'
+        )
+
+    def test_it_runs_before_the_matrix_legs(self) -> None:
+        """Make runs prerequisites left to right, so the cheap static checks must come first.
+
+        This is asserted rather than left to the comment in the Makefile because it is the only
+        part of that comment a reader cannot verify by eye at a glance -- and a sub-second check
+        sequenced after a ~17s four-interpreter matrix reports its finding last, which is the same
+        as reporting it late.
+        """
+        prerequisites = self.prerequisites(VALIDATE_TARGET)
+        matrix_legs = [name for name in prerequisites if name.endswith('-matrix')]
+        assert matrix_legs, (
+            f'`make {VALIDATE_TARGET}` runs {prerequisites}, none of which is a `-matrix` leg, so '
+            f'this ordering assertion is vacuous. Did the interpreter matrix leave the gate '
+            f'(CI-082)?'
+        )
+        assert prerequisites.index(VULTURE_TARGET) < min(prerequisites.index(leg) for leg in matrix_legs), (
+            f'`make {VALIDATE_TARGET}` runs {prerequisites}, sequencing `{VULTURE_TARGET}` after '
+            f'{matrix_legs}. Make honours that order, so a dead-code finding would surface only '
+            f'after the matrix -- put the sub-second static checks first.'
+        )
+
+    def test_the_gated_target_actually_invokes_vulture(self) -> None:
+        """Membership in a prerequisite list is worth nothing if the target is hollow.
+
+        ``validate: lint vulture ...`` stays green if ``vulture``'s recipe is emptied, commented
+        out, or quietly re-pointed at some other tool -- Make would run a target that does
+        nothing and report success. So the recipe is read, and ``vulture`` asserted as its own
+        shell token (the ``invokes_pytest`` lesson: a substring check is satisfied by the help
+        text and by the target's own name).
+        """
+        recipe = make_recipe(MAKEFILE.read_text(encoding='utf-8'), VULTURE_TARGET)
+        assert recipe, (
+            f'the `{VULTURE_TARGET}` target of {MAKE_NAME} has an empty recipe, so `make '
+            f'{VALIDATE_TARGET}` now depends on a target that does nothing and passes.'
+        )
+        invocations = [line for line in recipe if 'vulture' in command_tokens(line)]
+        assert invocations, (
+            f'the `{VULTURE_TARGET}` target of {MAKE_NAME} runs {recipe}, none of which invokes '
+            f'`vulture` as a command. The gate would still list it as a prerequisite and still '
+            f'pass, having checked nothing.'
+        )
+        scanned = [
+            line for line in invocations if any(token.rstrip('/').endswith('src') for token in command_tokens(line))
+        ]
+        assert scanned, (
+            f'the `{VULTURE_TARGET}` target of {MAKE_NAME} runs {invocations}, which does not '
+            f'point vulture at `src/`. Scanning a narrower path is how the check keeps passing '
+            f'while covering less than the `[tool.vulture]` allowlist in {PYPROJECT_NAME} claims '
+            f'it covers.'
+        )
+
+    def test_these_guards_can_still_see_a_gate_that_dropped_it(self) -> None:
+        """Positive control (CI-072): every assertion above is a membership or a non-empty.
+
+        Both shapes pass loudly when the parser underneath has stopped working -- a
+        ``make_prerequisites`` that returned the help comment's words would satisfy every ``in``
+        above forever. So the pre-CI-107 Makefile shape is re-parsed here and shown to fail.
+        """
+        before = '\n'.join(
+            [
+                'validate: lint typecheck-matrix test-matrix ## The pre-push gate',
+                '',
+                'vulture: ## Find unused code with vulture',
+                '\t@uv run vulture src/',
+            ]
+        )
+        assert VULTURE_TARGET not in make_prerequisites(before, VALIDATE_TARGET), (
+            'the control could not reproduce a gate that omits vulture, so '
+            'test_the_pre_push_gate_runs_the_dead_code_check cannot be shown to fail. Note the '
+            'help comment above says "with vulture" -- a parser that did not strip `##` would '
+            'find the word there and pass.'
+        )
+        hollow = 'validate: lint vulture ## gate\n\nvulture: ## Find unused code with vulture\n\t@echo skipping\n'
+        assert not [line for line in make_recipe(hollow, VULTURE_TARGET) if 'vulture' in command_tokens(line)], (
+            'the control could not reproduce a hollow `vulture` target, so '
+            'test_the_gated_target_actually_invokes_vulture cannot be shown to fail.'
         )

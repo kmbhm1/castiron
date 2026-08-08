@@ -128,7 +128,7 @@ castiron uses [`uv`](https://docs.astral.sh/uv/) and `hatchling`.
 ```bash
 uv sync                 # create the environment and install dev deps
 uv run castiron --version
-make validate           # ruff + mypy + pytest (the pre-push gate)
+make validate           # ruff + vulture + mypy + pytest (the pre-push gate)
 make serve-docs         # preview the documentation site
 ```
 

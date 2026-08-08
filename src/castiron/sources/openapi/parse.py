@@ -327,8 +327,18 @@ def parse_openapi_document(
     Pure: no I/O, no network, no global state. Ordering is fixed for the ``check``
     drift-guard (Hard Rule #9) — ``definitions`` and ``/rpc/*`` keys are **sorted** (both
     are built from a Haskell hash map upstream, so their document order is not
-    contractual), while ``properties`` order is **preserved** for both columns and function
-    parameters (that order is real: pg ordinal / argument position).
+    contractual), while ``properties`` order is **preserved** as the document gives it.
+
+    ⚠ **Preserved is not the same as meaningful, and the two cases differ.** For a table's
+    columns the document order is real (pg ordinal). For a **function's parameters it is
+    alphabetical, not argument order** — so the order this function hands downstream is not
+    the order the function was declared with, and a positional RPC call built from it
+    (CI-012) would be silently wrong. See :func:`_parse_body_parameters`, which records the
+    measurement, and ``CI-078``, the row that recovers the real order.
+
+    ⚠ This paragraph used to claim the opposite — that ``properties`` order was argument
+    position — and that false claim is the origin of ``CI-078``. Do not restate it without
+    measuring against a real PostgREST document first.
 
     Args:
         document: The decoded OpenAPI document.

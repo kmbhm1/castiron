@@ -17,13 +17,21 @@ The second notice (CI-085) is a *rename*, not a fidelity loss: a column name tha
 Postgres but unusable as a Pydantic field is repaired, so the attribute the user must type is
 not the column name they know. That is a surprise worth one line — and, following the same
 CI5-D11 rule, it is **one aggregated warning per run**, not one per column.
+
+The third (CI-128) is the same kind of rename one level up: an enum **class** name that had to be
+repaired for identifier legality, or suffixed because another type or class already held it. It
+follows the CI-085 notice byte for byte in shape — one aggregated warning, at most three names
+spelled out, then ``and N more``. Deliberately not a third mechanism: castiron already had two ways
+to tell a user "the name you know is not the name you type", and a third would be one too many.
 """
 
 import logging
+from collections.abc import Sequence
 
 from castiron.ir import Schema
 from castiron.ir.build import column_name_is_reserved, column_name_reserved_exceptions
 from castiron.sources.openapi import INTEGER_FAMILY
+from castiron.utils.naming import EnumClass, enum_class_reason
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +143,57 @@ def repaired_column_warning(columns: list[tuple[str, str, str]]) -> str:
     )
 
 
+def renamed_enum_classes(classes: Sequence[EnumClass]) -> list[EnumClass]:
+    """Return the resolved enum classes whose name is not the straight transform of their type name.
+
+    Args:
+        classes: Every resolved class, from the emitter's own
+            :meth:`~castiron.emitters.PydanticEmitter.enum_classes` — the single authority for what
+            was actually written. Re-deriving them here would be a second answer to one question.
+
+    Returns:
+        The renamed ones, in emission order. Empty for a well-behaved schema, which is the common
+        case and prints nothing.
+    """
+    return [entry for entry in classes if entry.note is not None]
+
+
+def renamed_enum_class_warning(classes: list[EnumClass]) -> str:
+    """Build the enum class-name warning for ``classes``, naming at most three of them.
+
+    ⚠ **The suffixed case names who took the bare name**, via
+    :func:`~castiron.utils.naming.enum_class_reason`. A user who finds ``PublicOrderStatusEnum_2``
+    in their models otherwise has no way to discover what holds ``PublicOrderStatusEnum``, and a
+    rename you cannot explain is a bug report rather than something to act on.
+
+    Args:
+        classes: The renamed classes (already filtered by :func:`renamed_enum_classes`).
+
+    Returns:
+        The warning line, in the same voice as :func:`repaired_column_warning`.
+    """
+    details = [
+        f'{entry.enum.schema}.{entry.enum.name} -> {entry.name} ({enum_class_reason(entry, str)})'
+        for entry in classes[:MAX_NAMED_TABLES]
+    ]
+    named = ', '.join(details)
+    if len(classes) > MAX_NAMED_TABLES:
+        named = f'{named} and {len(classes) - MAX_NAMED_TABLES} more'
+    noun = 'enum type is' if len(classes) == 1 else 'enum types are'
+    return (
+        f'{len(classes)} {noun} not emitted under the class name their Postgres type name suggests '
+        f'({named}) -- the original type name is preserved in a comment above each class, so the '
+        f'generated module still records which type it came from; only the Python class name differs.'
+    )
+
+
 def report(
     schema: Schema,
     *,
     infer_generated_primary_keys: bool,
     from_openapi: bool,
     disable_model_prefix_protection: bool,
+    enum_classes: Sequence[EnumClass] = (),
 ) -> None:
     """Emit the fidelity notices for one ``gen`` run.
 
@@ -152,12 +205,18 @@ def report(
             today; the INFO note is specific to its fidelity floor).
         disable_model_prefix_protection: Whether ``model_`` renaming was disabled. Needed to tell
             a ``CI-085`` identifier repair from the shipped reserved-word rename.
+        enum_classes: The resolved enum class names, from the emitter that will write them.
+            Defaults to empty, so a caller that emits no Python classes reports nothing rather
+            than guessing.
     """
     if from_openapi:
         logger.info(OPENAPI_FIDELITY_NOTE)
     repaired = repaired_column_names(schema, disable_model_prefix_protection=disable_model_prefix_protection)
     if repaired:
         logger.warning(repaired_column_warning(repaired))
+    renamed = renamed_enum_classes(enum_classes)
+    if renamed:
+        logger.warning(renamed_enum_class_warning(renamed))
     if infer_generated_primary_keys:
         return
     candidates = identity_pk_candidates(schema)

@@ -30,7 +30,7 @@ from castiron.cli.errors import (
 )
 from castiron.cli.notices import report as report_notices
 from castiron.cli.output import WriteResult, write_emitted_files
-from castiron.emitters import EMITTERS, EmittedFile, EmitterConfig, get_emitter_spec
+from castiron.emitters import EMITTERS, EmittedFile, EmitterConfig, PydanticEmitter, get_emitter_spec
 from castiron.ir import Schema
 from castiron.sources import (
     SourceError,
@@ -254,13 +254,6 @@ def gen(
             infer_generated_primary_keys=infer_generated_primary_keys,
             disable_model_prefix_protection=not model_prefix_protection,
         )
-        report_notices(
-            schema_ir,
-            infer_generated_primary_keys=infer_generated_primary_keys,
-            from_openapi=True,
-            disable_model_prefix_protection=not model_prefix_protection,
-        )
-
         base = EmitterConfig(
             generate_crud_models=crud_models,
             generate_enums=enums,
@@ -269,11 +262,22 @@ def gen(
             singular_names=singular_names,
             include_foreign_keys=foreign_keys,
         )
-        files: list[EmittedFile] = [
-            emitted
-            for spec in specs
-            for emitted in spec.build(replace(base, output_filename=filename or spec.default_filename)).emit(schema_ir)
-        ]
+        # Built before the notices, not after: the enum class-name notice must report the names the
+        # emitter will actually write, and asking the emitter is the only way to do that without a
+        # second derivation (CI-114's defect). `isinstance` rather than a name string because the
+        # Pydantic emitter is currently the only one that binds Python enum class names -- a future
+        # emitter with the same property joins this test, it does not get its own notice.
+        built = [spec.build(replace(base, output_filename=filename or spec.default_filename)) for spec in specs]
+        pydantic = next((emitter for emitter in built if isinstance(emitter, PydanticEmitter)), None)
+        report_notices(
+            schema_ir,
+            infer_generated_primary_keys=infer_generated_primary_keys,
+            from_openapi=True,
+            disable_model_prefix_protection=not model_prefix_protection,
+            enum_classes=pydantic.enum_classes(schema_ir) if pydantic is not None else (),
+        )
+
+        files: list[EmittedFile] = [emitted for emitter in built for emitted in emitter.emit(schema_ir)]
         results = write_emitted_files(files, output, overwrite=overwrite, dry_run=dry_run)
         if not quiet:
             echo_summary(schema_ir, origin, results, dry_run=dry_run)

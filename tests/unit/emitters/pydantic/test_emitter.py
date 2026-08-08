@@ -1,13 +1,15 @@
 import ast
+import json
 import warnings
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from castiron.emitters import EmittedFile, EmitterConfig, PydanticEmitter
-from castiron.emitters.pydantic.emitter import IND
+from castiron.emitters.pydantic.emitter import _IMPORT_BOUND_NAMES, IND, _type_map_bound_names
 from castiron.ir import (
     ColumnInfo,
     EnumInfo,
@@ -1806,3 +1808,285 @@ class TestCi128TheEnumClassHeaderIsSanitized:
         out = _emit(_enum_schema(EnumInfo(name='order_status', values=['pending'], schema='public')))
         assert 'class PublicOrderStatusEnum(str, Enum):' in out
         assert '# original name was' not in out
+
+
+def _corpus_schema(name: str = 'testbed-public') -> Schema:
+    """Build a Schema from a committed corpus capture -- a REAL PostgREST document, not a fixture."""
+    path = Path(__file__).parents[3] / 'unit' / 'corpus' / 'inputs' / f'{name}.openapi.json'
+    return build_schema_from_document(json.loads(path.read_text(encoding='utf-8')))
+
+
+def _top_level_bindings(text: str) -> list[str]:
+    """Every name the emitted module binds at module scope, in source order.
+
+    An AST walk rather than a string match: a string check is exactly the kind of oracle that let
+    ``CI-080`` need four fix rounds (``CI-072`` -- enumerate, do not sample).
+    """
+    names: list[str] = []
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.ClassDef):
+            names.append(node.name)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            names.extend(alias.asname or alias.name.partition('.')[0] for alias in node.names)
+        elif isinstance(node, ast.Assign):
+            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+@pytest.mark.unit
+class TestCi128EnumClassNamesAreDisambiguated:
+    """``CI-128``, second half: two distinct Postgres types silently collapsed onto one class.
+
+    ``python_class_name`` is not injective and never was -- ``order_status``, ``orderStatus``,
+    ``OrderStatus``, ``Order_Status``, ``_order_status`` and ``ORDER_STATUS`` all map to
+    ``PublicOrderStatusEnum``. Driven through the real emitter with two of them present, the module
+    carried **two** ``class PublicOrderStatusEnum(str, Enum):`` definitions; it compiled, it
+    imported, and the second silently won the binding. ``CI94-Q1`` (captain) forbids that: never
+    drop or merge a variant.
+
+    The collision domain is the module's **whole top-level namespace**, not the enum registry --
+    an enum class can equal a table model class name, and it did.
+    """
+
+    def test_two_type_names_that_sanitize_alike_get_two_distinct_classes(self) -> None:
+        namespace = _executed(
+            _emit(
+                _enum_schema(
+                    EnumInfo(name='order status', values=['open'], schema='public'),
+                    EnumInfo(name='order-status', values=['shut'], schema='public'),
+                )
+            )
+        )
+        emitted = _emitted_enums(namespace)
+        assert len(emitted) == 2, 'a Postgres type was dropped or merged (CI94-Q1)'
+        # Each carries ITS OWN labels -- a silent merge would fail exactly here.
+        assert sorted(sorted(member.value for member in cls) for cls in emitted.values()) == [['open'], ['shut']]
+
+    def test_each_column_is_annotated_with_its_own_enum(self) -> None:
+        schema = _enum_schema(
+            EnumInfo(name='order status', values=['open'], schema='public'),
+            EnumInfo(name='order-status', values=['shut'], schema='public'),
+        )
+        namespace = _executed(_emit(schema))
+        model = namespace['OrdersBaseSchema']
+        for column, label in (('c0', 'open'), ('c1', 'shut')):
+            annotation = model.model_fields[column].annotation  # type: ignore[union-attr]
+            enum_class = next(a for a in annotation.__args__ if a is not type(None))  # type: ignore[union-attr]
+            assert [member.value for member in enum_class] == [label]
+
+    def test_the_unrepaired_type_keeps_the_bare_class_name(self) -> None:
+        # 🔴 The captain's ruling on `CI-128-Q1` (Option B), end to end. `schema.enums` arrives
+        # sorted, and `' '`/`'-'` sort before `'_'` -- so plain first-come would hand the hostile
+        # name the clean class and rename the well-behaved one the user already imports.
+        out = _emit(
+            _enum_schema(
+                EnumInfo(name='order status', values=['open'], schema='public'),
+                EnumInfo(name='order-status', values=['shut'], schema='public'),
+                EnumInfo(name='order_status', values=['done'], schema='public'),
+            )
+        )
+        namespace = _executed(out)
+        assert [member.value for member in namespace['PublicOrderStatusEnum']] == ['done']  # type: ignore[union-attr]
+        assert sorted(_emitted_enums(namespace)) == [
+            'PublicOrderStatusEnum',
+            'PublicOrderStatusEnum_2',
+            'PublicOrderStatusEnum_3',
+        ]
+
+    def test_an_enum_class_never_shadows_a_table_model_class(self) -> None:
+        # The §0.4 reproduction. Neither name is exotic: a schema called `order` and a table called
+        # `order_status_enum`. On `main` the module-level `OrderStatusEnum` bound the MODEL, so
+        # `OrderStatusEnum('open')` returned a pydantic model.
+        schema = Schema(
+            tables=[TableInfo(name='order_status_enum', columns=[ColumnInfo(name='id', raw_type='integer')])],
+            enums=[EnumInfo(name='status', values=['open'], schema='order')],
+        )
+        namespace = _executed(_emit(schema))
+        emitted = _emitted_enums(namespace)
+        assert list(emitted) == ['OrderStatusEnum_2']
+        model = namespace['OrderStatusEnum']
+        assert isinstance(model, type) and issubclass(model, BaseModel), 'the table model keeps its name; enums yield'
+        assert not issubclass(model, Enum)
+
+    def test_the_seed_does_not_depend_on_which_variants_the_config_emits(self) -> None:
+        # ⚠ Over-seeding is deliberate. Seeding only the variants a config emits would make an
+        # enum's class name depend on `--no-crud-models` / `--no-null-parent-classes` -- an
+        # unrelated flag silently renaming a user's enum class.
+        schema = Schema(
+            tables=[TableInfo(name='order_status_enum', columns=[ColumnInfo(name='id', raw_type='integer')])],
+            enums=[EnumInfo(name='status', values=['open'], schema='order')],
+        )
+        configs = [
+            EmitterConfig(),
+            EmitterConfig(generate_crud_models=False),
+            EmitterConfig(add_null_parent_classes=True),
+            EmitterConfig(generate_crud_models=False, add_null_parent_classes=True, include_foreign_keys=False),
+        ]
+        resolved = {PydanticEmitter(config).enum_classes(schema)[0].name for config in configs}
+        assert resolved == {'OrderStatusEnum_2'}
+
+    def test_every_top_level_class_name_is_unique(self) -> None:
+        # ⚠ The table names are deliberately snake_case and non-colliding: hostile TABLE names are
+        # `CI-130`, a separate row. A duplicate here must be an enum-vs-something duplicate.
+        schema = Schema(
+            tables=[
+                TableInfo(
+                    name='orders',
+                    columns=[
+                        ColumnInfo(
+                            name='status',
+                            raw_type='USER-DEFINED',
+                            is_nullable=True,
+                            enum_info=EnumInfo(name='order status', values=['open'], schema='public'),
+                        )
+                    ],
+                )
+            ],
+            enums=[
+                EnumInfo(name='order status', values=['open'], schema='public'),
+                EnumInfo(name='order-status', values=['shut'], schema='public'),
+                EnumInfo(name='order_status', values=['done'], schema='public'),
+                EnumInfo(name='', values=['x'], schema=''),
+            ],
+        )
+        bound = _top_level_bindings(_emit(schema))
+        assert len(bound) == len(set(bound)), f'duplicate top-level binding: {sorted(bound)}'
+        _executed(_emit(schema))
+
+    @pytest.mark.parametrize('name', ['default.py.txt', 'maximal.py.txt'])
+    def test_every_corpus_module_binds_unique_top_level_names(self, name: str) -> None:
+        # The property over real, committed output rather than only over a hostile fixture.
+        for path in sorted(Path(__file__).parents[3].glob(f'unit/corpus/golden/*/{name}')):
+            bound = _top_level_bindings(path.read_text(encoding='utf-8'))
+            assert len(bound) == len(set(bound)), f'{path}: {sorted(bound)}'
+
+    def test_the_import_bound_names_constant_covers_a_maximal_emission(self) -> None:
+        # `CI94-D8`: restate the rule in `src/`, then cross-check it against reality here so the
+        # constant cannot rot. ⚠ The fixture MUST carry the type-map-driven imports (numeric, uuid,
+        # jsonb, inet, timestamp) -- the spec's own version of this constant listed only the seven
+        # literal `imports.add` sites and would have failed on any of them.
+        columns = [
+            ColumnInfo(name='id', raw_type='integer', primary=True),
+            ColumnInfo(name='amount', raw_type='numeric', is_nullable=True),
+            ColumnInfo(name='ref', raw_type='uuid', is_nullable=True),
+            ColumnInfo(name='payload', raw_type='jsonb', is_nullable=True),
+            ColumnInfo(name='addr', raw_type='inet', is_nullable=True),
+            ColumnInfo(name='seen_at', raw_type='timestamp with time zone', is_nullable=True),
+            ColumnInfo(name='label', raw_type='text', constraint_definition='CHECK ((length(label) <= 40))'),
+            ColumnInfo(name='model_kind', raw_type='text', is_nullable=True),
+            ColumnInfo(
+                name='status',
+                raw_type='USER-DEFINED',
+                is_nullable=True,
+                enum_info=EnumInfo(name='order_status', values=['open'], schema='public'),
+            ),
+        ]
+        schema = Schema(
+            tables=[
+                TableInfo(
+                    name='orders',
+                    columns=columns,
+                    foreign_keys=[
+                        ForeignKeyInfo(
+                            constraint_name='fk',
+                            column_name='id',
+                            foreign_table_name='orders',
+                            foreign_column_name='id',
+                        )
+                    ],
+                )
+            ],
+            enums=[EnumInfo(name='order_status', values=['open'], schema='public')],
+        )
+        config = EmitterConfig(
+            add_null_parent_classes=True,
+            disable_model_prefix_protection=True,
+        )
+        out = _emit(schema, config)
+        bound = set(_top_level_bindings(_import_block(out) + '\n#\n'))
+        # The premise: a fixture that imported nothing interesting would make this vacuous.
+        assert {'Annotated', 'ConfigDict', 'Enum', 'Field', 'StringConstraints', 'annotations'} <= bound
+        assert bound & _type_map_bound_names(), 'the fixture must reach the type map imports'
+        assert bound <= _IMPORT_BOUND_NAMES, f'unlisted import binding: {sorted(bound - _IMPORT_BOUND_NAMES)}'
+
+    def test_the_reserved_seed_covers_every_name_the_module_binds(self) -> None:
+        # The seed is what makes the enum namespace non-private; if it under-covers, an enum can
+        # still shadow something. Checked against a real emission's actual top-level bindings.
+        schema = _corpus_schema()
+        emitter = PydanticEmitter(EmitterConfig(add_null_parent_classes=True))
+        reserved = emitter._reserved_class_names(schema)
+        enum_names = {entry.name for entry in emitter.enum_classes(schema)}
+        bound = set(_top_level_bindings(emitter.emit(schema)[0].content))
+        assert bound - enum_names <= reserved, f'unreserved binding: {sorted(bound - enum_names - reserved)}'
+
+
+@pytest.mark.unit
+class TestCi128TheRenamedClassCarriesItsSourceTypeName:
+    """``CI-128``: a class header carries **nothing** of the source, so the comment is not cosmetic.
+
+    A member line can omit its gloss because the value literal on the same line already carries the
+    label verbatim (``CI94-D3``). A class header has no such literal -- after sanitization the
+    Postgres type name is unrecoverable from the module, so emitting it is the only thing that keeps
+    the transform non-lossy.
+    """
+
+    def test_a_repaired_class_carries_its_source_type_name(self) -> None:
+        out = _emit(_enum_schema(EnumInfo(name='order status', values=['open'], schema='public')))
+        assert '# original name was "public.order status" (identifier repair)' in out.splitlines()
+
+    def test_a_suffixed_class_names_what_took_the_bare_name(self) -> None:
+        # 🔴 The captain's requirement: the type that received `_2` says so AND names the winner.
+        out = _emit(
+            _enum_schema(
+                EnumInfo(name='order status', values=['open'], schema='public'),
+                EnumInfo(name='order_status', values=['done'], schema='public'),
+            )
+        )
+        assert (
+            '# original name was "public.order status" '
+            '(name collision, PublicOrderStatusEnum is taken by "public.order_status")'
+        ) in out.splitlines()
+
+    def test_a_class_suffixed_by_a_model_name_says_so_without_naming_a_type(self) -> None:
+        schema = Schema(
+            tables=[TableInfo(name='order_status_enum', columns=[ColumnInfo(name='id', raw_type='integer')])],
+            enums=[EnumInfo(name='status', values=['open'], schema='order')],
+        )
+        assert (
+            '# original name was "order.status" '
+            '(name collision, OrderStatusEnum is taken by another class in this module)'
+        ) in _emit(schema).splitlines()
+
+    @pytest.mark.parametrize(
+        'hostile',
+        ['mood\n', 'mo"od', 'mo\\od', 'mo\rod', 'mo\x00od', 'mo\tod'],
+        ids=['newline', 'quote', 'backslash', 'carriage-return', 'nul', 'tab'],
+    )
+    def test_a_hostile_type_name_in_the_comment_cannot_break_the_module(self, hostile: str) -> None:
+        # `CI-009`'s standing lesson: a renderer injecting user text into generated source must be
+        # total over its INPUT domain, not over its best-behaved caller. A raw newline would split
+        # the `#` comment across lines and take the module with it.
+        out = _emit(_enum_schema(EnumInfo(name=hostile, values=['open'], schema='public')))
+        namespace = _executed(out)
+        assert len(_emitted_enums(namespace)) == 1
+        assert sum(line.startswith('# original name was') for line in out.splitlines()) == 1
+
+    def test_a_hostile_holder_name_in_the_comment_cannot_break_the_module(self) -> None:
+        # The holder is user text too, and it reaches the comment through a DIFFERENT path than
+        # the source name -- two hostile types with no well-behaved sibling collide in phase 2.
+        out = _emit(
+            _enum_schema(
+                EnumInfo(name='mo"od\n', values=['open'], schema='public'),
+                EnumInfo(name='mo od\t', values=['shut'], schema='public'),
+            )
+        )
+        assert len(_emitted_enums(_executed(out))) == 2
+
+    def test_an_ordinary_enum_gains_no_comment_and_no_ordinal(self) -> None:
+        # 🔴 The counter-witness, and it is load-bearing: without it, "always comment" and "always
+        # suffix" would satisfy every assertion above -- and a comment above every enum class is
+        # bytes in every user's file forever, plus it would move all four committed goldens.
+        out = _emit(_enum_schema(EnumInfo(name='order_status', values=['pending'], schema='public')))
+        assert 'class PublicOrderStatusEnum(str, Enum):' in out.splitlines()
+        assert '# original name was "public.order_status"' not in out
+        assert 'PublicOrderStatusEnum_2' not in out

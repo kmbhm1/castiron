@@ -125,7 +125,8 @@
             "id"
           ],
           "constraint_definition": "UNIQUE (id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -254,7 +255,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -504,7 +506,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -602,7 +605,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -660,7 +664,8 @@
           "foreign_table_name": "customers",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "customer_tags_tag_id_fkey",
@@ -668,7 +673,8 @@
           "foreign_table_name": "tags",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -680,7 +686,8 @@
             "tag_id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "customer_tags_customer_id_fkey",
@@ -689,7 +696,8 @@
             "customer_id"
           ],
           "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "customer_tags_tag_id_fkey",
@@ -698,7 +706,8 @@
             "tag_id"
           ],
           "constraint_definition": "FOREIGN KEY (tag_id) REFERENCES tags(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -912,7 +921,8 @@
           "foreign_table_name": "customer_tags",
           "foreign_column_name": "customer_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_report_customer_id_fkey",
@@ -920,7 +930,8 @@
           "foreign_table_name": "order_report",
           "foreign_column_name": "customer_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "orders_customer_id_fkey",
@@ -928,7 +939,8 @@
           "foreign_table_name": "orders",
           "foreign_column_name": "customer_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -939,7 +951,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -1032,7 +1045,8 @@
           "foreign_table_name": "employees",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-One"
+          "relation_type": "One-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -1043,7 +1057,8 @@
             "employee_id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "employee_profiles_employee_id_fkey",
@@ -1052,7 +1067,8 @@
             "employee_id"
           ],
           "constraint_definition": "FOREIGN KEY (employee_id) REFERENCES employees(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -1154,7 +1170,8 @@
           "foreign_table_name": "employees",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "employee_profiles_employee_id_fkey",
@@ -1162,7 +1179,8 @@
           "foreign_table_name": "employee_profiles",
           "foreign_column_name": "employee_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-One"
+          "relation_type": "One-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -1173,7 +1191,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "employees_manager_id_fkey",
@@ -1182,7 +1201,8 @@
             "manager_id"
           ],
           "constraint_definition": "FOREIGN KEY (manager_id) REFERENCES employees(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -1238,7 +1258,7 @@
           "is_nullable": false,
           "primary": false,
           "is_unique": false,
-          "is_foreign_key": true,
+          "is_foreign_key": false,
           "is_identity": false,
           "is_generated": false,
           "unique_partners": [],
@@ -1277,7 +1297,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "ledger_refs_ledger_id_fkey",
@@ -1286,7 +1307,8 @@
             "ledger_id"
           ],
           "constraint_definition": "FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -1348,7 +1370,8 @@
             "id"
           ],
           "constraint_definition": "UNIQUE (id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -1429,7 +1452,8 @@
             "customer_id"
           ],
           "constraint_definition": "UNIQUE (customer_id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -1525,7 +1549,8 @@
           "foreign_table_name": "orders",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -1538,7 +1563,8 @@
             "product_region"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_lines_order_id_fkey",
@@ -1547,7 +1573,8 @@
             "order_id"
           ],
           "constraint_definition": "FOREIGN KEY (order_id) REFERENCES orders(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -1684,7 +1711,8 @@
           "foreign_table_name": "customers",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -1695,7 +1723,8 @@
             "order_id"
           ],
           "constraint_definition": "UNIQUE (order_id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_report_customer_id_fkey",
@@ -1704,7 +1733,8 @@
             "customer_id"
           ],
           "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -1905,7 +1935,8 @@
           "foreign_table_name": "customers",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "order_lines_order_id_fkey",
@@ -1913,7 +1944,8 @@
           "foreign_table_name": "order_lines",
           "foreign_column_name": "order_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -1924,7 +1956,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "orders_customer_id_fkey",
@@ -1933,7 +1966,8 @@
             "customer_id"
           ],
           "constraint_definition": "FOREIGN KEY (customer_id) REFERENCES customers(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -2023,7 +2057,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -2112,7 +2147,8 @@
           "foreign_table_name": "person_notes",
           "foreign_column_name": "person_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -2123,7 +2159,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -2206,7 +2243,8 @@
           "foreign_table_name": "people",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -2217,7 +2255,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "person_notes_person_id_fkey",
@@ -2226,7 +2265,8 @@
             "person_id"
           ],
           "constraint_definition": "FOREIGN KEY (person_id) REFERENCES people(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -2350,7 +2390,8 @@
             "region"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -2429,7 +2470,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -2489,7 +2531,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -2547,7 +2590,8 @@
           "foreign_table_name": "series_entries",
           "foreign_column_name": "series_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -2558,7 +2602,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -2641,7 +2686,8 @@
           "foreign_table_name": "series",
           "foreign_column_name": "id",
           "foreign_table_schema": "public",
-          "relation_type": "Many-to-One"
+          "relation_type": "Many-to-One",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -2652,7 +2698,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         },
         {
           "constraint_name": "series_entries_series_id_fkey",
@@ -2661,7 +2708,8 @@
             "series_id"
           ],
           "constraint_definition": "FOREIGN KEY (series_id) REFERENCES series(id)",
-          "raw_constraint_type": "f"
+          "raw_constraint_type": "f",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -2744,7 +2792,8 @@
           "foreign_table_name": "customer_tags",
           "foreign_column_name": "tag_id",
           "foreign_table_schema": "public",
-          "relation_type": "One-to-Many"
+          "relation_type": "One-to-Many",
+          "name_is_synthesized": true
         }
       ],
       "constraints": [
@@ -2755,7 +2804,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [
@@ -3613,7 +3663,8 @@
             "id"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -3694,7 +3745,8 @@
             "id"
           ],
           "constraint_definition": "UNIQUE (id)",
-          "raw_constraint_type": "u"
+          "raw_constraint_type": "u",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],

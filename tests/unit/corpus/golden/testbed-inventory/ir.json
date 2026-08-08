@@ -73,7 +73,8 @@
             "code"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],
@@ -133,7 +134,8 @@
             "code"
           ],
           "constraint_definition": null,
-          "raw_constraint_type": "p"
+          "raw_constraint_type": "p",
+          "name_is_synthesized": true
         }
       ],
       "relationships": [],

@@ -28,13 +28,25 @@ The fourth (CI-130) is the last member of that family: a **table**'s model class
 suffixed by the same rule. It is the one most likely to be seen, because a table's classes are what
 a user imports — and, unlike a column, a table name has no ``Field(alias=...)`` to preserve it, so
 the notice plus the in-code comment are the whole record.
+
+The fifth (CI-084) is **not** a rename, and that is what sets it apart from the middle three: it is a
+*structural loss*. A foreign key whose target table the API role cannot see leaves castiron nothing
+to build a relationship out of, so the column is emitted as a plain value and no nested model is
+generated for it. The user cannot tell from the output that anything is missing -- the emitted module
+is a perfectly ordinary one -- which is precisely why it is worth a line. It is source-agnostic (the
+predicate reads only the IR, and a DDL or single-schema live-DB run reaches the same state), and it
+follows CI5-D11 like its siblings: one aggregated warning per run, at most three named.
 """
 
 import logging
 from collections.abc import Sequence
 
-from castiron.ir import Schema
-from castiron.ir.build import column_name_is_reserved, column_name_reserved_exceptions
+from castiron.ir import ConstraintType, Schema
+from castiron.ir.build import (
+    column_name_is_reserved,
+    column_name_reserved_exceptions,
+    parse_constraint_definition_for_fk,
+)
 from castiron.sources.openapi import INTEGER_FAMILY
 from castiron.utils.naming import ClassStem, EnumClass, class_stem_reason, enum_class_reason
 
@@ -44,14 +56,15 @@ logger = logging.getLogger(__name__)
 #: constant rather than re-listed, so the CLI notice and the inference cannot drift.
 INTEGER_PK_TYPES = INTEGER_FAMILY
 
-#: How many names a warning spells out before collapsing to "and N more". Shared by both
-#: notices so a wide schema degrades the same way whichever one fires.
+#: How many names a warning spells out before collapsing to "and N more". Shared by every
+#: notice that names things, so a wide schema degrades the same way whichever one fires.
 MAX_NAMED_TABLES = 3
 
 #: Shown at INFO (``-v``) once per run when the schema came from the OpenAPI source.
 OPENAPI_FIDELITY_NOTE = (
-    'Read from the OpenAPI source (no database connection): unique/check constraints, identity '
-    'columns, exact integer widths below bigint, and function return types are not visible from it.'
+    'Read from the OpenAPI source (no database connection): unique/check constraints, constraint '
+    'names, identity columns, exact integer widths below bigint, and function return types are not '
+    'visible from it.'
 )
 
 
@@ -235,6 +248,63 @@ def renamed_class_stem_warning(stems: list[ClassStem]) -> str:
     )
 
 
+def dangling_foreign_keys(schema: Schema) -> list[str]:
+    """Return ``table.column -> missing_target`` for every FK whose target is not in the schema.
+
+    ⚠ **Source-agnostic, and it needs no new IR field.** The predicate reads only what the IR
+    already carries: a ``FOREIGN KEY`` :class:`~castiron.ir.ConstraintInfo` is retained even when
+    the builder resolves no edge for it, and its ``constraint_definition`` names the target, which
+    the shipped :func:`~castiron.ir.build.parse_constraint_definition_for_fk` parses. Recording the
+    dangling target a second time on the IR would be two representations of one fact.
+
+    The discriminator is :attr:`~castiron.ir.ColumnInfo.is_foreign_key`, which since CI-084 is
+    ``True`` iff a resolved forward edge names the column -- so a FOREIGN KEY constraint naming a
+    column the flag left ``False`` is exactly a dropped relationship.
+
+    Args:
+        schema: The schema that was just loaded (treated as read-only).
+
+    Returns:
+        One ``'table.column -> target'`` entry per dropped edge, in ``Schema.tables`` then
+        ``TableInfo.constraints`` order (deterministic).
+    """
+    dangling: list[str] = []
+    for table in schema.tables:
+        for constraint in table.constraints:
+            if constraint.type is not ConstraintType.FOREIGN_KEY or constraint.constraint_definition is None:
+                continue
+            parsed = parse_constraint_definition_for_fk(constraint.constraint_definition)
+            if parsed is None:
+                continue
+            _, target, _ = parsed
+            for name in constraint.columns:
+                column = next((c for c in table.columns if c.name == name), None)
+                if column is not None and not column.is_foreign_key:
+                    dangling.append(f'{table.name}.{name} -> {target}')
+    return dangling
+
+
+def dangling_foreign_key_warning(entries: list[str]) -> str:
+    """Build the dangling-foreign-key warning for ``entries``, naming at most three of them.
+
+    Args:
+        entries: The dropped edges (already collected by :func:`dangling_foreign_keys`).
+
+    Returns:
+        The warning line, in the same voice as :func:`renamed_class_stem_warning`.
+    """
+    named = ', '.join(entries[:MAX_NAMED_TABLES])
+    if len(entries) > MAX_NAMED_TABLES:
+        named = f'{named} and {len(entries) - MAX_NAMED_TABLES} more'
+    subject = 'foreign key points' if len(entries) == 1 else 'foreign keys point'
+    return (
+        f'{len(entries)} {subject} at a table this schema does not contain ({named}) -- the target is '
+        f'not visible to the API role, so castiron cannot build the relationship. The column is '
+        f'emitted as a plain value and no nested model is generated for it; the foreign-key '
+        f'constraint is still recorded in the IR.'
+    )
+
+
 def report(
     schema: Schema,
     *,
@@ -272,6 +342,13 @@ def report(
     renamed = renamed_enum_classes(enum_classes)
     if renamed:
         logger.warning(renamed_enum_class_warning(renamed))
+    # ⚠ BEFORE the early return below, and deliberately not gated on `from_openapi`: the condition
+    # is a property of the IR, not of the source, and the identity inference has nothing to do with
+    # it. Placing it after the return would mute a structural loss for every user of
+    # --infer-generated-primary-keys.
+    dangling = dangling_foreign_keys(schema)
+    if dangling:
+        logger.warning(dangling_foreign_key_warning(dangling))
     if infer_generated_primary_keys:
         return
     candidates = identity_pk_candidates(schema)

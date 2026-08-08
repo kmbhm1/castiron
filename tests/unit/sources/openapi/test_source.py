@@ -16,7 +16,7 @@ import pytest
 
 from castiron.emitters.config import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
-from castiron.ir import ConstraintType, FunctionVolatility, ParameterMode, RelationType, Schema
+from castiron.ir import ConstraintType, FunctionVolatility, ParameterMode, RelationType, Schema, build_schema
 from castiron.sources import (
     SourceError,
     SourceFetchError,
@@ -25,6 +25,7 @@ from castiron.sources import (
     load_openapi_schema,
 )
 from castiron.sources.openapi import fetch as fetch_module
+from castiron.sources.openapi.parse import parse_openapi_document
 from tests.unit.sources.openapi.conftest import GOLDEN_DIR
 
 SOURCE_DIR = Path(str(fetch_module.__file__)).parent
@@ -567,6 +568,78 @@ class TestFidelityFloor:
         fk_constraints = [c for t in schema.tables for c in t.constraints if c.type == ConstraintType.FOREIGN_KEY]
         assert fk_constraints
         assert all(len(c.columns) == 1 for c in fk_constraints)
+
+    def test_a_marker_naming_a_table_the_document_does_not_contain_yields_no_relationship(self) -> None:
+        # CI-084. Privileges filter relations, so a `<fk/>` marker can name a table the API role
+        # cannot see. The edge is unbuildable, so `is_foreign_key` stays False -- but the FOREIGN
+        # KEY constraint is RETAINED, because it is the only evidence the database has one.
+        document = {
+            'swagger': '2.0',
+            'definitions': {
+                'child': {
+                    'required': ['ref_id'],
+                    'properties': {
+                        'ref_id': {
+                            'format': 'int32',
+                            'type': 'integer',
+                            'description': ("Note:\nForeign Key to `invisible.id`.<fk table='invisible' column='id'/>"),
+                        }
+                    },
+                }
+            },
+            'paths': {'/child': {'get': {}, 'post': {}}},
+        }
+        schema = build_schema_from_document(document)
+        child = table(schema, 'child')
+        assert [t.name for t in schema.tables] == ['child']
+        assert col(schema, 'child', 'ref_id').is_foreign_key is False
+        assert child.foreign_keys == []
+        assert [(c.type, c.constraint_definition) for c in child.constraints] == [
+            (ConstraintType.FOREIGN_KEY, 'FOREIGN KEY (ref_id) REFERENCES invisible(id)')
+        ]
+
+    def test_every_constraint_name_this_source_produces_is_declared_synthesized(self, document: dict[str, Any]) -> None:
+        # CI-090, and NOT foreign-key-specific: the document carries no constraint name anywhere,
+        # so PRIMARY KEY (`<t>_pkey`) and a view's downgraded UNIQUE (`<t>_<cols>_key`) are
+        # manufactured from pg's default templates exactly as the FK name is.
+        schema = build_schema_from_document(document)
+        constraints = [c for t in schema.tables for c in t.constraints]
+        edges = [fk for t in schema.tables for fk in t.foreign_keys]
+        assert len(constraints) == 11 and len(edges) == 10  # non-vacuous
+        assert {c.type for c in constraints} == {
+            ConstraintType.PRIMARY_KEY,
+            ConstraintType.FOREIGN_KEY,
+            ConstraintType.UNIQUE,
+        }
+        assert all(c.name_is_synthesized is True for c in constraints)
+        assert all(fk.name_is_synthesized is True for fk in edges)
+
+    def test_a_reverse_edge_inherits_the_flag_from_the_edge_it_mirrors(self, document: dict[str, Any]) -> None:
+        # A reverse edge reuses the forward edge's `constraint_name`, so it must reuse its
+        # provenance. `users` holds no `<fk/>` marker of its own; every edge on it is a mirror.
+        schema = build_schema_from_document(document)
+        users = table(schema, 'users')
+        assert users.foreign_keys, 'users should carry only reverse edges'
+        assert all(fk.name_is_synthesized is True for fk in users.foreign_keys)
+
+    def test_the_builder_does_not_claim_synthesis_by_default(self, document: dict[str, Any]) -> None:
+        # The CI-010 contract, asserted today: the flag rides the ROW. A source that reports
+        # `pg_constraint.conname` passes False and nothing in the builder second-guesses it.
+        rows = parse_openapi_document(document)
+        honest_fks = [(*row[:7], False) for row in rows.fk_details]
+        honest_constraints = [(*row[:5], False) for row in rows.constraints]
+        schema = build_schema(
+            rows.column_details,
+            honest_fks,
+            honest_constraints,
+            rows.enum_types,
+            rows.enum_type_mapping,
+        )
+        constraints = [c for t in schema.tables for c in t.constraints]
+        edges = [fk for t in schema.tables for fk in t.foreign_keys]
+        assert len(constraints) == 11 and len(edges) == 10  # non-vacuous
+        assert not any(c.name_is_synthesized for c in constraints)
+        assert not any(fk.name_is_synthesized for fk in edges)
 
 
 # ---------------------------------------------------------------------------

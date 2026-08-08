@@ -80,16 +80,16 @@ def _users_orders_columns() -> list[tuple]:
 
 
 def _users_orders_fks() -> list[tuple]:
-    return [('public', 'orders', 'user_id', 'public', 'users', 'user_id', 'fk_orders_user')]
+    return [('public', 'orders', 'user_id', 'public', 'users', 'user_id', 'fk_orders_user', False)]
 
 
 def _users_orders_constraints() -> list[tuple]:
     return [
-        ('pk_users', 'users', ['user_id'], 'p', 'PRIMARY KEY (user_id)'),
-        ('uniq_email', 'users', ['email'], 'u', 'UNIQUE (email)'),
-        ('pk_orders', 'public.orders', ['order_id'], 'p', 'PRIMARY KEY (order_id)'),
-        ('fk_orders_user', 'orders', ['user_id'], 'f', 'FOREIGN KEY (user_id) REFERENCES users(user_id)'),
-        ('age_check', 'orders', ['age'], 'c', 'CHECK (age >= 0)'),
+        ('pk_users', 'users', ['user_id'], 'p', 'PRIMARY KEY (user_id)', False),
+        ('uniq_email', 'users', ['email'], 'u', 'UNIQUE (email)', False),
+        ('pk_orders', 'public.orders', ['order_id'], 'p', 'PRIMARY KEY (order_id)', False),
+        ('fk_orders_user', 'orders', ['user_id'], 'f', 'FOREIGN KEY (user_id) REFERENCES users(user_id)', False),
+        ('age_check', 'orders', ['age'], 'c', 'CHECK (age >= 0)', False),
     ]
 
 
@@ -182,7 +182,7 @@ def test_build_schema_skips_fk_to_absent_table() -> None:
         ('public', 'orders', 'order_id', None, 'NO', 'integer', None, 'BASE TABLE', None, 'int4', None, None),
         ('public', 'orders', 'ghost_id', None, 'YES', 'integer', None, 'BASE TABLE', None, 'int4', None, None),
     ]
-    fks = [('public', 'orders', 'ghost_id', 'public', 'ghost', 'id', 'fk_ghost')]
+    fks = [('public', 'orders', 'ghost_id', 'public', 'ghost', 'id', 'fk_ghost', False)]
     schema = build_schema(columns, fks, [], [], [])
     orders = _table(schema, 'orders')
     assert orders.foreign_keys == []
@@ -209,7 +209,7 @@ def test_build_schema_view_has_no_primary_key() -> None:
     columns = [
         ('public', 'v', 'x', None, 'YES', 'integer', None, 'VIEW', None, 'int4', None, None),
     ]
-    constraints = [('pk_v', 'v', ['x'], 'p', 'PRIMARY KEY (x)')]
+    constraints = [('pk_v', 'v', ['x'], 'p', 'PRIMARY KEY (x)', False)]
     schema = build_schema(columns, [], constraints, [], [])
     view = _table(schema, 'v')
     assert view.table_type == 'VIEW'
@@ -431,10 +431,17 @@ def test_disable_model_prefix_protection_reaches_constraints_and_foreign_keys() 
         ('public', 'parent', 'model_id', None, 'NO', 'integer', None, 'BASE TABLE', None, None, None, None),
         ('public', 'child', 'model_ref', None, 'NO', 'integer', None, 'BASE TABLE', None, None, None, None),
     ]
-    fks = [('public', 'child', 'model_ref', 'public', 'parent', 'model_id', 'child_model_ref_fkey')]
+    fks = [('public', 'child', 'model_ref', 'public', 'parent', 'model_id', 'child_model_ref_fkey', False)]
     constraints = [
-        ('parent_pkey', 'parent', ['model_id'], 'p', None),
-        ('child_model_ref_fkey', 'child', ['model_ref'], 'f', 'FOREIGN KEY (model_ref) REFERENCES parent(model_id)'),
+        ('parent_pkey', 'parent', ['model_id'], 'p', None, False),
+        (
+            'child_model_ref_fkey',
+            'child',
+            ['model_ref'],
+            'f',
+            'FOREIGN KEY (model_ref) REFERENCES parent(model_id)',
+            False,
+        ),
     ]
 
     protected = build_schema(columns, fks, constraints, [], [])
@@ -532,15 +539,15 @@ def _bridge_inputs() -> tuple[list[tuple], list[tuple], list[tuple]]:
         ('public', 'enrollment', 'course_id', None, 'NO', 'integer', None, 'BASE TABLE', None, 'int4', None, None),
     ]
     fks = [
-        ('public', 'enrollment', 'student_id', 'public', 'student', 'id', 'fk_enr_student'),
-        ('public', 'enrollment', 'course_id', 'public', 'course', 'id', 'fk_enr_course'),
+        ('public', 'enrollment', 'student_id', 'public', 'student', 'id', 'fk_enr_student', False),
+        ('public', 'enrollment', 'course_id', 'public', 'course', 'id', 'fk_enr_course', False),
     ]
     constraints = [
-        ('pk_student', 'student', ['id'], 'p', 'PRIMARY KEY (id)'),
-        ('pk_course', 'course', ['id'], 'p', 'PRIMARY KEY (id)'),
-        ('pk_enrollment', 'enrollment', ['student_id', 'course_id'], 'p', 'PRIMARY KEY (student_id, course_id)'),
-        ('fk_enr_student', 'enrollment', ['student_id'], 'f', 'FOREIGN KEY (student_id) REFERENCES student(id)'),
-        ('fk_enr_course', 'enrollment', ['course_id'], 'f', 'FOREIGN KEY (course_id) REFERENCES course(id)'),
+        ('pk_student', 'student', ['id'], 'p', 'PRIMARY KEY (id)', False),
+        ('pk_course', 'course', ['id'], 'p', 'PRIMARY KEY (id)', False),
+        ('pk_enrollment', 'enrollment', ['student_id', 'course_id'], 'p', 'PRIMARY KEY (student_id, course_id)', False),
+        ('fk_enr_student', 'enrollment', ['student_id'], 'f', 'FOREIGN KEY (student_id) REFERENCES student(id)', False),
+        ('fk_enr_course', 'enrollment', ['course_id'], 'f', 'FOREIGN KEY (course_id) REFERENCES course(id)', False),
     ]
     return columns, fks, constraints
 
@@ -574,7 +581,7 @@ def test_add_relationships_one_to_one_single_fk() -> None:
         ForeignKeyInfo(constraint_name='fk', column_name='id', foreign_table_name='t2', foreign_column_name='id')
     )
     tables = {('public', 't1'): table1, ('public', 't2'): table2}
-    add_relationships_to_table_details(tables, [('public', 't1', 'id', 'public', 't2', 'id', 'fk')])
+    add_relationships_to_table_details(tables, [('public', 't1', 'id', 'public', 't2', 'id', 'fk', False)])
     assert any(
         r.related_table_name == 't2' and r.relation_type == RelationType.ONE_TO_ONE for r in table1.relationships
     )
@@ -592,7 +599,7 @@ def test_add_relationships_many_to_many_multiple_fks() -> None:
         ForeignKeyInfo(constraint_name='fk2', column_name='b', foreign_table_name='t2', foreign_column_name='id')
     )
     tables = {('public', 't1'): table1, ('public', 't2'): table2}
-    add_relationships_to_table_details(tables, [('public', 't1', 'a', 'public', 't2', 'id', 'fk1')])
+    add_relationships_to_table_details(tables, [('public', 't1', 'a', 'public', 't2', 'id', 'fk1', False)])
     assert any(r.relation_type == RelationType.MANY_TO_MANY for r in table1.relationships)
 
 
@@ -631,8 +638,8 @@ def test_add_relationships_bridge_branch() -> None:
         ('public', 'bridge'): bridge,
     }
     fk_details = [
-        ('public', 'bridge', 't1_id', 'public', 'table1', 'id', 'fk1'),
-        ('public', 'bridge', 't2_id', 'public', 'table2', 'id', 'fk2'),
+        ('public', 'bridge', 't1_id', 'public', 'table1', 'id', 'fk1', False),
+        ('public', 'bridge', 't2_id', 'public', 'table2', 'id', 'fk2', False),
     ]
     add_relationships_to_table_details(tables, fk_details)
 
@@ -657,10 +664,14 @@ def _bare(name: str) -> TableInfo:
 def test_add_fk_info_missing_source_and_target() -> None:
     tables = {('public', 'table1'): _bare('table1')}
     # Missing target table.
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 't2_id', 'public', 'table2', 'id', 'fk1')])
+    add_foreign_key_info_to_table_details(
+        tables, [('public', 'table1', 't2_id', 'public', 'table2', 'id', 'fk1', False)]
+    )
     assert tables[('public', 'table1')].foreign_keys == []
     # Missing source table.
-    add_foreign_key_info_to_table_details(tables, [('public', 'table3', 't1_id', 'public', 'table1', 'id', 'fk2')])
+    add_foreign_key_info_to_table_details(
+        tables, [('public', 'table3', 't1_id', 'public', 'table1', 'id', 'fk2', False)]
+    )
     assert tables[('public', 'table1')].foreign_keys == []
 
 
@@ -670,7 +681,7 @@ def test_add_fk_info_one_to_one() -> None:
     table1.add_constraint(ConstraintInfo(constraint_name='pk1', type=ConstraintType.PRIMARY_KEY, columns=['id']))
     table2.add_constraint(ConstraintInfo(constraint_name='pk2', type=ConstraintType.PRIMARY_KEY, columns=['id']))
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'id', 'public', 'table2', 'id', 'fk1')])
+    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'id', 'public', 'table2', 'id', 'fk1', False)])
     assert table1.foreign_keys[0].relation_type == RelationType.ONE_TO_ONE
 
 
@@ -682,7 +693,9 @@ def test_add_fk_info_composite_key_is_many_to_one() -> None:
     )
     table2.add_constraint(ConstraintInfo(constraint_name='pk2', type=ConstraintType.PRIMARY_KEY, columns=['id']))
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'other_id', 'public', 'table2', 'id', 'fk1')])
+    add_foreign_key_info_to_table_details(
+        tables, [('public', 'table1', 'other_id', 'public', 'table2', 'id', 'fk1', False)]
+    )
     assert table1.foreign_keys[0].relation_type == RelationType.MANY_TO_ONE
 
 
@@ -697,7 +710,9 @@ def test_add_fk_info_second_fk_to_same_table_is_many_to_one() -> None:
         )
     )
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'ref2_id', 'public', 'table2', 'id', 'fk2')])
+    add_foreign_key_info_to_table_details(
+        tables, [('public', 'table1', 'ref2_id', 'public', 'table2', 'id', 'fk2', False)]
+    )
     assert len(table1.foreign_keys) == 2
     assert table1.foreign_keys[1].relation_type == RelationType.MANY_TO_ONE
 
@@ -716,7 +731,9 @@ def test_add_fk_info_third_fk_to_same_table_is_many_to_many() -> None:
             )
         )
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'ref3_id', 'public', 'table2', 'id', 'fk3')])
+    add_foreign_key_info_to_table_details(
+        tables, [('public', 'table1', 'ref3_id', 'public', 'table2', 'id', 'fk3', False)]
+    )
     assert table1.foreign_keys[2].relation_type == RelationType.MANY_TO_MANY
 
 
@@ -726,7 +743,7 @@ def test_add_fk_info_target_sole_pk_is_one_to_one() -> None:
     table1, table2 = _bare('table1'), _bare('table2')
     table2.add_constraint(ConstraintInfo(constraint_name='pk2', type=ConstraintType.PRIMARY_KEY, columns=['id']))
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'x', 'public', 'table2', 'id', 'fk1')])
+    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'x', 'public', 'table2', 'id', 'fk1', False)])
     assert table1.foreign_keys[0].relation_type == RelationType.ONE_TO_ONE
 
 
@@ -738,7 +755,7 @@ def test_add_fk_info_target_composite_key_is_many_to_one() -> None:
         ConstraintInfo(constraint_name='pk2', type=ConstraintType.PRIMARY_KEY, columns=['id', 'other'])
     )
     tables = {('public', 'table1'): table1, ('public', 'table2'): table2}
-    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'x', 'public', 'table2', 'id', 'fk1')])
+    add_foreign_key_info_to_table_details(tables, [('public', 'table1', 'x', 'public', 'table2', 'id', 'fk1', False)])
     assert table1.foreign_keys[0].relation_type == RelationType.MANY_TO_ONE
 
 
@@ -921,14 +938,18 @@ def test_get_unique_columns_from_constraints() -> None:
     assert get_unique_columns_from_constraints(unique_no_def) == []
 
 
-@pytest.mark.unit
-def test_update_columns_with_constraints_direct() -> None:
-    columns = [
+def _users_columns() -> list[ColumnInfo]:
+    """Three columns, one per flag ``update_columns_with_constraints`` sets."""
+    return [
         ColumnInfo(name='id', raw_type='uuid'),
         ColumnInfo(name='username', raw_type='text'),
         ColumnInfo(name='order_id', raw_type='uuid'),
     ]
-    constraints = [
+
+
+def _users_constraints() -> list[ConstraintInfo]:
+    """A PRIMARY KEY, a UNIQUE and a FOREIGN KEY naming those three columns."""
+    return [
         ConstraintInfo(constraint_name='pk', type=ConstraintType.PRIMARY_KEY, columns=['id']),
         ConstraintInfo(
             constraint_name='u',
@@ -938,15 +959,49 @@ def test_update_columns_with_constraints_direct() -> None:
         ),
         ConstraintInfo(constraint_name='fk', type=ConstraintType.FOREIGN_KEY, columns=['order_id']),
     ]
-    table = TableInfo(name='users', columns=columns, constraints=constraints)
+
+
+@pytest.mark.unit
+def test_update_columns_with_constraints_direct() -> None:
+    # ⚠ CI-084: the FOREIGN KEY assertion below is load-bearing and needs the `foreign_keys` entry
+    # beside the constraint. `ColumnInfo.is_foreign_key` is `True` **iff** a resolved forward
+    # `ForeignKeyInfo` names the column -- it means "castiron can build a relationship from this
+    # column", not "the database has a foreign key here". This test used to pass the constraint
+    # alone, which asserted the defect (a column claiming a relationship no edge could serve) as
+    # correct behaviour. `test_update_columns_with_constraints_leaves_an_unresolved_fk_unflagged`
+    # below is the other half of the iff.
+    columns = _users_columns()
+    table = TableInfo(
+        name='users',
+        columns=columns,
+        constraints=_users_constraints(),
+        foreign_keys=[
+            ForeignKeyInfo(
+                constraint_name='fk', column_name='order_id', foreign_table_name='orders', foreign_column_name='id'
+            )
+        ],
+    )
     tables = {
         ('public', 'users'): table,
-        ('public', 'empty_cols'): TableInfo(name='empty_cols', constraints=constraints),  # skipped: no columns
+        # skipped: no columns
+        ('public', 'empty_cols'): TableInfo(name='empty_cols', constraints=_users_constraints()),
     }
     update_columns_with_constraints(tables)
     assert columns[0].primary is True
     assert columns[1].is_unique is True
     assert columns[2].is_foreign_key is True
+
+
+@pytest.mark.unit
+def test_update_columns_with_constraints_leaves_an_unresolved_fk_unflagged() -> None:
+    # The same table, minus the edge: the FOREIGN KEY constraint alone no longer sets the flag,
+    # while `primary` and `is_unique` are untouched -- proving the change is scoped to the FK arm.
+    columns = _users_columns()
+    table = TableInfo(name='users', columns=columns, constraints=_users_constraints())
+    update_columns_with_constraints({('public', 'users'): table})
+    assert columns[0].primary is True
+    assert columns[1].is_unique is True
+    assert columns[2].is_foreign_key is False
 
 
 @pytest.mark.unit
@@ -1301,3 +1356,229 @@ class TestBuildSchemaTableDetails:
         )
 
         assert all(t.description is None for t in schema.tables)
+
+
+# ---------------------------------------------------------------------------
+# CI-084 -- `is_foreign_key` follows the resolved edge, not the constraint row.
+# ---------------------------------------------------------------------------
+
+
+def _employee_columns(*tables: str) -> list[tuple]:
+    """One ``id`` + one reference column per named table, through the 12-tuple contract."""
+    rows: list[tuple] = []
+    for name in tables:
+        rows.append(('public', name, 'id', None, 'NO', 'integer', None, 'BASE TABLE', None, 'int4', None, None))
+        rows.append(('public', name, 'ref_id', None, 'YES', 'integer', None, 'BASE TABLE', None, 'int4', None, None))
+    return rows
+
+
+@pytest.mark.unit
+class TestCi084TheForeignKeyFlagFollowsTheEdge:
+    """``ColumnInfo.is_foreign_key`` is ``True`` iff a resolved forward ``ForeignKeyInfo`` names the column.
+
+    A source can legitimately report a FOREIGN KEY constraint whose target table is not in the
+    analysis -- a PostgREST document filtered by the API role's privileges, a DDL or live-DB run
+    scoped to one schema. The builder drops the edge; before CI-084 it still set the flag from the
+    constraint, so the IR contradicted itself. Both directions are asserted here, because a class
+    that only proves "dangling is handled" cannot tell that apart from "the flag never gets set".
+    """
+
+    def test_a_constraint_whose_target_table_is_absent_leaves_the_flag_unset(self) -> None:
+        tables = construct_tables(
+            _employee_columns('child'),
+            [('public', 'child', 'ref_id', 'public', 'ghost', 'id', 'child_ref_id_fkey', False)],
+            [('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES ghost(id)', False)],
+            [],
+            [],
+        )
+        child = tables[('public', 'child')]
+        assert [c.is_foreign_key for c in child.columns if c.name == 'ref_id'] == [False]
+        assert child.foreign_keys == []
+
+    def test_the_foreign_key_constraint_itself_is_still_recorded(self) -> None:
+        # The counter-witness: dropping the constraint too would destroy the only evidence the
+        # database has a foreign key there, and the CLI notice parses exactly this definition.
+        tables = construct_tables(
+            _employee_columns('child'),
+            [('public', 'child', 'ref_id', 'public', 'ghost', 'id', 'child_ref_id_fkey', False)],
+            [('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES ghost(id)', False)],
+            [],
+            [],
+        )
+        constraints = tables[('public', 'child')].constraints
+        assert [c.constraint_name for c in constraints] == ['child_ref_id_fkey']
+        assert constraints[0].constraint_definition == 'FOREIGN KEY (ref_id) REFERENCES ghost(id)'
+        assert parse_constraint_definition_for_fk(str(constraints[0].constraint_definition)) == (
+            'ref_id',
+            'ghost',
+            'id',
+        )
+
+    def test_a_resolvable_constraint_still_sets_the_flag(self) -> None:
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [('public', 'child', 'ref_id', 'public', 'parent', 'id', 'child_ref_id_fkey', False)],
+            [('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES parent(id)', False)],
+            [],
+            [],
+        )
+        child = tables[('public', 'child')]
+        assert [c.is_foreign_key for c in child.columns if c.name == 'ref_id'] == [True]
+        assert [fk.constraint_name for fk in child.foreign_keys] == ['child_ref_id_fkey']
+
+    def test_a_self_referential_foreign_key_still_sets_the_flag(self) -> None:
+        # `employees.manager_id -> employees.id`. The reverse edge lands on `employees` too, but
+        # with `column_name='id'`, so it cannot satisfy the predicate for the constraint's column.
+        tables = construct_tables(
+            [
+                ('public', 'employees', 'id', None, 'NO', 'integer', None, 'BASE TABLE', None, 'int4', None, None),
+                (
+                    'public',
+                    'employees',
+                    'manager_id',
+                    None,
+                    'YES',
+                    'integer',
+                    None,
+                    'BASE TABLE',
+                    None,
+                    'int4',
+                    None,
+                    None,
+                ),
+            ],
+            [('public', 'employees', 'manager_id', 'public', 'employees', 'id', 'employees_manager_id_fkey', False)],
+            [
+                ('employees_pkey', 'employees', ['id'], 'p', 'PRIMARY KEY (id)', False),
+                (
+                    'employees_manager_id_fkey',
+                    'employees',
+                    ['manager_id'],
+                    'f',
+                    'FOREIGN KEY (manager_id) REFERENCES employees(id)',
+                    False,
+                ),
+            ],
+            [],
+            [],
+        )
+        flags = {c.name: c.is_foreign_key for c in tables[('public', 'employees')].columns}
+        assert flags == {'id': False, 'manager_id': True}
+
+    def test_a_column_that_only_carries_a_reverse_edge_is_not_flagged(self) -> None:
+        # `parent.id` gains a reverse `ForeignKeyInfo` from `analyze_table_relationships`, but no
+        # FOREIGN KEY constraint names it, so nothing can set the flag on it.
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [('public', 'child', 'ref_id', 'public', 'parent', 'id', 'child_ref_id_fkey', False)],
+            [
+                ('parent_pkey', 'parent', ['id'], 'p', 'PRIMARY KEY (id)', False),
+                ('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES parent(id)', False),
+            ],
+            [],
+            [],
+        )
+        parent = tables[('public', 'parent')]
+        assert [fk.column_name for fk in parent.foreign_keys] == ['id']  # the reverse edge exists
+        assert [c.is_foreign_key for c in parent.columns if c.name == 'id'] == [False]
+
+    def test_two_constraints_on_one_column_keep_the_flag_when_either_resolves(self) -> None:
+        # Stickiness: the guarded `= True` must never be rewritten as `= <predicate>`, or the
+        # dangling constraint below would unset what the resolved one established.
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [('public', 'child', 'ref_id', 'public', 'parent', 'id', 'child_ref_resolved_fkey', False)],
+            [
+                ('parent_pkey', 'parent', ['id'], 'p', 'PRIMARY KEY (id)', False),
+                (
+                    'child_ref_resolved_fkey',
+                    'child',
+                    ['ref_id'],
+                    'f',
+                    'FOREIGN KEY (ref_id) REFERENCES parent(id)',
+                    False,
+                ),
+                (
+                    'child_ref_dangling_fkey',
+                    'child',
+                    ['ref_id'],
+                    'f',
+                    'FOREIGN KEY (ref_id) REFERENCES ghost(id)',
+                    False,
+                ),
+            ],
+            [],
+            [],
+        )
+        child = tables[('public', 'child')]
+        assert len(child.constraints) == 2
+        assert [c.is_foreign_key for c in child.columns if c.name == 'ref_id'] == [True]
+
+
+@pytest.mark.unit
+class TestCi090TheProvenanceFlagRidesTheRow:
+    """``name_is_synthesized`` is per row, so one build can mix read and manufactured names."""
+
+    def test_the_flag_reaches_both_the_constraint_and_the_edge(self) -> None:
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [('public', 'child', 'ref_id', 'public', 'parent', 'id', 'child_ref_id_fkey', True)],
+            [('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES parent(id)', True)],
+            [],
+            [],
+        )
+        child = tables[('public', 'child')]
+        assert [c.name_is_synthesized for c in child.constraints] == [True]
+        assert [fk.name_is_synthesized for fk in child.foreign_keys] == [True]
+
+    def test_one_build_can_carry_both_provenances(self) -> None:
+        # The reason the flag rides the row rather than the source: a DDL document names one
+        # constraint (`CONSTRAINT x FOREIGN KEY ...`) and leaves the next inline, and both land in
+        # the same build. A per-source switch could not represent this at all.
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [
+                ('public', 'child', 'ref_id', 'public', 'parent', 'id', 'named_by_hand', False),
+                ('public', 'child', 'id', 'public', 'parent', 'id', 'child_id_fkey', True),
+            ],
+            [
+                ('named_by_hand', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES parent(id)', False),
+                ('child_id_fkey', 'child', ['id'], 'f', 'FOREIGN KEY (id) REFERENCES parent(id)', True),
+            ],
+            [],
+            [],
+        )
+        child = tables[('public', 'child')]
+        assert {c.constraint_name: c.name_is_synthesized for c in child.constraints} == {
+            'named_by_hand': False,
+            'child_id_fkey': True,
+        }
+        assert {fk.constraint_name: fk.name_is_synthesized for fk in child.foreign_keys} == {
+            'named_by_hand': False,
+            'child_id_fkey': True,
+        }
+
+    def test_a_synthesized_reverse_edge_inherits_the_flag_it_mirrors(self) -> None:
+        # The reverse edge reuses the owning side's `constraint_name`, so it must reuse its
+        # provenance; otherwise a manufactured name would be mirrored onto an edge claiming the
+        # database supplied it.
+        tables = construct_tables(
+            _employee_columns('child', 'parent'),
+            [('public', 'child', 'ref_id', 'public', 'parent', 'id', 'child_ref_id_fkey', True)],
+            [('child_ref_id_fkey', 'child', ['ref_id'], 'f', 'FOREIGN KEY (ref_id) REFERENCES parent(id)', True)],
+            [],
+            [],
+        )
+        parent = tables[('public', 'parent')]
+        assert [(fk.constraint_name, fk.name_is_synthesized) for fk in parent.foreign_keys] == [
+            ('child_ref_id_fkey', True)
+        ]
+
+    def test_the_builder_claims_nothing_when_the_row_says_nothing(self) -> None:
+        """The CI-010 contract: a source reporting ``pg_constraint.conname`` passes ``False``."""
+        schema = _build_users_orders()
+        constraints = [c for t in schema.tables for c in t.constraints]
+        edges = [fk for t in schema.tables for fk in t.foreign_keys]
+        assert len(constraints) == 5 and len(edges) == 2
+        assert not any(c.name_is_synthesized for c in constraints)
+        assert not any(fk.name_is_synthesized for fk in edges)

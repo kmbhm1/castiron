@@ -297,7 +297,7 @@ COLUMNS: list[Row] = [
     ('public', 'users', 'id', None, 'NO', 'integer', None, 'BASE TABLE', None, None, None, None),
     ('public', 'users', 'status', None, 'YES', 'order_status', None, 'BASE TABLE', None, None, None, None),
 ]
-CONSTRAINTS: list[Row] = [('users_pkey', 'users', ['id'], 'p', None)]
+CONSTRAINTS: list[Row] = [('users_pkey', 'users', ['id'], 'p', None, False)]
 ENUM_TYPES: list[Row] = [('order_status', 'public', '', 'E', True, 'e', ['pending', 'shipped'])]
 ENUM_MAPPING: list[Row] = [('status', 'users', 'public', 'order_status', 'E', '')]
 

@@ -70,13 +70,13 @@ def representative_schema() -> Schema:
         col('company', 'id', 'uuid'),
         col('company', 'name', 'text'),
     ]
-    fks = [('public', 'user', 'company_id', 'public', 'company', 'id', 'user_company_id_fkey')]
+    fks = [('public', 'user', 'company_id', 'public', 'company', 'id', 'user_company_id_fkey', False)]
     constraints = [
-        ('user_pkey', 'user', ['id'], 'p', 'PRIMARY KEY (id)'),
-        ('company_pkey', 'company', ['id'], 'p', 'PRIMARY KEY (id)'),
-        ('user_company_id_fkey', 'user', ['company_id'], 'f', 'FOREIGN KEY (company_id) REFERENCES company(id)'),
-        ('user_sku_len', 'user', ['sku'], 'c', 'CHECK (length(sku) = 10)'),
-        ('user_bio_len', 'user', ['bio'], 'c', 'CHECK (length(bio) <= 500)'),
+        ('user_pkey', 'user', ['id'], 'p', 'PRIMARY KEY (id)', False),
+        ('company_pkey', 'company', ['id'], 'p', 'PRIMARY KEY (id)', False),
+        ('user_company_id_fkey', 'user', ['company_id'], 'f', 'FOREIGN KEY (company_id) REFERENCES company(id)', False),
+        ('user_sku_len', 'user', ['sku'], 'c', 'CHECK (length(sku) = 10)', False),
+        ('user_bio_len', 'user', ['bio'], 'c', 'CHECK (length(bio) <= 500)', False),
     ]
     enum_types = [('user_status', 'public', 'owner', 'E', True, 'e', ['active', 'pending', 'import'])]
     enum_mapping = [('status', 'user', 'public', 'user_status', 'E', '')]

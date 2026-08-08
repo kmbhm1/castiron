@@ -334,7 +334,7 @@ class TestMarkers:
     def test_the_fk_marker_carries_no_schema_and_no_constraint_name(self, document: dict[str, Any]) -> None:
         # The fidelity floor: castiron must synthesize both.
         rows = parse_openapi_document(document)
-        assert ('public', 'orders', 'user_id', 'public', 'users', 'id', 'orders_user_id_fkey') in rows.fk_details
+        assert ('public', 'orders', 'user_id', 'public', 'users', 'id', 'orders_user_id_fkey', True) in rows.fk_details
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ class TestConstraints:
             'restricted_table',
             'users',
         }
-        assert primary_keys['users'] == ('users_pkey', 'users', ['id'], 'p', None)
+        assert primary_keys['users'] == ('users_pkey', 'users', ['id'], 'p', None, True)
         # Composite membership survives; the key ORDER is document order, not pg key order.
         assert primary_keys['order_items'][2] == ['order_id', 'product_id']
 
@@ -370,6 +370,7 @@ class TestConstraints:
             ['user_id'],
             'f',
             'FOREIGN KEY (user_id) REFERENCES users(id)',
+            True,
         ) in foreign_keys
         assert len(foreign_keys) == len(rows.fk_details)
 
@@ -416,6 +417,7 @@ class TestConstraints:
             ['id'],
             'u',
             'UNIQUE (id)',
+            True,
         )
 
 

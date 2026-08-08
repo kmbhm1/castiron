@@ -125,7 +125,7 @@ class TestDeterminism:
             build_columns('t', 'name', 'text'),
             build_columns('t', 'tags', 'ARRAY', nullable=True, array_element_type='text'),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         first = build_schema(columns, [], constraints, [], [])
         second = build_schema(columns, [], constraints, [], [])
         assert _emit(first) == _emit(second)
@@ -177,7 +177,7 @@ class TestValidity:
             build_columns('person', 'email', 'text', nullable=True),
             build_columns('person', 'age', 'integer'),
         ]
-        constraints = [('person_pkey', 'person', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('person_pkey', 'person', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         schema = build_schema(columns, [], constraints, [], [])
         code = _emit(schema)
         namespace: dict[str, object] = {}
@@ -249,7 +249,7 @@ class TestFidelity:
 
     def test_min_and_max_length_constraint(self, build_columns: Callable[..., Row]) -> None:
         columns = [build_columns('t', 'code', 'text')]
-        constraints = [('t_code', 't', ['code'], 'c', 'CHECK (length(code) >= 4 AND length(code) <= 20)')]
+        constraints = [('t_code', 't', ['code'], 'c', 'CHECK (length(code) >= 4 AND length(code) <= 20)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
         assert "code: Annotated[str, StringConstraints(**{'min_length': 4, 'max_length': 20})]" in out
 
@@ -276,13 +276,13 @@ class TestImports:
     def test_annotated_only_when_length_constraint(self, build_columns: Callable[..., Row]) -> None:
         # A text column with a non-length CHECK must NOT pull in Annotated.
         columns = [build_columns('t', 'title', 'text')]
-        constraints = [('t_title', 't', ['title'], 'c', "CHECK (title <> '')")]
+        constraints = [('t_title', 't', ['title'], 'c', "CHECK (title <> '')", False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
         assert 'typing.Annotated' not in _imported(out)
 
     def test_no_future_annotations_without_relationships(self, build_columns: Callable[..., Row]) -> None:
         columns = [build_columns('t', 'id', 'integer', identity=True)]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         assert '__future__.annotations' not in _imported(_emit(build_schema(columns, [], constraints, [], [])))
 
 
@@ -359,7 +359,7 @@ class TestConfigMatrix:
 
     def test_singular_names(self, build_columns: Callable[..., Row]) -> None:
         columns = [build_columns('users', 'id', 'integer', identity=True)]
-        constraints = [('users_pkey', 'users', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('users_pkey', 'users', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []), EmitterConfig(singular_names=True))
         assert 'class UserBaseSchema' in out
         assert 'class UsersBaseSchema' not in out
@@ -369,7 +369,7 @@ class TestConfigMatrix:
             build_columns('t', 'id', 'integer', identity=True),
             build_columns('t', 'name', 'text'),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []), EmitterConfig(add_null_parent_classes=True))
         assert 'class TParent(CustomModel):' in out
         assert 'class TBaseSchema(TParent):' in out
@@ -485,11 +485,11 @@ class TestForeignKeyFields:
             build_columns('user', 'company_id', 'uuid'),
             build_columns('company', 'id', 'uuid'),
         ]
-        fks = [('public', 'user', 'company_id', 'public', 'company', 'id', 'user_company_fk')]
+        fks = [('public', 'user', 'company_id', 'public', 'company', 'id', 'user_company_fk', False)]
         constraints = [
-            ('user_pkey', 'user', ['id'], 'p', 'PRIMARY KEY (id)'),
-            ('company_pkey', 'company', ['id'], 'p', 'PRIMARY KEY (id)'),
-            ('user_company_fk', 'user', ['company_id'], 'f', 'FOREIGN KEY (company_id) REFERENCES company(id)'),
+            ('user_pkey', 'user', ['id'], 'p', 'PRIMARY KEY (id)', False),
+            ('company_pkey', 'company', ['id'], 'p', 'PRIMARY KEY (id)', False),
+            ('user_company_fk', 'user', ['company_id'], 'f', 'FOREIGN KEY (company_id) REFERENCES company(id)', False),
         ]
         out = _emit(build_schema(columns, fks, constraints, [], []))
         assert 'company: Company | None = Field(default=None)' in self._op_class(out, 'User')
@@ -569,7 +569,7 @@ class TestEdgeCases:
             build_columns('t', 'seq', 'integer', identity=True),
             build_columns('t', 'name', 'text'),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
         insert_block = out.split('class TInsert(')[1].split('\n\n\n')[0]
         assert 'seq:' not in insert_block
@@ -635,7 +635,7 @@ class TestDefaultedColumnInsert:
             build_columns('t', 'id', 'integer', identity=True),
             build_columns('t', 'active', 'boolean', default='true'),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
         base_block = out.split('class TBaseSchema(')[1].split('\n\n\n')[0]
         assert 'active: bool' in base_block
@@ -786,7 +786,7 @@ class TestPyStringLiteral:
             build_columns('t', 'id', 'integer', identity=True),
             build_columns('t', 'note', 'text', nullable=True, description='line one\nline two'),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
 
         compile(out, '<generated>', 'exec')
@@ -799,7 +799,7 @@ class TestPyStringLiteral:
             build_columns('t', 'id', 'integer', identity=True),
             build_columns('t', 'note', 'text', nullable=True, description=text),
         ]
-        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)')]
+        constraints = [('t_pkey', 't', ['id'], 'p', 'PRIMARY KEY (id)', False)]
         out = _emit(build_schema(columns, [], constraints, [], []))
 
         with warnings.catch_warnings():

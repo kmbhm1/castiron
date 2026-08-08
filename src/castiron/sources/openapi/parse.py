@@ -42,9 +42,15 @@ move:
 - Numeric precision/scale, ``varchar(n)`` typmods (``maxLength`` survives) and domain names
   are lost — ``format_type(atttypid, NULL)`` erases them.
 - **UNIQUE, CHECK and EXCLUDE constraints do not exist anywhere in the document.**
-- Foreign keys are **single-column only**, carry no schema and no real constraint name
-  (castiron synthesizes pg's own default ``<table>_<column>_fkey``); composite FKs are
-  invisible and a column in two FKs reports only one.
+- Foreign keys are **single-column only**, carry no schema and no real constraint name;
+  composite FKs are invisible and a column in two FKs reports only one.
+- **No constraint name of any kind is in the document.** castiron synthesizes pg's own defaults
+  -- ``<table>_<column>_fkey``, ``<table>_pkey``, ``<table>_<cols>_key`` -- and every row it
+  emits declares that with ``name_is_synthesized=True`` (CI-090), because the manufactured
+  spelling is indistinguishable from a real default-named constraint once it has been written.
+- A ``<fk/>`` marker may name a table the document does not contain, because privileges filter
+  relations: the marker survives as a FOREIGN KEY constraint, but the builder resolves no edge
+  and ``ColumnInfo.is_foreign_key`` stays ``False`` (CI-084).
 - Primary-key *membership* is recoverable, composite-key **order** is not.
 - Views carry no marker at all, so ``table_type`` is inferred from whether the entry declares
   any NOT NULL column (see :func:`classify_table_type`), and PostgREST reports every view column
@@ -488,6 +494,10 @@ def _parse_definition(
         # builder drops the edge anyway -- but the synthesized constraint row would survive
         # and set `is_foreign_key` on a column that has no relationship.
         if markers.foreign_table and markers.foreign_column:
+            # SYNTHESIZED, and declared as such (CI-090). The document carries no constraint name
+            # anywhere, so this is pg's own default template, not a name anybody read. It is
+            # byte-identical to what Postgres names a genuinely default-named constraint, so the
+            # trailing `True` on both rows is the only place the fabrication survives.
             constraint_name = f'{table_name}_{column_name}_fkey'
             rows.fks.append(
                 (
@@ -498,6 +508,7 @@ def _parse_definition(
                     markers.foreign_table,
                     markers.foreign_column,
                     constraint_name,
+                    True,
                 )
             )
             fk_constraints.append(
@@ -507,6 +518,7 @@ def _parse_definition(
                     [column_name],
                     'f',
                     f'FOREIGN KEY ({column_name}) REFERENCES {markers.foreign_table}({markers.foreign_column})',
+                    True,
                 )
             )
 
@@ -520,8 +532,12 @@ def _parse_definition(
     # only evidence the key column is unique, and without it every foreign key pointing AT
     # the view degrades to MANY_TO_MANY and is emitted as a plural list. Downgrading to
     # UNIQUE keeps both facts. Foreign keys on a view are carried unchanged.
+    #
+    # Both names below are SYNTHESIZED from pg's default templates for the same reason as the
+    # foreign-key name above, and both rows declare it with a trailing `True` (CI-090). The
+    # synthesis is not FK-specific: every constraint name this source produces is manufactured.
     if pk_columns and table_type != 'VIEW':
-        rows.constraints.append((f'{table_name}_pkey', table_name, pk_columns, 'p', None))
+        rows.constraints.append((f'{table_name}_pkey', table_name, pk_columns, 'p', None, True))
     elif pk_columns:
         logger.debug(f'Recording the primary-key markers on view {table_name} as UNIQUE: a VIEW has no primary key')
         rows.constraints.append(
@@ -531,6 +547,7 @@ def _parse_definition(
                 pk_columns,
                 'u',
                 f'UNIQUE ({", ".join(pk_columns)})',
+                True,
             )
         )
     rows.constraints.extend(fk_constraints)

@@ -75,8 +75,10 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Primary-key membership | ✅ full | ✅ | `<pk/>` marker in a column's description |
 | Composite primary-key **order** | ❌ not recoverable | ✅ | markers are per column, unordered |
 | A view's primary key | ⚠ recorded as **UNIQUE, not PRIMARY KEY** — see [below](#views) | ✅ | a downgrade, not a guess |
-| Foreign keys | ⚠ **single-column only**; no schema; the constraint name is synthesized as `<table>_<column>_fkey` | ✅ | `<fk table='..' column='..'/>` marker |
+| Foreign keys | ⚠ **single-column only**; no schema | ✅ | `<fk table='..' column='..'/>` marker |
 | Composite foreign keys | ❌ invisible; a column in two foreign keys reports only one | ✅ | one marker per column |
+| A foreign key whose **target table you cannot see** | ⚠ **the relationship is dropped**, the constraint is kept, and castiron warns once — see [below](#a-foreign-key-can-point-at-a-table-you-cannot-see) | ✅ | privileges filter relations, not markers |
+| **Constraint names** (primary key, unique **and** foreign key) | ❌ **never in the document** — castiron synthesizes Postgres's own defaults (`<table>_pkey`, `<table>_<cols>_key`, `<table>_<column>_fkey`) and marks every one `name_is_synthesized` — see [below](#constraint-names-are-manufactured) | ✅ `pg_constraint.conname` | not encoded |
 | **UNIQUE constraints** | ❌ **absent entirely** | ✅ | not in the document |
 | **CHECK constraints** | ❌ **absent entirely** | ✅ | not in the document |
 | **EXCLUDE constraints** | ❌ absent | ✅ | not in the document |
@@ -309,6 +311,53 @@ published, not the subset of it your key may read — so a model can name a colu
 with a permission error the moment you select it. Treat the models as a description of the
 schema's *shape*; get "what may this role read?" from `information_schema.column_privileges`,
 never from generated code.
+
+### A foreign key can point at a table you cannot see
+
+PostgREST's privilege filter removes the *relation*, not the marker that references it. So a
+column can carry `<fk table='private_ledger' column='id'/>` while `private_ledger` is nowhere in
+`definitions` — the normal state of a locked-down project, not a misconfiguration.
+
+castiron cannot build a relationship it has no target for, so:
+
+- **`is_foreign_key` is `False`** for that column. The flag means *"castiron can build a
+  relationship from this column"*, not *"the database has a foreign key here"*.
+- **The `FOREIGN KEY` constraint is kept** in the IR, with its
+  `FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)` definition. That is the record that the
+  database really does have one, and it is what a later live-database run can be diffed against.
+- **The column is emitted as a plain value.** No nested model, no embed.
+- **`castiron gen` warns once per run**, naming up to three of them:
+
+```text
+1 foreign key points at a table this schema does not contain (ledger_refs.ledger_id ->
+private_ledger) -- the target is not visible to the API role, so castiron cannot build the
+relationship. The column is emitted as a plain value and no nested model is generated for it;
+the foreign-key constraint is still recorded in the IR.
+```
+
+If you did not expect that line, the API role is missing a `GRANT` on the target table. If you
+did, nothing is wrong — the warning is telling you which relationship the models do not have.
+
+### Constraint names are manufactured
+
+The document carries **no constraint name at all** — not for primary keys, not for unique
+constraints, not for foreign keys. castiron fills in Postgres's own default spellings
+(`orders_pkey`, `active_users_view_id_key`, `order_lines_order_id_fkey`) so that every constraint
+has the stable key the IR needs.
+
+Those names are right whenever the constraint was created without an explicit name, and wrong
+whenever it was not:
+
+```sql
+CONSTRAINT order_lines_order_fk FOREIGN KEY (order_id) REFERENCES public.orders (id)
+```
+
+castiron reports `order_lines_order_id_fkey` for that one. A guessed name is byte-identical to a
+real default name, so nothing downstream could tell them apart — which is why the IR records the
+provenance explicitly: every `ConstraintInfo` and `ForeignKeyInfo` this source produces carries
+`name_is_synthesized = True`. A live-database source reads `pg_constraint.conname` and leaves it
+`False`. Consumers are meant to read the flag rather than the string: compare constraint names
+only when both sides report `False`, and omit `name=` from generated DDL when it is `True`.
 
 ### Argument order is alphabetical
 

@@ -975,8 +975,19 @@ class TestRpcParameterOrderInTheRealCaptures:
 
     #: Captured ``/rpc/*`` bodies with >1 parameter -- the only ones whose order carries any
     #: information. Asserted by name, so the sweep below cannot pass vacuously if a capture is
-    #: replaced by one with no multi-argument function (``CI-072``, ``CI-091``).
-    INFORMATIVE_BODIES = ('create_order', 'get_customer_stats', 'reserved_args', 'search_products')
+    #: replaced by one with no multi-argument function (``CI-072``, ``CI-091``). The three
+    #: ``probe_*`` entries arrived with the ``CI-139`` recapture (testbed ``f839fce``), which
+    #: seeded them as migrations precisely so they cannot vanish again; see
+    #: :class:`TestTheArgumentOrderProbes`.
+    INFORMATIVE_BODIES = (
+        'create_order',
+        'get_customer_stats',
+        'probe_mixed',
+        'probe_two_optional',
+        'probe_two_required',
+        'reserved_args',
+        'search_products',
+    )
 
     @staticmethod
     def _document(path: Path) -> dict[str, Any]:
@@ -1075,6 +1086,147 @@ class TestRpcParameterOrderInTheRealCaptures:
 
         rows = parse_openapi_document(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
         assert [parameter[0] for parameter in function(rows, 'create_order')[7]] == body
+
+
+# ---------------------------------------------------------------------------
+# The seeded argument-order probes (``CI-139``) -- what the GET order actually IS.
+# ---------------------------------------------------------------------------
+
+
+#: The capture readers belong to :class:`TestRpcParameterOrderInTheRealCaptures` and are
+#: referenced rather than re-implemented: two notions of "the POST body" in one file is how the
+#: two halves quietly drift apart, and this class exists to compare them.
+_READER = TestRpcParameterOrderInTheRealCaptures
+
+
+def _public_rpc_items() -> dict[str, dict[str, Any]]:
+    """Return ``{function name: path item}`` for every ``/rpc/*`` key of the public capture."""
+    return _READER._rpc_items(_READER._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+
+
+def _post_body_required(item: dict[str, Any]) -> list[str]:
+    """Return the POST body schema's ``required`` array, in document order."""
+    for parameter in item.get('post', {}).get('parameters', []):
+        if parameter.get('in') == 'body':
+            return list(parameter['schema'].get('required', []))
+    return []
+
+
+@pytest.mark.unit
+class TestTheArgumentOrderProbes:
+    """The three seeded ``probe_*`` functions, and the one claim they make falsifiable.
+
+    ``search_products`` above proves the POST body and the GET operation **disagree**, so at most
+    one of them can be declaration order. What it cannot say is *which*: with two arguments
+    (``p_terms``, ``p_limit``, one of them defaulted) the observed GET array is equally consistent
+    with "pg declaration order" and with "required first, then alphabetical within group". Those
+    two rules are not interchangeable -- a generated positional RPC call (``CI-012``) is silently
+    wrong under the loser -- and the corpus could not tell them apart.
+
+    The ``probe_*`` functions break the tie. They were designed against ``pg_proc.proargnames``
+    as the oracle, and the ``CI-139`` testbed change seeded them **as migrations** so the finding
+    is reproducible from committed SQL instead of from an ad-hoc ``psql`` session that died with
+    its container:
+
+    - ``probe_two_required(p_zebra text, p_alpha text)`` -- declaration order is anti-alphabetical.
+    - ``probe_two_optional(p_zebra text DEFAULT NULL, p_alpha text DEFAULT NULL)`` -- same, with
+      **nothing** ``required``, so "required first" has no group to sort.
+    - ``probe_mixed(p_zulu text, p_alpha text, p_beta text DEFAULT NULL)`` -- **the decisive one**:
+      required-first-then-alphabetical predicts ``[p_alpha, p_zulu, p_beta]``, declaration order
+      predicts ``[p_zulu, p_alpha, p_beta]``, and the document says the latter.
+
+    **So the GET operation's query-parameter array is true pg declaration order** -- the fact
+    ``CI-078`` turns on, now asserted from committed bytes rather than from a note. Every
+    expectation below is visible in ``tests/unit/corpus/inputs/testbed-public.openapi.json``; no
+    test here needs a live server, and none of them appeals to the seed's SQL as evidence.
+    """
+
+    #: ``(function, GET query order, POST ``properties`` order, POST ``required`` array)``.
+    PROBES: tuple[tuple[str, list[str], list[str], list[str]], ...] = (
+        ('probe_two_required', ['p_zebra', 'p_alpha'], ['p_alpha', 'p_zebra'], ['p_zebra', 'p_alpha']),
+        ('probe_two_optional', ['p_zebra', 'p_alpha'], ['p_alpha', 'p_zebra'], []),
+        ('probe_mixed', ['p_zulu', 'p_alpha', 'p_beta'], ['p_alpha', 'p_beta', 'p_zulu'], ['p_zulu', 'p_alpha']),
+    )
+
+    #: The parametrization ids, so a failure names the probe rather than an index.
+    PROBE_IDS = [probe[0] for probe in PROBES]
+
+    def test_all_three_probes_are_present_in_the_capture(self) -> None:
+        # If this fails on a fresh capture, the document did NOT come from a database carrying
+        # the merged testbed migrations (f839fce or later) -- do not delete the probes to make it
+        # pass, re-capture. They are the only functions in the corpus that can distinguish
+        # declaration order from required-first-alphabetical.
+        present = sorted(name for name in _public_rpc_items() if name.startswith('probe_'))
+        assert present == sorted(self.PROBE_IDS), (
+            f'the capture carries {present}, not the three CI-139 argument-order probes. A capture '
+            f'without them cannot settle what the GET parameter array orders by.'
+        )
+
+    @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
+    def test_the_get_query_parameters_are_in_declaration_order(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
+    ) -> None:
+        item = _public_rpc_items()[name]
+        assert 'get' in item, f'{name} stopped being STABLE; PostgREST emits a GET only for STABLE/IMMUTABLE'
+        assert _READER._get_parameter_names(item) == declared
+        assert declared != sorted(declared), (
+            f'{name} was seeded with anti-alphabetical argument names ON PURPOSE. If its GET array '
+            f'is sorted, the probe has been renamed or reordered and it no longer discriminates.'
+        )
+
+    @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
+    def test_the_post_body_properties_are_alphabetical_and_disagree_with_the_get(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
+    ) -> None:
+        item = _public_rpc_items()[name]
+        body = _READER._body_properties(item)
+        assert body == alphabetical
+        assert body == sorted(body)
+        assert body != _READER._get_parameter_names(item), (
+            f'{name}: the POST body and the GET array agree, so this probe no longer shows that '
+            f'the two encodings are different information.'
+        )
+
+    @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
+    def test_the_post_body_required_array_is_in_declaration_order(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
+    ) -> None:
+        # A second, PARTIAL order signal, and the only one a VOLATILE function exposes at all
+        # (it has no GET): `required` lists the non-defaulted arguments in declaration order.
+        # `probe_two_optional` shows the limit -- everything is defaulted, so the array is empty
+        # and recovers nothing. That is why CI-078 splits STABLE from VOLATILE.
+        item = _public_rpc_items()[name]
+        assert _post_body_required(item) == required
+        assert required == [argument for argument in declared if argument in required]
+
+    def test_probe_mixed_rules_out_required_first_then_alphabetical(self) -> None:
+        # THE falsification, stated as a comparison rather than an equality so a reader can see
+        # what was ruled out. Both hypotheses predict an array for probe_mixed; they differ.
+        query = _READER._get_parameter_names(_public_rpc_items()['probe_mixed'])
+        required = _post_body_required(_public_rpc_items()['probe_mixed'])
+
+        declaration_order = ['p_zulu', 'p_alpha', 'p_beta']
+        required_first_then_alphabetical = sorted(required) + sorted({*declaration_order} - {*required})
+
+        assert required_first_then_alphabetical == ['p_alpha', 'p_zulu', 'p_beta'], 'the rival hypothesis moved'
+        assert query == declaration_order
+        assert query != required_first_then_alphabetical
+        assert query != sorted(query)
+
+    @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
+    def test_castiron_records_the_alphabetical_body_order_for_every_probe(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
+    ) -> None:
+        # ⚠ **This pins a DEFECT** -- the same one `search_products` pins above, now with the
+        # order that is provably wrong rather than merely different: castiron reads the POST body
+        # and reports `probe_mixed` as (p_alpha, p_beta, p_zulu) while the SAME document says it
+        # is declared (p_zulu, p_alpha, p_beta). Both arrays are in hand; castiron keeps the
+        # wrong one.
+        #
+        # When `CI-078` lands this goes RED, and that is GOOD NEWS: change the expectation to the
+        # `declared` column, re-baseline the RPC-bearing goldens, and say so in the PR.
+        rows = parse_openapi_document(_READER._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        assert [parameter[0] for parameter in function(rows, name)[7]] == alphabetical
 
 
 # ---------------------------------------------------------------------------

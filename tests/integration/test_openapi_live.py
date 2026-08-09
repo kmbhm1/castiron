@@ -835,6 +835,10 @@ class TestFunctions:
             'monthly_totals',
             'normalize_email',
             'ping',
+            # The three CI-139 argument-order probes, seeded at testbed f839fce.
+            'probe_mixed',
+            'probe_two_optional',
+            'probe_two_required',
             'reserved_args',
             'search_products',
             'split_name',
@@ -860,6 +864,11 @@ class TestFunctions:
             'list_statuses': (None, True),
             'monthly_totals': (None, True),
             'normalize_email': (None, True),  # IMMUTABLE, reported identically to STABLE
+            # The probes are STABLE by design -- a VOLATILE probe would get no GET operation and
+            # could not carry the declaration order it exists to expose.
+            'probe_mixed': (None, True),
+            'probe_two_optional': (None, True),
+            'probe_two_required': (None, True),
             'reserved_args': (None, True),
             'search_products': (None, True),
             'split_name': (None, True),
@@ -886,6 +895,12 @@ class TestFunctions:
             'monthly_totals': ['p_year'],  # RETURNS TABLE(...) columns are invisible
             'normalize_email': ['p_email'],
             'ping': [],
+            # ⚠ The probes make the defect UNAMBIGUOUS rather than merely visible: each is
+            # declared anti-alphabetically (p_zebra, p_alpha) / (p_zulu, p_alpha, p_beta) and the
+            # same document carries that order in its GET operation.
+            'probe_mixed': ['p_alpha', 'p_beta', 'p_zulu'],
+            'probe_two_optional': ['p_alpha', 'p_zebra'],
+            'probe_two_required': ['p_alpha', 'p_zebra'],
             'reserved_args': ['class', 'def'],
             'search_products': ['p_limit', 'p_terms'],
             'split_name': ['p_full'],  # OUT -- excluded
@@ -918,6 +933,27 @@ class TestFunctions:
         assert get_parameters == ['p_terms', 'p_limit']  # declaration order, available
         assert post_properties == ['p_limit', 'p_terms']  # alphabetical, and what castiron uses
 
+    def test_the_probes_show_the_get_array_is_declaration_order_not_required_first(
+        self, live_public_document: Mapping[str, Any]
+    ) -> None:
+        # `search_products` (above) proves the two encodings disagree; it cannot say WHICH is
+        # declaration order, because "declaration order" and "required first, then alphabetical"
+        # predict the same array for it. `probe_mixed(p_zulu, p_alpha, p_beta DEFAULT NULL)` is
+        # seeded (CI-139) to separate them: the rival rule predicts [p_alpha, p_zulu, p_beta].
+        #
+        # The static half of this lives in tests/unit/sources/openapi/test_parse.py
+        # (TestTheArgumentOrderProbes), asserted against the committed capture, so the finding
+        # survives without a live server. This is the live confirmation that the committed
+        # capture is not stale.
+        item = live_public_document['paths']['/rpc/probe_mixed']
+        get_parameters = [p['name'] for p in item['get']['parameters'] if 'name' in p]
+        body = next(p for p in item['post']['parameters'] if 'schema' in p)
+
+        assert get_parameters == ['p_zulu', 'p_alpha', 'p_beta']  # declaration order
+        assert get_parameters != ['p_alpha', 'p_zulu', 'p_beta']  # NOT required-first-alphabetical
+        assert list(body['schema']['properties']) == ['p_alpha', 'p_beta', 'p_zulu']  # alphabetical
+        assert list(body['schema']['required']) == ['p_zulu', 'p_alpha']  # declaration order, partial
+
     def test_has_default_is_recoverable_from_the_required_list(self, live_public_schema: Schema) -> None:
         stats = {p.name: p.has_default for p in _function(live_public_schema, 'get_customer_stats').parameters}
         assert stats == {'p_customer_id': False, 'p_since': True}
@@ -938,6 +974,13 @@ class TestFunctions:
             ('get_customer_stats', 'p_since'): ParameterMode.IN,
             ('monthly_totals', 'p_year'): ParameterMode.IN,
             ('normalize_email', 'p_email'): ParameterMode.IN,
+            ('probe_mixed', 'p_alpha'): ParameterMode.IN,
+            ('probe_mixed', 'p_beta'): ParameterMode.IN,
+            ('probe_mixed', 'p_zulu'): ParameterMode.IN,
+            ('probe_two_optional', 'p_alpha'): ParameterMode.IN,
+            ('probe_two_optional', 'p_zebra'): ParameterMode.IN,
+            ('probe_two_required', 'p_alpha'): ParameterMode.IN,
+            ('probe_two_required', 'p_zebra'): ParameterMode.IN,
             ('reserved_args', 'class'): ParameterMode.IN,
             ('reserved_args', 'def'): ParameterMode.IN,
             ('search_products', 'p_limit'): ParameterMode.IN,

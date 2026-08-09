@@ -279,8 +279,12 @@ OPENAPI_FIXTURE = InputFamily(
     origin='synthetic',
 )
 
-#: The corpus's centre of gravity: 26 tables, 3 enums, 11 functions, a cross-schema enum
+#: The corpus's centre of gravity: 26 tables, 3 enums, 14 functions, a cross-schema enum
 #: collision, a dangling FK, and the view-classification defect, in real PostgREST encodings.
+#: Three of those functions are the ``CI-139`` argument-order probes, added by the 2026-08-08
+#: recapture (testbed ``f839fce``): they are the only functions in the corpus whose GET array
+#: can distinguish pg declaration order from required-first-then-alphabetical. See
+#: ``tests/unit/sources/openapi/test_parse.py::TestTheArgumentOrderProbes``.
 TESTBED_PUBLIC = InputFamily(
     family_id='testbed-public',
     input_path=INPUTS_DIR / 'testbed-public.openapi.json',

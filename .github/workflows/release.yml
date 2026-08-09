@@ -56,7 +56,7 @@ jobs:
       - name: Create GitHub App token
         id: app-token
         if: vars.VERSION_BUMPER_APPID != ''
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ vars.VERSION_BUMPER_APPID }}
           private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
@@ -79,7 +79,7 @@ jobs:
       #
       # Flipping it is a one-line captain decision; re-read the measurement above first, and note
       # it must be re-taken if a step is ever added that archives the workspace.
-      - uses: actions/checkout@v4 # zizmor: ignore[artipacked]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 # zizmor: ignore[artipacked]
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || github.token }}
@@ -116,6 +116,18 @@ jobs:
       # `build_command` also defends itself with `unset VIRTUAL_ENV` (see pyproject.toml). That is
       # the belt to this brace, not a duplicate: PSR passes a fixed whitelist rather than the
       # environment, and `VIRTUAL_ENV` is the ONLY name on it that anything on the runner can set.
+      #
+      # ⚠ `@v9`, NOT A SHA -- one of the only two refs in this repo that CI-143 deliberately left
+      # unpinned, because this major is READ as configuration rather than merely resolved.
+      # `tests/unit/test_repo_tooling.py::TestTheReleaseBuildCommandCanRunWhereItRuns::
+      # test_every_variable_the_command_reads_is_one_the_pinned_psr_major_provides` parses this
+      # line for its major and uses it to decide which variables `build_command` may reference --
+      # v9 injects `NEW_VERSION` alone, `PACKAGE_NAME` arrived in v10, and under v9 that name
+      # expands to empty and `uv lock --upgrade-package ""` aborts the release AFTER the version
+      # bump and the tag push (CI-115). A SHA carries no readable major, and the only way to green
+      # that guard under one would be to read the major out of a trailing `# vX.Y.Z` comment: an
+      # answer taken from prose nothing verifies, on the one path that cannot be tested by running
+      # it. The exemption and this reasoning are recorded in `.github/zizmor.yml`.
       - name: Python Semantic Release (version + changelog + tag)
         id: release
         uses: python-semantic-release/python-semantic-release@v9
@@ -128,9 +140,16 @@ jobs:
       # `${{ inputs.repository-url || inputs.repository_url }}`. So any value on this step
       # silently redirects a REAL release to some other index -- a release that reports success
       # and publishes nothing anyone can install. The guard asserts both spellings are absent.
+      #
+      # ⚠ The ref moved from `@release/v1` to a commit SHA (CI-143), and the swap was MEASURED to be
+      # a no-op rather than assumed: `refs/heads/release/v1` and the tag `v1.14.2` resolve to the
+      # same commit, so this step runs byte-identical action code either way. Upstream prescribes
+      # the branch, and that recommendation is about staying current -- which `.github/dependabot.yml`
+      # now does explicitly, through a PR a human merges, instead of silently between two runs of a
+      # workflow nobody can rehearse.
       - name: Publish to PyPI
         if: ${{ steps.release.outputs.released == 'true' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/
           print-hash: true
@@ -142,7 +161,9 @@ jobs:
       # A `uses:` ref that does not resolve fails the job, and this step is gated on
       # `released == 'true'`, so it could only ever have fired on the first real release.
       # `publish-action` does publish `v9`, takes the same inputs, and is what the pinned
-      # v9.21.2 docs prescribe. Keep its major in lockstep with the version step (CI-116).
+      # v9.21.2 docs prescribe. Keep its major in lockstep with the version step (CI-116) -- which
+      # is also why this is the second ref CI-143 left unpinned: "same major as the step above" is
+      # a comparison two SHAs cannot express.
       - name: Upload artifacts to the GitHub Release
         if: ${{ steps.release.outputs.released == 'true' }}
         uses: python-semantic-release/publish-action@v9

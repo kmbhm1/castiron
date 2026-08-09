@@ -23,7 +23,9 @@ import dataclasses
 
 import pytest
 
+import castiron
 from castiron.emitters import EmitterConfig
+from tests.unit.conftest import GOLDEN_TOOL_VERSION
 from tests.unit.corpus.cases import (
     EXPECTED_MANIFEST_ROWS,
     NON_OUTPUT_AFFECTING_FIELD,
@@ -59,6 +61,29 @@ class TestManifestMatchesTheSweep:
             case=family.family_id,
             what='manifest',
         )
+
+
+@pytest.mark.unit
+class TestTheManifestNamesTheVersionItsHashesWereTakenUnder:
+    """CI-021a: a sha256 over emitted bytes is now a function of the recorded castiron version."""
+
+    @pytest.mark.parametrize('family', iter_families(), ids=family_ids())
+    def test_the_header_records_the_pinned_sentinel(self, family: InputFamily) -> None:
+        # ⚠ Bound to the constant, never to a copy of the literal. Every row's sha256 covers a
+        # module whose first line names a version; without this line a reader of the manifest has
+        # no way to know WHICH version, and the pin (which exists so semantic-release cannot turn
+        # `main` red) would be invisible in the artifact it protects.
+        header = [
+            line for line in fingerprint_path(family).read_text(encoding='utf-8').splitlines() if line.startswith('#')
+        ]
+        assert any(line.startswith(f'# tool:       castiron {GOLDEN_TOOL_VERSION} ') for line in header), header
+
+    @pytest.mark.parametrize('family', iter_families(), ids=family_ids())
+    def test_the_sentinel_is_not_the_installed_version(self, family: InputFamily) -> None:
+        # 🔴 The point of the pin, asserted rather than assumed: if these ever coincided, a
+        # release commit -- which rewrites `castiron.__version__` and nothing else -- would move
+        # 512 committed manifest rows and 6 goldens, and no developer could regenerate them.
+        assert GOLDEN_TOOL_VERSION != castiron.__version__
 
 
 @pytest.mark.unit

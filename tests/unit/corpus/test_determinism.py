@@ -54,6 +54,7 @@ import pytest
 
 import castiron
 from castiron.emitters import EmitterConfig
+from castiron.emitters.base import parse_header_version
 from castiron.emitters.pydantic import PydanticEmitter
 from castiron.ir import Schema
 from tests.unit.corpus.cases import CASES, REPO_ROOT, TESTBED_INVENTORY, TESTBED_PUBLIC, CorpusCase, InputFamily
@@ -403,8 +404,15 @@ class TestCliEndToEnd:
             ],
         )
         assert result.exit_code == 0, result.output
-        written = (tmp_path / 'schema.py').read_bytes()
-        assert written == case.golden_module.read_bytes(), (
+        # ⚠ Compared in two halves since CI-021a. The committed golden pins its recorded castiron
+        # version to GOLDEN_TOOL_VERSION -- a live version there would make every golden a
+        # function of the release cycle, since semantic-release rewrites `__version__` inside the
+        # release commit. A real CLI run records the INSTALLED version. So line 1 is checked
+        # against `castiron.__version__` and every remaining byte against the golden: together
+        # they cover the whole file, and neither half is normalized away.
+        written = (tmp_path / 'schema.py').read_text(encoding='utf-8')
+        assert parse_header_version(written) == castiron.__version__
+        assert written.split('\n', 1)[1] == case.golden_module.read_text(encoding='utf-8').split('\n', 1)[1], (
             'The CLI wrote different bytes than the committed golden. Either the CLI altered '
             'emitter output on its write path, or the golden is stale.'
         )

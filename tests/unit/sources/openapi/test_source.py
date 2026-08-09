@@ -34,6 +34,7 @@ from castiron.sources import (
 )
 from castiron.sources.openapi import fetch as fetch_module
 from castiron.sources.openapi.parse import parse_openapi_document
+from tests.unit.conftest import GOLDEN_TOOL_VERSION
 from tests.unit.sources.openapi.conftest import GOLDEN_DIR
 
 SOURCE_DIR = Path(str(fetch_module.__file__)).parent
@@ -51,7 +52,7 @@ def col(schema: Schema, table_name: str, column_name: str) -> Any:
 
 def emit(schema: Schema) -> str:
     """Render ``schema`` through the Pydantic emitter and return the single file's text."""
-    files = PydanticEmitter(EmitterConfig()).emit(schema)
+    files = PydanticEmitter(EmitterConfig(), tool_version=GOLDEN_TOOL_VERSION).emit(schema)
     assert len(files) == 1
     return files[0].content
 

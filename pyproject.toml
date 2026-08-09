@@ -237,6 +237,12 @@ ignore_names = [
     # `logging.Formatter`. Never referenced again inside castiron, and never dead.
     "msg",
     "args",
+    # emitters/base.py -- the inverse of `render_header`, published ahead of its caller. It is the
+    # documented way to read a generated module's provenance back, and `castiron check` (CI-021b)
+    # is the caller: shipping the parser WITH the header is what stops 1b from reinventing the
+    # grammar against files 1a has already written into users' repositories. The round trip is
+    # tested exhaustively in tests/unit/emitters/test_base.py::TestProvenanceHeader.
+    "parse_header_version",
 ]
 
 # ----------------------------------------------------------------------------

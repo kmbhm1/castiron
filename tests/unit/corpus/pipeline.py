@@ -20,6 +20,7 @@ from castiron.emitters import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
 from castiron.ir import Schema
 from castiron.sources.openapi import build_schema_from_document
+from tests.unit.conftest import GOLDEN_TOOL_VERSION
 from tests.unit.corpus.cases import (
     GOLDEN_DIR,
     CorpusCase,
@@ -150,7 +151,12 @@ def build_ir(document: dict[str, Any], family: InputFamily, options: SourceOptio
 
 
 def emit_module(schema: Schema, config: EmitterConfig) -> str:
-    """Emit the single Pydantic module for ``schema``.
+    """Emit the single Pydantic module for ``schema``, with the header version **pinned**.
+
+    🔴 The pin is the whole reason this is not a bare ``PydanticEmitter(config)``. See
+    :data:`~tests.unit.conftest.GOLDEN_TOOL_VERSION`: semantic-release rewrites
+    ``castiron.__version__`` in the release commit, so a live version here would make every
+    committed golden and all 512 manifest rows a function of the release cycle.
 
     Args:
         schema: The IR to render.
@@ -159,7 +165,7 @@ def emit_module(schema: Schema, config: EmitterConfig) -> str:
     Returns:
         The emitted module text.
     """
-    return PydanticEmitter(config).emit(schema)[0].content
+    return PydanticEmitter(config, tool_version=GOLDEN_TOOL_VERSION).emit(schema)[0].content
 
 
 def render_ir_golden(schema: Schema) -> str:
@@ -267,6 +273,7 @@ def render_manifest(family: InputFamily, emissions: dict[str, str]) -> str:
         f'# input:      {family.input_path.name}',
         f'# schema:     {family.schema}',
         f'# provenance: {provenance}',
+        f'# tool:       castiron {GOLDEN_TOOL_VERSION} (pinned sentinel -- tests/unit/conftest.py)',
         '# columns:    <config-key>  <sha256>  lines  chars  classes  fields  imports  compiles',
     ]
     rows = [

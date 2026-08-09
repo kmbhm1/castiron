@@ -33,7 +33,15 @@ import re
 from collections.abc import Mapping, Sequence
 from enum import Enum
 
-from castiron.emitters.base import EmittedFile, Emitter, _split_import, render_import_block, section_comment
+from castiron import __version__
+from castiron.emitters.base import (
+    EmittedFile,
+    Emitter,
+    _split_import,
+    render_header,
+    render_import_block,
+    section_comment,
+)
 from castiron.emitters.config import EmitterConfig
 from castiron.ir import ColumnInfo, RelationType, Schema, SortedColumns, TableInfo
 from castiron.ir.build import standardize_column_name
@@ -310,13 +318,28 @@ def _class_docstring(summary: str, description: str | None, trailer: str | None 
 class PydanticEmitter(Emitter):
     """Emit Pydantic v2 models from a :class:`castiron.ir.Schema`."""
 
-    def __init__(self, config: EmitterConfig | None = None) -> None:
+    def __init__(self, config: EmitterConfig | None = None, *, tool_version: str = __version__) -> None:
         """Initialize the emitter.
+
+        🔴 ``tool_version`` is a **keyword-only constructor parameter and deliberately not an**
+        :class:`EmitterConfig` **field.** ``tests/unit/corpus/cases.py::config_axes()`` derives the
+        corpus sweep from ``dataclasses.fields(EmitterConfig)`` and assigns a **bool** to every
+        axis, so a new field would widen the sweep from 128 to 256 points per family *and* build
+        ``EmitterConfig(tool_version=True)`` -- twice the cost, for nonsense. It is also not a
+        behavioural toggle: it changes one token of one comment line, never the code.
+
+        ``EmitterSpec.build: Callable[[EmitterConfig], Emitter]`` still matches, because a
+        keyword-only parameter with a default does not change the call signature. **The CLI never
+        passes it** -- production always records the installed version. The tests do, so no
+        committed golden embeds a version ``python-semantic-release`` rewrites.
 
         Args:
             config: Behavioral toggles; defaults to :class:`EmitterConfig` defaults.
+            tool_version: The castiron version recorded in the emitted module's provenance header.
+                Defaults to the installed :data:`castiron.__version__`.
         """
         self.config = config if config is not None else EmitterConfig()
+        self.tool_version = tool_version
 
     def emit(self, schema: Schema) -> list[EmittedFile]:
         """Render ``schema`` to a single in-memory :class:`EmittedFile`.
@@ -337,6 +360,12 @@ class PydanticEmitter(Emitter):
         The **body is rendered first** and the import block is computed from it (``CI94-D9``), so
         a conditional import is exact rather than re-derived by a predicate that would drift from
         the renderer that made it necessary.
+
+        ⚠ The two-line provenance header (:func:`~castiron.emitters.base.render_header`) precedes
+        ``from __future__ import annotations``, separated from it by one blank line. That is legal
+        and not a near-miss: ``__future__`` must be the first *statement*, and a comment is not a
+        statement. It is also why the header is a comment rather than a module docstring -- a
+        docstring there would both become the user's ``__doc__`` and displace the future import.
 
         ⚠ The import block is joined to the body with **one** blank line, while body sections are
         joined with two. That asymmetry is not a typo: the section after the imports always begins
@@ -375,7 +404,8 @@ class PydanticEmitter(Emitter):
         if operational_section:
             sections.append(operational_section)
         body = '\n\n\n'.join(sections)
-        return f'{self._imports(schema, body)}\n\n{body}\n'
+        header = render_header(self.tool_version)
+        return f'{header}\n\n{self._imports(schema, body)}\n\n{body}\n'
 
     def _imports(self, schema: Schema, body: str) -> str:
         """Build the grouped, deduplicated import block for the module.

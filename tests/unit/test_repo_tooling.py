@@ -93,6 +93,15 @@ stopped meaning anything.
   they depend on is not a hollow one, since a prerequisite naming a target whose recipe checks
   nothing passes just as green as one that works.
 
+  ⚠ That ruling also aged the CI-086 guard above, which is **CI-136**. The offline invariant was
+  asserted of every *pytest* invocation -- correct while pytest was the whole gate, and scoped to a
+  tool rather than to the property from the moment vulture became the first non-pytest member.
+  Nothing then stopped a prerequisite from opening a socket, and a ``make validate`` that quietly
+  needs the network is a gate that passes on the machine it was written on and fails on a fresh
+  contributor's. ``TestEveryStepOfThePrePushGateIsOffline`` asserts it over ``validate``'s own
+  prerequisites, transitively, program by program, and fails CLOSED on a name it does not
+  recognise -- so adding a network-capable step is a decision rather than an accident.
+
 * **CI-108** -- the lint hook was declared as ``ruff``, which upstream retains only as a deprecated
   alias of ``ruff-check``. Nothing was broken; both ids run ``ruff check --force-exclude`` at
   ``v0.16.0``. It is asserted because of *when* it would break: on the alias's removal, at
@@ -203,6 +212,67 @@ LOAD_BEARING_FLAGS = {
 #: Make targets that run the WHOLE suite, and must therefore exclude the live-source half.
 #: ``test-unit`` and ``test-integration`` are deliberately absent -- each selects its own marker.
 WHOLE_SUITE_TARGETS = ('test', 'coverage', 'test-matrix')
+
+#: The two gate targets whose every step must be offline (CI-136). Both, not just ``validate``:
+#: they are meant to differ along ONE axis (how many interpreters), so a step that could reach the
+#: network in one and not the other would be a second, undocumented difference -- the same argument
+#: ``TestTheDeadCodeCheckIsPartOfThePrePushGate`` already makes about vulture's membership.
+GATE_TARGETS = (VALIDATE_TARGET, VALIDATE_FAST_TARGET)
+
+#: Programs the gate may run that are not pytest (CI-136). Each reads local files and emits a
+#: verdict: ruff parses ``[tool.ruff]`` and the source, mypy the same plus its cache, vulture is a
+#: static AST scan. None takes a URL, a host or a DSN in any invocation this repository makes.
+#:
+#: Kept EXACTLY as wide as the gate needs, on the ``[tool.vulture] ignore_names`` precedent: a
+#: stale entry here would silently pre-authorise a tool nothing runs yet, which is how an allowlist
+#: stops being one. ``test_the_allowlist_is_exactly_what_the_gate_runs`` asserts the equality.
+OFFLINE_GATE_TOOLS = frozenset({'mypy', 'ruff', 'vulture'})
+
+#: The one program on the gate that CAN reach a live source, and is therefore allowed only with
+#: the marker. Named rather than spelled inline so the two halves of the CI-136 guard -- "is this
+#: program allowlisted" and "does this pytest carry ``-m``" -- cannot drift onto different spellings.
+GATE_PYTEST = 'pytest'
+
+#: Shell builtins the gate's recipes use for sequencing and banners. Separated from
+#: ``OFFLINE_GATE_TOOLS`` because they are inert by CONSTRUCTION rather than by audit -- none of
+#: them can open a socket in any invocation -- so this set is deliberately allowed to be wider than
+#: what the Makefile happens to use today, and is not asserted for exactness.
+INERT_SHELL_BUILTINS = frozenset({'[', 'cd', 'echo', 'false', 'printf', 'set', 'test', 'true'})
+
+#: The wrapper every tool in this Makefile is invoked through. Peeled before the program is
+#: compared against the allowlist: unpeeled, ``uv`` is a single entry that covers everything uv can
+#: be asked to run, which is not an allowlist at all.
+UV_RUNNER = ('uv', 'run')
+
+#: ``uv run`` flags whose value is the NEXT token, so both must be skipped when locating the
+#: program. Missing one leaves the flag's value in the program position and the guard fails closed
+#: (see ``unwrap_uv_run``), which is why an incomplete list costs a red test rather than a hole.
+UV_RUN_VALUE_FLAGS = frozenset(
+    {'-p', '--python', '--group', '--with', '--with-requirements', '--extra', '--project', '--directory'}
+)
+
+#: Characters a POSIX shell reads as command separators. ``(`` and ``)`` are deliberately EXCLUDED
+#: from ``shlex``'s punctuation set: including them splits ``$(MAKEFILE_LIST)`` into four tokens and
+#: promotes the variable name into command position, which would redden this guard on a Make
+#: idiom that runs nothing. A real subshell instead survives as one unsplit token, is not on any
+#: allowlist, and so still fails -- the safe direction.
+SHELL_SEPARATOR_CHARS = ';&|'
+
+#: Words a shell reads as syntax rather than as a program, and after which a fresh command begins.
+SHELL_KEYWORDS = frozenset({'!', '{', '}', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'if', 'then', 'until', 'while'})
+
+#: Compound-command openers followed by a WORD LIST rather than by a command -- ``for V in 3.10
+#: 3.11 3.13 3.12`` names four interpreters, not four programs. Everything up to the next separator
+#: is skipped after one of these. ``while``/``until`` are keywords above, not here: what follows
+#: them really is a command.
+SHELL_WORD_LIST_OPENERS = frozenset({'case', 'for', 'select'})
+
+#: Make's recipe-line prefixes: ``@`` suppresses the echo, ``-`` ignores a failing command, ``+``
+#: runs the line even under ``make -n``. Stripped before tokenizing, so ``@uv`` is read as ``uv``.
+MAKE_RECIPE_PREFIXES = '@-+'
+
+#: Assignment-prefix form (``FOO=bar cmd``), which occupies command position without being one.
+ENV_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=')
 
 #: The extra that carries the release build's ``uv``. Referenced by name rather than spelled into
 #: each assertion so the two ends of the coupling -- the extra and the ``pip install`` that
@@ -385,16 +455,32 @@ def invokes_pytest(line: str) -> bool:
 def parse_pytest_flags(command: str) -> dict[str, str]:
     """Split one shell command into its flags, mapping flag name to value.
 
-    Handles both spellings pytest accepts: ``--cov=X`` (joined) and ``-m X`` (separate). A flag
-    with no value maps to the empty string.
-
     Args:
         command: One physical command line, with any trailing line-continuation backslash.
 
     Returns:
         The flags found, e.g. ``{'-m': 'not integration', '--cov': 'src/castiron'}``.
     """
-    tokens = command_tokens(command)
+    return flags_from_tokens(command_tokens(command))
+
+
+def flags_from_tokens(tokens: list[str]) -> dict[str, str]:
+    """Map flag name to value for one already-tokenized argv.
+
+    Handles both spellings pytest accepts: ``--cov=X`` (joined) and ``-m X`` (separate). A flag
+    with no value maps to the empty string.
+
+    Takes tokens rather than a string because the CI-136 guard reads flags off ONE invocation
+    picked out of a line that holds several, and re-joining those tokens with spaces would destroy
+    the very value under test: ``-m 'not integration'`` survives tokenization as a single token and
+    would come back from a round-trip as ``-m not``.
+
+    Args:
+        tokens: One argv, as ``command_tokens`` or ``shell_invocations`` produces it.
+
+    Returns:
+        The flags found, e.g. ``{'-m': 'not integration', '--cov': 'src/castiron'}``.
+    """
     flags: dict[str, str] = {}
     index = 0
     while index < len(tokens):
@@ -638,6 +724,155 @@ def make_recipe(text: str, target: str) -> list[str]:
             if line.strip() and not line.strip().startswith('#'):
                 recipe.append(line.strip())
     return recipe
+
+
+def transitive_prerequisites(text: str, target: str) -> list[str]:
+    """Return every target one Make target depends on, directly or through another target.
+
+    Transitive rather than direct because ``make validate`` runs the whole tree, not the top row:
+    a prerequisite that is itself an aggregate would otherwise hide everything beneath it, and the
+    CI-136 guard would report on a name instead of on what Make executes.
+
+    Args:
+        text: The whole ``Makefile``.
+        target: The target name, e.g. ``'validate'``.
+
+    Returns:
+        The dependency targets in breadth-first order, each once. Empty when the target does not
+        exist or has no prerequisites. A cycle terminates rather than recursing forever -- Make
+        itself tolerates one, so a guard that hung on it would be the more surprising failure.
+    """
+    ordered: list[str] = []
+    pending = list(make_prerequisites(text, target))
+    while pending:
+        name = pending.pop(0)
+        if name in ordered:
+            continue
+        ordered.append(name)
+        pending.extend(make_prerequisites(text, name))
+    return ordered
+
+
+def joined_recipe(text: str, target: str) -> list[str]:
+    """Return one target's recipe with backslash-continued lines joined into whole commands.
+
+    Load-bearing, not cosmetic. ``make_recipe`` returns physical lines, and ``test-matrix``'s recipe
+    is a single shell loop spread over ten of them: read line by line, its fourth line ends mid
+    ``pytest`` invocation and its fifth *starts* with ``--cov=src/castiron``. A reader that treats
+    each line as a command would then report ``--cov=src/castiron`` as the program being run, and
+    the CI-136 allowlist -- which fails closed on an unknown program -- would go red on a
+    continuation. Joining first is what makes "one command, one verdict" true.
+
+    Args:
+        text: The whole ``Makefile``.
+        target: The target name, e.g. ``'test-matrix'``.
+
+    Returns:
+        The logical command lines, in recipe order. Empty for a target with no recipe.
+    """
+    joined: list[str] = []
+    pending = ''
+    for line in make_recipe(text, target):
+        if line.endswith('\\'):
+            pending += line[:-1].rstrip() + ' '
+            continue
+        joined.append((pending + line).strip())
+        pending = ''
+    if pending:
+        joined.append(pending.strip())
+    return joined
+
+
+def shell_tokens(command: str) -> list[str]:
+    """Tokenize one shell command, keeping ``;``, ``&`` and ``|`` as tokens of their own.
+
+    Distinct from ``command_tokens``, which uses ``shlex.split`` and so fuses a separator onto the
+    word beside it (``3.12;`` rather than ``3.12``, ``;``). Command position cannot be tracked
+    through that, and command position is the whole of ``shell_invocations``.
+
+    Args:
+        command: One logical shell command line.
+
+    Returns:
+        The tokens, or ``[]`` when the line is not tokenizable on its own (an unbalanced quote).
+        Callers guard an empty result with an explicit anti-vacuity assertion.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=SHELL_SEPARATOR_CHARS)
+    lexer.whitespace_split = True
+    try:
+        return list(lexer)
+    except ValueError:
+        return []
+
+
+def unwrap_uv_run(invocation: list[str]) -> list[str]:
+    """Return the argv of the program a ``uv run`` invocation actually executes.
+
+    Every tool in this Makefile is invoked through ``uv run``, so an unpeeled argv reports ``uv``
+    for the linter, the type checker, the dead-code scan and pytest alike -- one allowlist entry
+    covering everything uv can be asked to run, which is not an allowlist.
+
+    Args:
+        invocation: One argv from ``shell_invocations``.
+
+    Returns:
+        The inner argv. ``invocation`` unchanged when it is not a ``uv run``, and also when no
+        program can be located -- an unrecognised value-taking flag leaves ``uv`` in the program
+        position, so the guard fails closed instead of reporting the flag's value as a program.
+    """
+    if tuple(invocation[: len(UV_RUNNER)]) != UV_RUNNER:
+        return invocation
+    index = len(UV_RUNNER)
+    while index < len(invocation):
+        token = invocation[index]
+        if not token.startswith('-'):
+            return invocation[index:]
+        index += 2 if token in UV_RUN_VALUE_FLAGS else 1
+    return invocation
+
+
+def shell_invocations(command: str) -> list[list[str]]:
+    """Return the argv of every program one shell command line runs.
+
+    A command line in this Makefile is rarely one command: ``test-matrix`` is a ``for`` loop around
+    an ``if``/``else`` holding two separate ``pytest`` calls. They are split apart because the
+    CI-136 assertions are per-invocation -- a whole-line flag scan would let one leg's
+    ``-m "not integration"`` stand in for the other's, which is the exact hole ``CI-089`` closed in
+    the Makefile itself.
+
+    Shell syntax is skipped rather than misread as programs: keywords (``if``, ``then``, ``do``),
+    the word list of a ``for``, and an ``FOO=bar`` assignment prefix all leave command position
+    where it was. ``uv run`` is peeled (see ``unwrap_uv_run``). Make's ``@``/``-``/``+`` recipe
+    prefixes are stripped first.
+
+    Args:
+        command: One logical command line, continuations already joined.
+
+    Returns:
+        One argv per program, in the order a shell would reach them, each already unwrapped.
+    """
+    invocations: list[list[str]] = []
+    current: list[str] | None = None
+    in_word_list = False
+    for token in shell_tokens(command.lstrip(MAKE_RECIPE_PREFIXES + ' ')):
+        if token and not set(token) - set(SHELL_SEPARATOR_CHARS):
+            current, in_word_list = None, False
+            continue
+        if in_word_list:
+            continue
+        if current is not None:
+            current.append(token)
+            continue
+        if token in SHELL_KEYWORDS:
+            continue
+        if token in SHELL_WORD_LIST_OPENERS:
+            in_word_list = True
+            continue
+        if ENV_ASSIGNMENT.match(token):
+            continue
+        current = [token]
+        invocations.append(current)
+    return [unwrap_uv_run(invocation) for invocation in invocations]
 
 
 def locked_version(text: str, package: str) -> str | None:
@@ -1320,6 +1555,216 @@ class TestTheOfflineSuiteIsOfflineByConstruction:
                 f'all sell. Targets that deliberately select one half of the suite '
                 f'(`test-unit`, `test-integration`) are not listed in WHOLE_SUITE_TARGETS.'
             )
+
+
+@pytest.mark.unit
+class TestTheRecipeParserReadsProgramsNotSyntax:
+    """The parser is the load-bearing half of the CI-136 guard, so it is tested on its own.
+
+    Every case here is a shape the real ``Makefile`` already contains, and each is a way a naive
+    reader lies about what the gate runs: a ``for`` header that looks like four programs, an
+    ``if``/``else`` that hides one of two ``pytest`` calls behind the other, a line continuation
+    that turns ``--cov=src/castiron`` into a program name, and a ``uv run`` wrapper that answers
+    ``uv`` for every tool in the tree.
+    """
+
+    def test_the_uv_wrapper_is_peeled_off_the_program(self) -> None:
+        assert shell_invocations('@uv run ruff check .') == [['ruff', 'check', '.']]
+
+    def test_a_value_taking_uv_flag_does_not_become_the_program(self) -> None:
+        # `uv run --python 3.13 pytest` runs pytest, not 3.13 -- and `3.13` on the allowlist is a
+        # hole shaped exactly like the tool it stands in front of.
+        assert shell_invocations('uv run --python 3.13 pytest -q') == [['pytest', '-q']]
+
+    def test_a_uv_run_with_no_program_fails_closed(self) -> None:
+        # No program to find, so the argv is returned whole and `uv` -- which is on no allowlist --
+        # is what gets reported. The alternative, guessing, is what an allowlist exists to prevent.
+        assert shell_invocations('uv run --python') == [['uv', 'run', '--python']]
+
+    def test_a_for_header_is_a_word_list_not_four_programs(self) -> None:
+        command = 'for V in 3.10 3.11 3.13 3.12; do uv run mypy src --python-version "$$V"; done'
+        assert shell_invocations(command) == [['mypy', 'src', '--python-version', '$$V']]
+
+    def test_both_branches_of_an_if_are_separate_invocations(self) -> None:
+        # The reason the guard is per-invocation: with one flag scan over the whole line, the
+        # `then` leg's marker would answer for the `else` leg that lost it.
+        command = 'if [ "$$V" = "3.12" ]; then uv run pytest -m "not integration"; else uv run pytest -q; fi'
+        assert shell_invocations(command) == [
+            ['[', '$$V', '=', '3.12', ']'],
+            ['pytest', '-m', 'not integration'],
+            ['pytest', '-q'],
+        ]
+
+    def test_an_assignment_prefix_is_not_a_program(self) -> None:
+        assert shell_invocations('CASTIRON_TEST_POSTGREST_URL=x uv run pytest') == [['pytest']]
+
+    def test_a_make_variable_is_not_split_into_a_program(self) -> None:
+        # `$(MAKEFILE_LIST)` is one token only because `(` and `)` are kept OUT of the separator
+        # set; with shlex's default punctuation it becomes `$`, `(`, `MAKEFILE_LIST`, `)` and the
+        # variable name lands in command position.
+        assert shell_invocations('@grep -E x $(MAKEFILE_LIST)') == [['grep', '-E', 'x', '$(MAKEFILE_LIST)']]
+
+    def test_a_continued_line_is_one_command_not_two(self) -> None:
+        makefile = 't:\n\t@uv run pytest -m "not integration" \\\n\t\t--cov=src/castiron --cov-fail-under=90\n'
+        assert joined_recipe(makefile, 't') == [
+            '@uv run pytest -m "not integration" --cov=src/castiron --cov-fail-under=90'
+        ]
+
+    def test_prerequisites_are_followed_through_an_intermediate_target(self) -> None:
+        makefile = 'validate: lint stage-two\n\nstage-two: fetch\n\nfetch:\n\t@curl -sSf https://example.test\n'
+        assert transitive_prerequisites(makefile, 'validate') == ['lint', 'stage-two', 'fetch']
+
+    def test_a_prerequisite_cycle_terminates(self) -> None:
+        assert transitive_prerequisites('a: b\n\nb: a\n', 'a') == ['b', 'a']
+
+    def test_the_real_matrix_target_runs_exactly_two_pytests(self) -> None:
+        # Anti-vacuity for the class below: it iterates these invocations, and a parser that found
+        # one (or none) would quietly narrow every assertion that follows.
+        text = MAKEFILE.read_text(encoding='utf-8')
+        programs = [
+            invocation[0] for command in joined_recipe(text, 'test-matrix') for invocation in shell_invocations(command)
+        ]
+        assert programs.count(GATE_PYTEST) == 2, (
+            f'the `test-matrix` target of {MAKE_NAME} parses to {programs}, which is not the two '
+            f'`{GATE_PYTEST}` legs its if/else holds. Did the recipe change shape, or did the parser stop '
+            f'following it?'
+        )
+
+
+@pytest.mark.unit
+class TestEveryStepOfThePrePushGateIsOffline:
+    """CI-136 -- the offline invariant asserted over what the GATE runs, not over pytest alone.
+
+    ``TestTheOfflineSuiteIsOfflineByConstruction`` above covers every *pytest* invocation, which
+    was the whole of the gate right up until vulture joined it (CI-107, captain's ruling
+    2026-08-08). ``vulture`` is harmless; being the FIRST non-pytest member is not, because it
+    proved the guard was scoped to a tool rather than to the property. From that point the guard
+    covered strictly less than the thing it is about -- the CI-081 shape, on the axis of "what
+    counts as the gate" -- and nothing structural stopped the next prerequisite from opening a
+    socket. A ``make validate`` that quietly needs the network is a gate that fails on an aeroplane
+    and on a fresh contributor's machine, and passes on the one where it was written.
+
+    So the property is asserted over ``make validate``'s own prerequisites, transitively, program
+    by program: each is either ``pytest`` carrying ``-m "not integration"``, or a name on an
+    explicit allowlist. It fails CLOSED -- an unrecognised program is a failure, not a shrug --
+    which is what makes adding one a decision rather than an accident.
+    """
+
+    def gate_invocations(self, target: str) -> list[tuple[str, list[str]]]:
+        """Return ``(prerequisite, argv)`` for every program one gate target's prerequisites run."""
+        text = MAKEFILE.read_text(encoding='utf-8')
+        prerequisites = transitive_prerequisites(text, target)
+        # Anti-vacuity (CI-083), twice over: no prerequisites, or a prerequisite whose recipe
+        # parses to nothing, would make every loop below pass having inspected zero programs.
+        assert prerequisites, f'the `{target}` target of {MAKE_NAME} has no prerequisites -- was it renamed or removed?'
+        found: list[tuple[str, list[str]]] = []
+        for name in prerequisites:
+            invocations = [
+                invocation for command in joined_recipe(text, name) for invocation in shell_invocations(command)
+            ]
+            assert invocations, (
+                f'the `{name}` prerequisite of `make {target}` parses to no program at all. Either '
+                f'its recipe is empty -- in which case `make {target}` depends on a target that '
+                f'does nothing and passes, the hollow-target trap `TestTheDeadCodeCheckIsPartOf'
+                f'ThePrePushGate` already guards vulture against -- or `shell_invocations` can no '
+                f'longer read its shape, and every assertion in this class has stopped covering it.'
+            )
+            found.extend((name, invocation) for invocation in invocations)
+        return found
+
+    @pytest.mark.parametrize('target', GATE_TARGETS)
+    def test_every_program_the_gate_runs_is_offline_by_construction(self, target: str) -> None:
+        allowed = OFFLINE_GATE_TOOLS | INERT_SHELL_BUILTINS | {GATE_PYTEST}
+        for prerequisite, invocation in self.gate_invocations(target):
+            assert invocation[0] in allowed, (
+                f'`make {target}` reaches `{invocation[0]}` through its `{prerequisite}` '
+                f'prerequisite:\n  {" ".join(invocation)}\n'
+                f'which is on none of this module`s offline allowlists (OFFLINE_GATE_TOOLS, '
+                f'INERT_SHELL_BUILTINS, GATE_PYTEST). '
+                f'The pre-push gate must run offline BY CONSTRUCTION -- CONTRIBUTING.md, '
+                f'tests/integration/README.md and {MAKE_NAME} all promise a network-free '
+                f'`make {target}`, and a gate that needs a socket fails on a fresh contributor and '
+                f'passes on the machine it was written on. If this program genuinely cannot reach '
+                f'a network, add it to OFFLINE_GATE_TOOLS with a note saying why; if it can, it '
+                f'does not belong in the gate.'
+            )
+
+    @pytest.mark.parametrize('target', GATE_TARGETS)
+    def test_every_pytest_the_gate_runs_excludes_the_live_source_suite(self, target: str) -> None:
+        pytests = [pair for pair in self.gate_invocations(target) if pair[1][0] == GATE_PYTEST]
+        assert pytests, (
+            f'`make {target}` runs no pytest at all, so this assertion is vacuous. Did the test leg leave the gate?'
+        )
+        for prerequisite, invocation in pytests:
+            assert flags_from_tokens(invocation).get('-m') == LOAD_BEARING_FLAGS['-m'], (
+                f'`make {target}` runs pytest without `-m "{LOAD_BEARING_FLAGS["-m"]}"` through its '
+                f'`{prerequisite}` prerequisite:\n  {" ".join(invocation)}\n'
+                f'The live-source suite under tests/integration/ skips itself when '
+                f'CASTIRON_TEST_POSTGREST_URL is unset, so without the marker the gate is offline '
+                f'by ABSENCE OF CONFIGURATION -- a developer who exports it gets a `make {target}` '
+                f'that opens sockets, and nothing says so. Note this is checked per INVOCATION: '
+                f'`test-matrix` holds two, and the marker on one leg must not answer for the other.'
+            )
+
+    def test_the_allowlist_is_exactly_what_the_gate_runs(self) -> None:
+        """A stale entry pre-authorises a tool nothing runs yet, which is how an allowlist rots.
+
+        The ``[tool.vulture] ignore_names`` precedent, in the other direction: that allowlist is
+        asserted to be no WIDER than today's findings for exactly this reason. An entry added
+        speculatively -- or left behind by a tool that has since left the gate -- means the next
+        prerequisite to invoke that name passes silently, and the guard reports nothing at the one
+        moment it was written for.
+        """
+        run = {invocation[0] for _, invocation in self.gate_invocations(VALIDATE_TARGET)}
+        assert OFFLINE_GATE_TOOLS <= run, (
+            f'OFFLINE_GATE_TOOLS allows {sorted(OFFLINE_GATE_TOOLS - run)}, which `make '
+            f'{VALIDATE_TARGET}` does not run. Delete the entry, or -- if the tool was just removed '
+            f'from the gate -- say so in the commit, because until then it is a name any future '
+            f'prerequisite may invoke unchallenged.'
+        )
+
+    def test_these_guards_can_still_see_a_prerequisite_that_opens_a_socket(self) -> None:
+        """Positive control (CI-072): every assertion above is a membership over a parsed list.
+
+        That shape passes loudly when the parser beneath it stops working -- a
+        ``shell_invocations`` that returned ``[]`` would satisfy every loop above forever, and a
+        ``transitive_prerequisites`` that stopped following the tree would satisfy them while
+        inspecting one target of four. So the failure is reproduced here against a Makefile that
+        really does reach the network, THROUGH an intermediate target, and shown to be detected.
+        """
+        trapped = '\n'.join(
+            [
+                'validate: lint refresh-corpus ## The pre-push gate',
+                '',
+                'lint: ## Sort imports + lint with ruff',
+                '\t@uv run ruff check .',
+                '',
+                'refresh-corpus: fetch-schema ## rebuild the corpus',
+                '\t@uv run python -m tests.unit.corpus.regenerate',
+                '',
+                'fetch-schema: ## pull the live schema',
+                '\t@uv run --python 3.12 curl -sSf "$$CASTIRON_TEST_POSTGREST_URL" -o schema.json',
+            ]
+        )
+        reached = transitive_prerequisites(trapped, VALIDATE_TARGET)
+        assert reached == ['lint', 'refresh-corpus', 'fetch-schema'], (
+            f'the control walked to {reached}, so the network-capable target is not even reached '
+            f'and test_every_program_the_gate_runs_is_offline_by_construction cannot be shown to '
+            f'fail. The whole point of following prerequisites transitively is that `fetch-schema` '
+            f'is two hops from the gate.'
+        )
+        programs = {
+            invocation[0]
+            for name in reached
+            for command in joined_recipe(trapped, name)
+            for invocation in shell_invocations(command)
+        }
+        allowed = OFFLINE_GATE_TOOLS | INERT_SHELL_BUILTINS | {GATE_PYTEST}
+        assert 'curl' in programs and not programs <= allowed, (
+            f'the control parsed {sorted(programs)} and did not surface a program outside the '
+            f'allowlist, so the guard above cannot be shown to fail. Most likely `unwrap_uv_run` '
+            f'stopped peeling `uv run --python 3.12 curl` and every tool now reports as `uv`.'
+        )
 
 
 @pytest.mark.unit

@@ -39,7 +39,7 @@ from castiron.ir import (
     Schema,
     TableInfo,
 )
-from castiron.sources.openapi import build_schema_from_document
+from castiron.sources.openapi import MIN_VOLATILITY_SIGNAL_VERSION, build_schema_from_document, volatility_is_encoded
 from castiron.utils.naming import python_class_name, python_member_names
 from tests.integration.conftest import DocumentLoader
 
@@ -879,10 +879,24 @@ class TestFunctions:
             assert function.return_type is None, function.name
             assert function.returns_set is None, function.name
 
+    def test_the_live_server_is_above_the_volatility_floor(self, live_public_schema: Schema) -> None:
+        # `CI-141`. Every expectation in `test_volatility_is_a_binary_signal` below is CONDITIONAL
+        # on this: a PostgREST < 13.0.5 serves a `get` for every /rpc/ path (PR #4174, CHANGELOG
+        # `[13.0.5] - 2025-08-24`), so castiron would report both fields as None for all of them
+        # and that test would go red for a reason that is not a castiron defect. Asserted rather
+        # than assumed, so the diagnosis is one line instead of sixteen.
+        assert live_public_schema.postgrest_version is not None
+        assert volatility_is_encoded(live_public_schema.postgrest_version), (
+            f'this testbed runs PostgREST {live_public_schema.postgrest_version!r}, which is below '
+            f'{MIN_VOLATILITY_SIGNAL_VERSION} and encodes no volatility at all'
+        )
+
     def test_volatility_is_a_binary_signal(self, live_public_schema: Schema) -> None:
         # A VOLATILE function gets POST only; STABLE and IMMUTABLE both get GET+POST and are
         # INDISTINGUISHABLE, which is exactly why FunctionInfo carries both `volatility` (None when
         # unknown) and `is_read_only` (knowable either way).
+        #
+        # ⚠ Sound only because the server is >= 13.0.5 -- asserted directly, one test above.
         assert {f.name: (f.volatility, f.is_read_only) for f in live_public_schema.functions} == {
             'bump_counter': (FunctionVolatility.VOLATILE, False),
             'create_order': (FunctionVolatility.VOLATILE, False),

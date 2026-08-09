@@ -479,6 +479,44 @@ class TestFunctions:
         for name in ('create_order', 'get_user_stats', 'search_products'):
             assert name not in emitted
 
+    def test_a_sub_floor_document_reports_every_function_as_unknown(self, sub_floor_document: dict[str, Any]) -> None:
+        """``CI-141``, end-to-end: the degradation survives the builder, not just the row boundary.
+
+        ⚠ The fixture is **SYNTHETIC and hand-authored** -- evidence about castiron, never about
+        PostgREST. See ``TestThePostgrestVersionGate`` in ``test_parse.py`` for the upstream
+        citations that establish the PostgREST half.
+        """
+        schema = build_schema_from_document(sub_floor_document)
+
+        assert schema.postgrest_version == '12.2.3 (519615d)'  # verbatim, git hash and all
+        assert len(schema.functions) == 3
+        assert all(f.volatility is None for f in schema.functions)
+        assert all(f.is_read_only is None for f in schema.functions)
+        # D4: only those two degrade. `probe_volatile_bump` is a mutation, and a sub-floor server
+        # still serves its GET, so order and VARIADIC are recovered in FULL.
+        bump = next(f for f in schema.functions if f.name == 'probe_volatile_bump')
+        assert [p.name for p in bump.parameters] == ['p_zulu', 'p_alpha', 'p_items']
+        assert bump.parameter_order is ParameterOrder.DECLARED
+        assert {p.name: p.mode for p in bump.parameters} == {
+            'p_zulu': ParameterMode.IN,
+            'p_alpha': ParameterMode.IN,
+            'p_items': ParameterMode.VARIADIC,
+        }
+
+    def test_the_same_document_above_the_floor_recovers_the_signal(self, sub_floor_document: dict[str, Any]) -> None:
+        # One byte differs, so the version -- not the shape -- is what moved.
+        above_floor = json.loads(json.dumps(sub_floor_document))
+        above_floor['info']['version'] = '14.14'
+        schema = build_schema_from_document(above_floor)
+
+        assert schema.postgrest_version == '14.14'
+        assert all(f.is_read_only is True for f in schema.functions)
+
+    def test_build_schema_from_document_records_the_documents_version(self, document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(document)
+
+        assert schema.postgrest_version == document['info']['version'] == '14.14'
+
 
 # ---------------------------------------------------------------------------
 # The fidelity floor, as a tested contract.
@@ -725,6 +763,29 @@ class TestEmittedOutput:
         schema = build_schema_from_document(document)
         assert json.dumps(schema.as_dict()) == json.dumps(build_schema_from_document(document).as_dict())
         assert schema.as_dict()['functions'][0]['volatility'] == 'VOLATILE'
+        assert schema.as_dict()['postgrest_version'] == '14.14'
+
+    def test_the_postgrest_version_never_reaches_the_emitted_bytes(self, sub_floor_document: dict[str, Any]) -> None:
+        """``CI-141`` D6, and a **Hard Rule #9** guard: provenance must not become output.
+
+        Two documents that differ in exactly one byte-range -- ``info.version`` -- must emit
+        **byte-identical** modules. If a version string ever leaked into generated code, every
+        PostgREST patch upgrade against an unchanged schema would make ``castiron check`` (CI-021,
+        which compares emitted BYTES) report drift.
+        """
+        above_floor = json.loads(json.dumps(sub_floor_document))
+        above_floor['info']['version'] = '14.14'
+
+        sub_floor_schema = build_schema_from_document(sub_floor_document)
+        above_floor_schema = build_schema_from_document(above_floor)
+
+        # Not vacuous: the IR really did change -- both the version and the volatility fields.
+        assert sub_floor_schema.postgrest_version != above_floor_schema.postgrest_version
+        assert sub_floor_schema.as_dict() != above_floor_schema.as_dict()
+        # ... and the emitted module did not.
+        assert emit(sub_floor_schema) == emit(above_floor_schema)
+        assert '12.2.3' not in emit(sub_floor_schema)
+        assert 'postgrest_version' not in emit(sub_floor_schema)
 
 
 # ---------------------------------------------------------------------------

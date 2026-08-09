@@ -68,6 +68,24 @@ and that asymmetry is the point: it is the only place declaration order survives
 **Overloads are not representable.** PostgREST maps every overload of ``f`` to the single
 path key ``/rpc/f`` and the last one wins, so the fixture cannot contain two signatures for
 one name; ``test_parse.py`` asserts exactly one function per ``/rpc/*`` key instead.
+
+⚠ **``info.version`` was ``'12.2.3 (abcdef0)'`` until ``CI-145``, and that was a third instance
+of the CI-076 class: a document a real PostgREST could not have produced.** The fixture's
+``/rpc/`` verb sets are **mixed** -- ``('get', 'post')`` on ``get_user_stats`` and
+``search_products``, ``('post',)`` on ``create_order`` and ``ping``. A real 12.2.3 emits ``get``
+on **all four**: ``makeProcPathItem`` only learned to withhold it for VOLATILE functions in
+**13.0.5** (PR #4174, CHANGELOG ``[13.0.5] - 2025-08-24``), and the ``v12.2.3``, ``v12.2.12`` and
+``v13.0.4`` sources are unconditional. The verb shape is the >= 13.0.5 shape, so the *version*
+is what was wrong and it is now ``'14.14'``. Repaired in the same direction as ``CI-133``, which
+corrected this same fixture's RPC body ordering for exactly this reason. Do **not** "fix" it the
+other way by adding GETs to the two POST-only paths: that would make it a sub-floor document and
+destroy the above-floor coverage four test modules depend on.
+
+``fixtures/postgrest_openapi_v12_shaped.json`` is the **sub-floor** counterpart, added by
+``CI-141``. It is deliberately tiny (one table, three ``/rpc/`` paths) and **SYNTHETIC** -- see
+its own ``info.description``, which carries the full label and the upstream citations. It is
+evidence about **castiron**, never about PostgREST: the claim it embodies (a PostgREST < 13.0.5
+serves a ``get`` for every ``/rpc/`` path) rests on the generator source, not on this file.
 """
 
 import json
@@ -90,6 +108,17 @@ def load_fixture(name: str) -> dict[str, Any]:
 def document() -> dict[str, Any]:
     """The representative PostgREST OpenAPI document."""
     return load_fixture('postgrest_openapi.json')
+
+
+@pytest.fixture
+def sub_floor_document() -> dict[str, Any]:
+    """A SYNTHETIC document shaped the way a PostgREST below 13.0.5 serves one (``CI-141``).
+
+    ``info.version`` is ``'12.2.3 (519615d)'`` and **every** ``/rpc/`` path carries a ``get``,
+    including ``probe_volatile_bump``, which is a mutation. Hand-authored: it proves what castiron
+    does given a version string and a document shape, and nothing whatsoever about PostgREST.
+    """
+    return load_fixture('postgrest_openapi_v12_shaped.json')
 
 
 @pytest.fixture

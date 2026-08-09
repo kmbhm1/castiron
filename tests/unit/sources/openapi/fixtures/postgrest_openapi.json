@@ -1,7 +1,7 @@
 {
   "swagger": "2.0",
   "info": {
-    "version": "12.2.3 (abcdef0)",
+    "version": "14.14",
     "title": "standard public schema",
     "description": "This is a RESTful API for the public schema."
   },

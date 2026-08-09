@@ -20,6 +20,8 @@ from castiron.cli.notices import (
     repaired_column_names,
     repaired_column_warning,
     report,
+    volatility_unknown_functions,
+    volatility_unknown_warning,
 )
 from castiron.ir import ColumnInfo, ConstraintInfo, ConstraintType, EnumInfo, Schema, TableInfo
 from castiron.sources import build_schema_from_document
@@ -642,4 +644,141 @@ class TestReportDanglingForeignKeys:
                 disable_model_prefix_protection=False,
             )
         levels = {r.levelno for r in caplog.records if 'does not contain' in r.getMessage()}
+        assert levels == {logging.WARNING}
+
+
+# ---------------------------------------------------------------------------
+# The sixth notice: volatility the server build could not encode (CI-141).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestVolatilityUnknownFunctions:
+    """CI-141: below PostgREST 13.0.5 the document carries a ``get`` for every ``/rpc/`` path.
+
+    ⚠ The sub-floor document these tests read is **SYNTHETIC and hand-authored** -- evidence about
+    castiron, never about PostgREST (upstream citations in
+    ``tests/unit/sources/openapi/test_parse.py::TestThePostgrestVersionGate``).
+    """
+
+    def test_it_names_every_function_below_the_floor(self, openapi_sub_floor_document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(openapi_sub_floor_document)
+        # Every one, in Schema.functions order -- the set is never a subset, which is why the
+        # warning reports a count rather than a sample.
+        assert volatility_unknown_functions(schema) == [f.name for f in schema.functions]
+        assert len(schema.functions) == 3
+
+    def test_an_above_floor_schema_reports_nothing(self, openapi_fixture_document: dict[str, Any]) -> None:
+        schema = build_schema_from_document(openapi_fixture_document)
+        assert schema.postgrest_version == '14.14'
+        assert volatility_unknown_functions(schema) == []
+
+    def test_a_sub_floor_schema_with_no_functions_reports_nothing(
+        self, openapi_sub_floor_document: dict[str, Any]
+    ) -> None:
+        # The fact is real but unactionable, and CI5-D11 forbids noise.
+        schema = build_schema_from_document(openapi_sub_floor_document)
+        schema.functions = []
+        assert volatility_unknown_functions(schema) == []
+
+    def test_a_schema_from_another_source_reports_nothing(self) -> None:
+        # ``postgrest_version`` is None for every source that is not PostgREST, so the predicate is
+        # source-agnostic without needing a `from_openapi` gate -- exactly like dangling_foreign_keys.
+        assert volatility_unknown_functions(Schema()) == []
+
+
+@pytest.mark.unit
+class TestVolatilityUnknownWarning:
+    def test_it_names_the_version_and_the_remedy(self) -> None:
+        message = volatility_unknown_warning(['a', 'b'], '12.2.3 (519615d)')
+        assert 'PostgREST 12.2.3 (519615d)' in message
+        assert '13.0.5' in message
+        assert 'all 2 functions' in message
+
+    def test_one_function_reads_singular(self) -> None:
+        assert 'all 1 function ' in volatility_unknown_warning(['a'], '12.2.3')
+
+    def test_it_never_names_the_functions(self) -> None:
+        # ⚠ The deliberate deviation from the family: the affected set is ALWAYS every function,
+        # so naming three of them (the MAX_NAMED_TABLES elision every sibling uses) would imply
+        # the rest were fine.
+        names = [f'fn_{i}' for i in range(MAX_NAMED_TABLES + 2)]
+        message = volatility_unknown_warning(names, '12.2.3')
+        assert not any(name in message for name in names)
+        assert 'more' not in message
+
+    def test_it_says_what_castiron_does_instead_of_guessing(self) -> None:
+        message = volatility_unknown_warning(['a'], '12.2.3')
+        assert 'unknown' in message
+        assert 'rather than asserting' in message
+
+
+@pytest.mark.unit
+class TestReportVolatilityUnknown:
+    def test_the_warning_fires_once_and_names_the_version(
+        self, openapi_sub_floor_document: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        schema = build_schema_from_document(openapi_sub_floor_document)
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'CI5-D11: one aggregated warning per run -- got {warnings}'
+        assert '12.2.3 (519615d)' in warnings[0]
+        assert 'all 3 functions' in warnings[0]
+
+    def test_an_above_floor_schema_says_nothing(
+        self, openapi_fixture_document: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        schema = build_schema_from_document(openapi_fixture_document)
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        assert not any('13.0.5' in r.getMessage() for r in caplog.records)
+
+    def test_a_schema_with_no_version_says_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                Schema(),
+                infer_generated_primary_keys=True,
+                from_openapi=False,
+                disable_model_prefix_protection=False,
+            )
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+    def test_it_still_fires_when_the_identity_inference_is_enabled(
+        self, openapi_sub_floor_document: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # 🔴 The same placement hazard as the dangling-FK notice: `report()` returns early once the
+        # identity inference is on, and an old server build has nothing to do with that flag.
+        schema = build_schema_from_document(openapi_sub_floor_document)
+        with caplog.at_level(logging.WARNING, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=True,
+                from_openapi=True,
+                disable_model_prefix_protection=False,
+            )
+        assert any('13.0.5' in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+    def test_it_is_a_warning_not_an_info(
+        self, openapi_sub_floor_document: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        schema = build_schema_from_document(openapi_sub_floor_document)
+        with caplog.at_level(logging.INFO, logger='castiron.cli.notices'):
+            report(
+                schema,
+                infer_generated_primary_keys=False,
+                from_openapi=False,
+                disable_model_prefix_protection=False,
+            )
+        levels = {r.levelno for r in caplog.records if '13.0.5' in r.getMessage()}
         assert levels == {logging.WARNING}

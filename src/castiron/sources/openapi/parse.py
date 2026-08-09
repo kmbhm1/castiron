@@ -67,8 +67,23 @@ move:
   unchanged.
 - Enum **values** are absent for array columns (``pg_enum`` is keyed on the base type), so
   such a column links only when the same enum also appears on a scalar column.
-- A function's **return type** and **set-returning** flag are never encoded; volatility is a
-  binary signal (POST-only ⇒ VOLATILE); **overloads collapse** to one arbitrary signature.
+- A function's **return type** and **set-returning** flag are never encoded; **overloads
+  collapse** to one arbitrary signature.
+- **Volatility is a binary signal (POST-only ⇒ VOLATILE) — and only on PostgREST >= 13.0.5.**
+  ``makeProcPathItem`` gained ``case pdVolatility pd of Volatile -> … & post ?~ postOp`` in
+  **13.0.5** (PR #4174, CHANGELOG ``[13.0.5] - 2025-08-24``); at ``v13.0.4``, ``v12.2.12`` and
+  ``v12.2.3`` it reads ``pe = (mempty :: PathItem) & get ?~ getOp & post ?~ postOp``, i.e. a
+  ``get`` for **every** ``/rpc/`` path. So 13.0.0–13.0.4 are affected too and no 12.x release
+  carries the fix. Below the floor castiron reports ``volatility`` **and** ``is_read_only`` as
+  ``None`` for every function (see :func:`volatility_is_encoded`) rather than asserting that
+  every mutation is read-only, and records the observed ``info.version`` on
+  :attr:`castiron.ir.Schema.postgrest_version`.
+  ⚠ **Argument order is NOT part of that degradation, and a future reader must not "simplify"
+  by ignoring the GET below the floor.** ``makeProcGetParams = fmap makeProcGetParam`` over the
+  routine's ordered ``pdParams`` is **byte-identical** at ``v12.2.3``, ``v13.0.4`` and
+  ``v13.0.5``, so a sub-floor document's GET ``parameters`` array is still declaration order --
+  and because a sub-floor server emits that array for VOLATILE functions too, order is recovered
+  in *more* cases there, not fewer. Only the two volatility fields are unsound.
 - Objects the API role cannot see are simply absent (RLS/privileges shrink the schema).
 
 Point castiron at the database itself (CI-010/CI-011) when those facts matter.
@@ -111,6 +126,28 @@ SWAGGER_TYPE_FALLBACKS: dict[str, str] = {
 #: Public because the CLI's identity-PK notice (CI-006) applies the same rule to the IR;
 #: one definition, so the two cannot drift (Hard Rule #6).
 INTEGER_FAMILY = frozenset({'smallint', 'integer', 'bigint'})
+
+#: The first PostgREST release whose OpenAPI document encodes function volatility.
+#:
+#: PR #4174 (`CHANGELOG [13.0.5] - 2025-08-24`, "Fix OpenAPI specification incorrectly exposing
+#: GET methods for volatile functions") changed ``makeProcPathItem`` in
+#: ``src/PostgREST/Response/OpenAPI.hs`` from an unconditional
+#: ``pe = (mempty :: PathItem) & get ?~ getOp & post ?~ postOp`` to
+#: ``pe = case pdVolatility pd of Volatile -> … & post ?~ postOp; _ -> … & get ?~ getOp & post ?~ postOp``.
+#: Read at the ``v12.2.3``, ``v12.2.12`` and ``v13.0.4`` tags (all unconditional) and at ``v13.0.5``
+#: (gated), so the floor is exact: 13.0.0–13.0.4 are affected and no 12.x release carries the fix.
+MIN_VOLATILITY_SIGNAL_VERSION: tuple[int, int, int] = (13, 0, 5)
+
+#: The leading numeric run of a PostgREST ``prettyVersion``, which is all a comparison needs.
+#:
+#: Two eras, both covered: through 13.x ``prettyVersion`` is ``showVersion version`` plus an
+#: optional ``' (pre-release)'`` plus an optional ``' (<7-char git hash>)'`` (``12.2.3 (519615d)``,
+#: ``1.1 (pre-release)``); from 14.x it is the first **two** dot components plus the optional
+#: pre-release marker (``14.14``, ``15 (pre-release)``). Taking the leading ``\d+(\.\d+)*`` run and
+#: comparing int tuples is correct across both -- ``(12, 2, 12) < (13, 0, 5) <= (14, 14)`` -- with no
+#: normalization, no zero-padding, and no ``packaging`` dependency (castiron has near-zero runtime
+#: dependencies; decision D7).
+_VERSION_PREFIX = re.compile(r'\d+(?:\.\d+)*')
 
 #: The path prefix PostgREST exposes database functions under.
 _RPC_PREFIX = '/rpc/'
@@ -165,7 +202,10 @@ class OpenApiRows:
     """The positional row contracts parsed out of a PostgREST OpenAPI document.
 
     Field names and tuple shapes match :func:`castiron.ir.build_schema`'s parameters
-    one-for-one; see :mod:`castiron.ir.build` for each contract.
+    one-for-one; see :mod:`castiron.ir.build` for each contract. ``postgrest_version`` is the
+    one exception -- it is not a row contract but the document's own provenance, carried through
+    to :attr:`castiron.ir.Schema.postgrest_version`. It is appended last because this is a frozen
+    dataclass, so field order is the constructor contract.
     """
 
     column_details: tuple[Row, ...] = ()
@@ -175,6 +215,7 @@ class OpenApiRows:
     enum_type_mapping: tuple[Row, ...] = ()
     function_details: tuple[Row, ...] = ()
     table_details: tuple[Row, ...] = ()
+    postgrest_version: str | None = None
 
 
 @dataclass
@@ -317,6 +358,24 @@ def classify_table_type(name: str, definition: JsonObject, paths: JsonObject) ->
     return table_type
 
 
+def volatility_is_encoded(postgrest_version: str | None) -> bool:
+    """Return whether a document served by ``postgrest_version`` encodes function volatility.
+
+    ``True`` iff the version parses and is at or above :data:`MIN_VOLATILITY_SIGNAL_VERSION`.
+    An absent, empty or unparseable version is treated as **below** the floor: the conservative
+    answer, because the cost of guessing wrong in the other direction is reporting a mutation as
+    read-only, which is what a typed client would turn into a ``GET`` request for an ``INSERT``.
+
+    Args:
+        postgrest_version: A PostgREST ``info.version`` string, or ``None``.
+
+    Returns:
+        Whether ``volatility`` and ``is_read_only`` can be read out of the document.
+    """
+    parsed = _parse_postgrest_version(postgrest_version)
+    return parsed is not None and parsed >= MIN_VOLATILITY_SIGNAL_VERSION
+
+
 # ---------------------------------------------------------------------------
 # Entry point.
 # ---------------------------------------------------------------------------
@@ -367,6 +426,13 @@ def parse_openapi_document(
     """
     definitions = _validate_envelope(document, schema)
     paths = _as_object(document.get('paths')) or {}
+    postgrest_version = _postgrest_version(document)
+    volatility_encoded = volatility_is_encoded(postgrest_version)
+    if not volatility_encoded:
+        logger.debug(
+            f'PostgREST version {postgrest_version!r} is below {MIN_VOLATILITY_SIGNAL_VERSION} (or unstated), '
+            f'so volatility and is_read_only are reported as unknown for every function'
+        )
 
     rows = _RowAccumulator()
     for table_name in sorted(definitions):
@@ -391,8 +457,9 @@ def parse_openapi_document(
             for (namespace, type_name), values in sorted(rows.enums.items())
         ),
         enum_type_mapping=tuple(rows.enum_mappings),
-        function_details=_parse_functions(paths, schema),
+        function_details=_parse_functions(paths, schema, volatility_encoded),
         table_details=tuple(rows.tables),
+        postgrest_version=postgrest_version,
     )
 
 
@@ -423,6 +490,31 @@ def _validate_envelope(document: JsonObject, schema: str) -> JsonObject:
         )
 
     return definitions
+
+
+def _postgrest_version(document: JsonObject) -> str | None:
+    """Return the document's verbatim ``info.version``, or ``None`` when it states none.
+
+    PostgREST sets it unconditionally in ``postgrestSpec`` (``& info .~ (… & version .~
+    prettyVersion …)``). Unlike ``info.title``/``info.description``, which come from the schema's
+    SQL comment, ``version`` is always the server's own ``prettyVersion`` -- so it is trustworthy
+    provenance rather than user-controlled text.
+    """
+    info = _as_object(document.get('info'))
+    return None if info is None else _as_str(info.get('version'))
+
+
+def _parse_postgrest_version(value: str | None) -> tuple[int, ...] | None:
+    """Return the leading numeric run of a ``prettyVersion`` as an int tuple, or ``None``.
+
+    See :data:`_VERSION_PREFIX` for why the leading run is the whole rule.
+    """
+    if value is None:
+        return None
+    match = _VERSION_PREFIX.match(value)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(0).split('.'))
 
 
 # ---------------------------------------------------------------------------
@@ -627,12 +719,21 @@ def _record_enum(
 # ---------------------------------------------------------------------------
 
 
-def _parse_functions(paths: JsonObject, schema: str) -> tuple[Row, ...]:
+def _parse_functions(paths: JsonObject, schema: str, volatility_encoded: bool) -> tuple[Row, ...]:
     """Parse every ``/rpc/<name>`` path item into a function 9-tuple, sorted by name.
 
     ⚠ **This is the one place that decides a function's parameter ORDER**, for both parameter
     paths, so the GET operation is read once and one rule applies everywhere. See
     :func:`_declaration_order` for the rule and the encodings it reads.
+
+    Args:
+        paths: The document's ``paths`` object.
+        schema: The schema the document describes.
+        volatility_encoded: Whether the serving PostgREST gates the GET operation on volatility
+            (:func:`volatility_is_encoded`). When ``False``, elements 5 and 6 -- and **only**
+            those two -- degrade to ``None``: the GET is emitted for every function there, so its
+            absence proves nothing. Order and ``VARIADIC`` detection still read the same GET,
+            because ``makeProcGetParams`` did not change across the boundary (module docstring).
     """
     functions: list[Row] = []
     for path_key in sorted(key for key in paths if key.startswith(_RPC_PREFIX)):
@@ -670,8 +771,8 @@ def _parse_functions(paths: JsonObject, schema: str) -> tuple[Row, ...]:
                 _function_description(body_schema, post_op or get_op),
                 None,  # return_type — PostgREST encodes only `"200": {"description": "OK"}`
                 None,  # returns_set — `produces` is a constant, so there is no signal
-                'v' if get_op is None else None,
-                get_op is not None,
+                ('v' if get_op is None else None) if volatility_encoded else None,
+                (get_op is not None) if volatility_encoded else None,
                 parameters,
                 parameter_order,
             )
@@ -693,9 +794,16 @@ def _declaration_order(
     Encoding                    Shape     Order          Present when
     ==========================  ========  =============  ==================================
     POST body ``properties``    object    alphabetical   always
-    GET operation ``parameters``array     declaration    ``STABLE``/``IMMUTABLE`` only
+    GET operation ``parameters``array     declaration    ``STABLE``/``IMMUTABLE`` only,
+                                                         **on PostgREST >= 13.0.5**; below
+                                                         that, for every function
     POST body ``required``      array     declaration    always (non-defaulted arguments)
     ==========================  ========  =============  ==================================
+
+    ⚠ **The "Present when" column is the only version-dependent cell, and it only ever widens.**
+    PostgREST < 13.0.5 emits the GET for VOLATILE functions too (module docstring, PR #4174), and
+    ``makeProcGetParams`` is byte-identical across that boundary -- so a sub-floor document
+    recovers order in *more* cases, by the same rule, and this function needs no version gate.
 
     The rule, in priority order:
 
@@ -710,8 +818,9 @@ def _declaration_order(
        parameter before a non-defaulted one, so it is the declaration-order **PREFIX** -- never a
        scattered subset, so the result is "correct prefix + unknown tail", never interleaved
        wrongness. All arguments required => the prefix is the whole list => ``DECLARED``;
-       otherwise ``DECLARED_PREFIX``. This is the only signal a **VOLATILE** function exposes,
-       and a VOLATILE mutation with no defaults recovers its order in full.
+       otherwise ``DECLARED_PREFIX``. On PostgREST >= 13.0.5 this is the only signal a
+       **VOLATILE** function exposes, and a VOLATILE mutation with no defaults recovers its order
+       in full.
     4. Otherwise (no usable GET, >=2 arguments, every one defaulted) -> as given, ``UNKNOWN``.
 
     A GET that is *not* a permutation of the body's names is a shape no capture exhibits, so it
@@ -721,7 +830,8 @@ def _declaration_order(
     for membership only and are never iterated to produce output.
 
     Args:
-        get_op: The path item's GET operation, or ``None`` for a VOLATILE function.
+        get_op: The path item's GET operation, or ``None`` for a VOLATILE function served by
+            PostgREST >= 13.0.5.
         required: The POST body schema's ``required`` array, in document order.
         names: The POST body schema's ``properties`` keys, in document order (alphabetical).
 
@@ -879,8 +989,10 @@ def _parse_query_parameters(name: str, get_op: JsonObject | None) -> list[Row]:
 def _variadic_parameter_names(get_op: JsonObject | None) -> set[str]:
     """Return the names the GET operation marks ``collectionFormat: multi`` (VARIADIC).
 
-    This is the only place the document betrays a VARIADIC argument, and only for
-    non-volatile functions (a volatile function has no GET operation at all).
+    This is the only place the document betrays a VARIADIC argument, and -- on PostgREST
+    >= 13.0.5 -- only for non-volatile functions, since a volatile function has no GET operation
+    there. Below that floor every function has one, so VARIADIC is detected for VOLATILE functions
+    too; nothing here is version-gated, because the marker means the same thing either way.
     """
     if get_op is None:
         return set()

@@ -16,12 +16,14 @@ from castiron.ir import ParameterOrder, Row
 from castiron.sources import parse_openapi_document
 from castiron.sources.errors import SourceParseError
 from castiron.sources.openapi.parse import (
+    MIN_VOLATILITY_SIGNAL_VERSION,
     OPENAPI_FORMAT_ALIASES,
     ColumnMarkers,
     classify_table_type,
     normalize_format,
     parse_column_description,
     stringify_default,
+    volatility_is_encoded,
 )
 
 # ---------------------------------------------------------------------------
@@ -748,6 +750,9 @@ class TestFunctions:
         assert all(row[4] is None for row in rows.function_details)
 
     def test_post_only_functions_are_volatile(self, document: dict[str, Any]) -> None:
+        # ⚠ Only sound because the fixture declares a PostgREST >= 13.0.5 (`CI-141`/`CI-145`).
+        # Below that floor a GET exists for every /rpc/ path and both fields are None -- see
+        # TestThePostgrestVersionGate.
         rows = parse_openapi_document(document)
         assert function(rows, 'create_order')[5] == 'v'
         assert function(rows, 'create_order')[6] is False
@@ -1850,3 +1855,150 @@ class TestTableDescriptions:
         from castiron.sources.openapi.parse import OpenApiRows
 
         assert OpenApiRows().table_details == ()
+
+
+# ---------------------------------------------------------------------------
+# The PostgREST version gate on volatility (CI-141).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestThePostgrestVersionGate:
+    """``info.version`` decides whether volatility is in the document at all.
+
+    ⚠ **The sub-floor fixture this class reads is SYNTHETIC and hand-authored. It is evidence
+    about castiron, never about PostgREST.** The claim that a PostgREST < 13.0.5 emits a GET for
+    every ``/rpc/`` path is established by upstream source -- ``makeProcPathItem`` in
+    ``src/PostgREST/Response/OpenAPI.hs``, unconditional at ``v12.2.3`` / ``v12.2.12`` / ``v13.0.4``
+    and gated on ``pdVolatility`` at ``v13.0.5`` -- by PR #4174 and CHANGELOG
+    ``[13.0.5] - 2025-08-24``, and by castiron-testbed's two-runtime measurement (README, commit
+    ``752649a``). Citing this fixture as evidence about PostgREST is the ``CI-076`` mistake.
+    """
+
+    def test_the_floor_is_the_release_that_fixed_it(self) -> None:
+        # Pinned so the floor cannot move silently. PostgREST PR #4174, CHANGELOG
+        # `[13.0.5] - 2025-08-24`: "Fix OpenAPI specification incorrectly exposing GET methods for
+        # volatile functions". 13.0.0-13.0.4 are affected too, and no 12.x carries the fix -- the
+        # 12.x line ends at 12.2.12 (2025-05-01), which predates it.
+        assert MIN_VOLATILITY_SIGNAL_VERSION == (13, 0, 5)
+
+    @pytest.mark.parametrize(
+        ('value', 'expected'),
+        [
+            ('14.14', True),
+            ('13.0.5', True),  # the boundary: `>=`, not `>`
+            ('13.0.4', False),  # the last release WITHOUT the fix
+            ('13.0.0', False),
+            ('12.2.3 (519615d)', False),  # the git-hash suffix must not defeat the parse
+            ('12.2.12', False),  # the last 12.x ever released
+            ('15 (pre-release)', True),  # 14.x+ grammar: one component + the marker
+            ('1.1 (pre-release)', False),  # <=13.x grammar: two components => pre-release
+            ('20.0', True),
+            ('0.0.0-synthetic', False),  # the corpus's hand-authored torture input
+            (None, False),
+            ('', False),
+            ('not-a-version', False),
+            ('v14.14', False),  # PostgREST never writes a leading `v`; refuse rather than strip
+        ],
+    )
+    def test_volatility_is_encoded_compares_the_leading_numeric_run(self, value: str | None, expected: bool) -> None:
+        # Two `prettyVersion` eras, both covered by one rule (see `_VERSION_PREFIX`): through 13.x
+        # it is `showVersion` + optional ` (pre-release)` + optional ` (<hash>)`; from 14.x it is
+        # the first two dot components + the optional marker. Plain int-tuple comparison is right
+        # across both, and an unparseable value is conservatively BELOW the floor.
+        assert volatility_is_encoded(value) is expected
+
+    def test_a_sub_floor_document_reports_every_function_as_unknown(self, sub_floor_document: dict[str, Any]) -> None:
+        rows = parse_openapi_document(sub_floor_document)
+
+        # Not vacuous: one of these three is a mutation, and on a >= 13.0.5 server it would be
+        # element 5 == 'v'. Here the document cannot say, so castiron does not.
+        assert len(rows.function_details) == 3
+        assert all(row[5] is None for row in rows.function_details)
+        assert all(row[6] is None for row in rows.function_details)
+
+    def test_the_same_document_above_the_floor_reports_the_binary_signal(
+        self, sub_floor_document: dict[str, Any]
+    ) -> None:
+        # ONE byte differs -- `info.version` -- so this isolates the gate from the document shape.
+        above_floor = copy.deepcopy(sub_floor_document)
+        above_floor['info']['version'] = '14.14'
+        rows = parse_openapi_document(above_floor)
+
+        assert all(row[5] is None for row in rows.function_details)  # a GET exists => not VOLATILE
+        assert all(row[6] is True for row in rows.function_details)
+
+    def test_parameter_order_and_variadic_survive_below_the_floor(self, sub_floor_document: dict[str, Any]) -> None:
+        """``D4``: only elements 5 and 6 degrade. Order and VARIADIC read the same GET operation.
+
+        ``makeProcGetParams = fmap makeProcGetParam`` over the routine's ordered ``pdParams`` is
+        **byte-identical** at ``v12.2.3``, ``v13.0.4`` and ``v13.0.5``, so a sub-floor GET array is
+        still declaration order -- and a sub-floor server emits it for VOLATILE functions too, so
+        gating it would destroy fidelity castiron really has.
+        """
+        rows = parse_openapi_document(sub_floor_document)
+        bump = function(rows, 'probe_volatile_bump')
+
+        # `probe_volatile_bump` is a MUTATION whose volatility is unknown here (guard against this
+        # test silently becoming a non-volatile one).
+        assert bump[5] is None and bump[6] is None
+        # Non-vacuous on both axes. The POST body's `properties` are alphabetical
+        # (p_alpha, p_items, p_zulu) and the `required` array covers only the first two, so
+        # DECLARED with p_items LAST can only have come from the GET array.
+        assert bump[8] is ParameterOrder.DECLARED
+        assert [parameter[0] for parameter in bump[7]] == ['p_zulu', 'p_alpha', 'p_items']
+        assert [parameter[0] for parameter in bump[7]] != sorted(parameter[0] for parameter in bump[7])
+        # `collectionFormat: multi` on the GET is the ONLY place VARIADIC is encoded.
+        assert [parameter[2] for parameter in bump[7]] == [None, None, 'v']
+
+    def test_the_version_is_carried_verbatim_onto_the_rows(self, sub_floor_document: dict[str, Any]) -> None:
+        # Verbatim, git-hash suffix and all: it is provenance, so a parsed tuple would throw away
+        # the build the user is actually running.
+        rows = parse_openapi_document(sub_floor_document)
+
+        assert rows.postgrest_version == '12.2.3 (519615d)'
+        assert rows.postgrest_version == sub_floor_document['info']['version']
+
+    def test_the_committed_fixture_is_above_the_floor(self, document: dict[str, Any]) -> None:
+        # `CI-145`: the CI-005 fixture declared `12.2.3 (abcdef0)` while carrying MIXED /rpc/ verb
+        # sets, which a real 12.2.3 cannot produce (it emits GET on all of them). The verb shape is
+        # the >= 13.0.5 shape, so the version was what was wrong.
+        assert document['info']['version'] == '14.14'
+        assert volatility_is_encoded(document['info']['version'])
+        verb_sets = {key: tuple(sorted(item)) for key, item in document['paths'].items() if key.startswith('/rpc/')}
+        assert set(verb_sets.values()) == {('get', 'post'), ('post',)}
+
+    @pytest.mark.parametrize(
+        ('info', 'expected'),
+        [
+            (None, None),  # no `info` object at all
+            ({'title': 'public'}, None),  # `info`, but no `version`
+            ({'version': 14}, None),  # `version` present but not a string
+            ({'version': '14.14'}, '14.14'),
+        ],
+    )
+    def test_a_document_with_no_usable_version_parses_and_degrades(
+        self, document: dict[str, Any], info: dict[str, Any] | None, expected: str | None
+    ) -> None:
+        # `D3`: an absent or unusable version is NOT a SourceParseError. Envelope validation
+        # already decides "is this a PostgREST document"; two attributes of a function node must
+        # not be able to abort a whole run.
+        variant = copy.deepcopy(document)
+        if info is None:
+            variant.pop('info', None)
+        else:
+            variant['info'] = info
+        rows = parse_openapi_document(variant)
+
+        assert rows.postgrest_version == expected
+        assert len(rows.column_details) == 27  # the tables are entirely unaffected
+        if expected is None:
+            assert all(row[5] is None and row[6] is None for row in rows.function_details)
+        else:
+            assert any(row[5] == 'v' for row in rows.function_details)
+
+    def test_postgrest_version_defaults_to_none_on_the_row_container(self) -> None:
+        """``OpenApiRows`` gained a defaulted field, so existing construction still works."""
+        from castiron.sources.openapi.parse import OpenApiRows
+
+        assert OpenApiRows().postgrest_version is None

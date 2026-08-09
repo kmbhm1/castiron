@@ -294,6 +294,15 @@ KNOWN_DEFECTS: dict[str, Defect] = {
 #: CI-005's hand-authored document. ``origin='synthetic'`` is **load-bearing**, not a label: the
 #: fixture contains a shape PostgREST cannot emit (CI-076/SEED-F1), so it must never be cited as
 #: evidence about PostgREST. The corpus's evidence about PostgREST comes from the two captures.
+#:
+#: ``CI-145`` repaired a third instance of that same class: the document declared
+#: ``info.version = '12.2.3 (abcdef0)'`` while carrying MIXED ``/rpc/`` verb sets -- ``('get',
+#: 'post')`` on two paths and ``('post',)`` on two others. A real 12.2.3 emits ``get`` on **all**
+#: of them, because ``makeProcPathItem`` only learned to withhold it for VOLATILE functions in
+#: **13.0.5** (PR #4174, CHANGELOG ``[13.0.5] - 2025-08-24``). The verb shape is the >= 13.0.5
+#: shape, so the version was the wrong byte and it is now ``'14.14'`` -- the same direction
+#: ``CI-133`` corrected this fixture's RPC body ordering. Note the golden below did **not** move
+#: for it: the shape was already right, so nothing derived from it changes.
 OPENAPI_FIXTURE = InputFamily(
     family_id='openapi-fixture',
     input_path=FIXTURE_INPUT,

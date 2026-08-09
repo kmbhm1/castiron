@@ -269,10 +269,30 @@ def test_schema_defaults_to_empty() -> None:
     assert schema.tables == []
     assert schema.enums == []
     assert schema.functions == []
+    assert schema.postgrest_version is None
     # CI-005 amendment: ``_serialize`` walks ``dataclasses.fields``, so adding
     # ``Schema.functions`` necessarily adds exactly one additive key here. Emitted output
     # is unaffected (proved in tests/unit/emitters/pydantic/test_emitter.py).
-    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': []}
+    # CI-141 amendment, the second instance of exactly that reasoning: ``postgrest_version``
+    # adds one more additive key -- and, because it is provenance rather than schema, emitted
+    # output must STILL be unaffected. That is asserted directly in
+    # tests/unit/sources/openapi/test_source.py::TestEmittedOutput
+    # ::test_the_postgrest_version_never_reaches_the_emitted_bytes (Hard Rule #9).
+    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': [], 'postgrest_version': None}
+
+
+@pytest.mark.unit
+def test_schema_still_constructs_positionally_and_renders_the_version_verbatim() -> None:
+    # ``postgrest_version`` is appended LAST, so three-positional construction -- the shape every
+    # pre-CI-141 caller uses -- keeps working.
+    schema = Schema([], [], [])
+    assert schema.postgrest_version is None
+    assert schema.as_dict()['postgrest_version'] is None
+
+    # Verbatim: the git-hash suffix is part of the build the user is running, so a parsed tuple
+    # (or a derived boolean) would throw away the only thing that identifies it.
+    schema.postgrest_version = '12.2.3 (519615d)'
+    assert schema.as_dict()['postgrest_version'] == '12.2.3 (519615d)'
 
 
 @pytest.mark.unit

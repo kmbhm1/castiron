@@ -1,0 +1,236 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "12.2.3 (519615d)",
+    "title": "sub-floor public schema",
+    "description": "SYNTHETIC. Hand-authored. This file is evidence about castiron, never about PostgREST. The claim that a PostgREST < 13.0.5 emits a GET for every /rpc/ path is established by upstream source -- makeProcPathItem in src/PostgREST/Response/OpenAPI.hs, unconditional at v12.2.3 / v12.2.12 / v13.0.4 and gated on pdVolatility at v13.0.5 -- by PR #4174 and CHANGELOG [13.0.5] - 2025-08-24, and by castiron-testbed's two-runtime measurement (README, commit 752649a). Citing this file as evidence about PostgREST is the CI-076 mistake. probe_volatile_bump is a mutation: on a >= 13.0.5 server it would carry no `get` at all, and the fact that it carries one here is the whole point of the fixture."
+  },
+  "host": "0.0.0.0:3000",
+  "basePath": "/",
+  "schemes": [
+    "http"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "definitions": {
+    "widget": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Note:\nThis is a Primary Key.<pk/>",
+          "format": "int32",
+          "type": "integer"
+        },
+        "label": {
+          "format": "text",
+          "type": "string"
+        }
+      }
+    }
+  },
+  "paths": {
+    "/widget": {
+      "get": {
+        "tags": [
+          "widget"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "widget"
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/rpc/probe_stable_lookup": {
+      "get": {
+        "tags": [
+          "(rpc) probe_stable_lookup"
+        ],
+        "summary": "Look one widget up by label",
+        "parameters": [
+          {
+            "name": "p_needle",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "format": "text"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "(rpc) probe_stable_lookup"
+        ],
+        "summary": "Look one widget up by label",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "Look one widget up by label",
+              "required": [
+                "p_needle"
+              ],
+              "properties": {
+                "p_needle": {
+                  "format": "text",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/rpc/probe_volatile_bump": {
+      "get": {
+        "tags": [
+          "(rpc) probe_volatile_bump"
+        ],
+        "summary": "A mutation that a sub-floor PostgREST still serves a GET for",
+        "parameters": [
+          {
+            "name": "p_zulu",
+            "in": "query",
+            "required": true,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "p_alpha",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "format": "text"
+          },
+          {
+            "name": "p_items",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "text"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "(rpc) probe_volatile_bump"
+        ],
+        "summary": "A mutation that a sub-floor PostgREST still serves a GET for",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "A mutation that a sub-floor PostgREST still serves a GET for",
+              "required": [
+                "p_zulu",
+                "p_alpha"
+              ],
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_items": {
+                  "format": "text[]",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "text"
+                  }
+                },
+                "p_zulu": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/rpc/probe_volatile_ping": {
+      "get": {
+        "tags": [
+          "(rpc) probe_volatile_ping"
+        ],
+        "summary": "A no-argument mutation",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "(rpc) probe_volatile_ping"
+        ],
+        "summary": "A no-argument mutation",
+        "parameters": [
+          {
+            "name": "args",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "A no-argument mutation",
+              "properties": {}
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

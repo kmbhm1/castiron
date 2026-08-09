@@ -206,5 +206,6 @@
       "schema": "public"
     }
   ],
-  "functions": []
+  "functions": [],
+  "postgrest_version": "0.0.0-synthetic"
 }

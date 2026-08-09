@@ -28,7 +28,7 @@ import os
 import re
 import sys
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from urllib.parse import unquote
 
@@ -84,7 +84,32 @@ _QUERY_PARAM = re.compile(r'([?&#])([^&\s=#]*)=([^&\s#]*)')
 #: ``@`` before the path, which is how ``urllib.parse.SplitResult`` derives userinfo
 #: (``netloc.rpartition('@')``). On ``https://a@b:c@host/x`` urllib reports the password as ``c``
 #: and so does this; a lazy or ``@``-excluding class would leak it.
-_URL_USERINFO = re.compile(r'([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#\s]*)@([^/?#\s]*)')
+#:
+#: ⚠ **The lookbehind and lookahead are a complexity fix, not a tightening** (CI-073). The scheme
+#: class excludes ``:``, so the greedy run always consumes to the end of its run and then backtracks
+#: one character at a time looking for a ``://`` that cannot be inside it — O(run) wasted work.
+#: Without the lookbehind the engine repeats that walk from *every* position of the run, which is
+#: O(run²): 20 000 characters of base64 in a log record cost 0.18 s while carrying **no secret at
+#: all**. Anchoring the start to a run boundary does the walk once per run instead.
+#:
+#: The pair is what keeps the match **set** identical, which is the only thing that matters here.
+#: Anchored at a run boundary the first character can no longer be required to be a letter
+#: (``123https://user:pw@host`` must still match), so the lookahead re-imposes "this run contains a
+#: letter" instead — the old pattern's real precondition. Matching from the run start rather than
+#: from the letter cannot change the output: the scheme is echoed back verbatim, and the skipped
+#: prefix is copied through unchanged either way.
+#:
+#: ⚠ Dropping the lookahead is **not** a safe "mask more" simplification, and was measured: letting
+#: a letter-free run match makes ``-://localhostuser@z.https://user:pw@h`` match at the ``-``, and
+#: that longer match swallows the real ``https://`` URL, whose password then prints. ``re.sub``
+#: matches do not overlap, so over-masking in one place under-masks in another.
+_URL_USERINFO = re.compile(
+    r'(?<![A-Za-z0-9+.\-])((?=[A-Za-z0-9+.\-]*[A-Za-z])[A-Za-z0-9+.\-]+://)([^/?#\s]*)@([^/?#\s]*)'
+)
+
+#: What ends a run for the bare-``@host`` mop-up: the characters ``[^\s'"]`` excludes. Used to
+#: decide whether that pass can take its fast path — see :func:`_bare_userinfo_pattern`.
+_RUN_DELIMITER = re.compile(r'[\s\'"]')
 
 #: Shorter values are too likely to be a common substring to blindly replace.
 _MIN_REDACTABLE_KEY = 8
@@ -145,8 +170,55 @@ def _key_spellings(*secrets: str | None) -> list[str]:
     return sorted((s for s in spellings if len(s) >= _MIN_REDACTABLE_KEY), key=lambda s: (-len(s), s))
 
 
-def _mop_up_bare_userinfo(text: str, host: str) -> str:
-    """Mask any bare ``<something>@host`` left over after the URL itself was masked.
+def _bare_userinfo_pattern(hosts: Sequence[str]) -> re.Pattern[str]:
+    r"""Compile the one pattern :func:`_mop_up_bare_userinfo` scans a message with.
+
+    ``[^\s'"]*@(host)`` with the hosts in one alternation. Quotes are excluded from the run so
+    ``nonnumeric port: '<jwt>@host'`` keeps its quoting (see :func:`_mop_up_bare_userinfo` for what
+    that costs).
+
+    ⚠ **The** ``***`` **lookbehind is the guard that used to live in the replacement function**, and
+    moving it into the pattern is not cosmetic. It skips the ``@host`` the URL pass has already
+    written, so ``scheme://user:***@host`` keeps its scheme and its diagnostic username. As a test
+    on the replacement it could only decide the *whole* match, and the run is greedy: one
+    already-masked URL at the end of a run vetoed the masking of every bare ``<secret>@host``
+    earlier in that same run. Measured on ``main`` — ``SECRET@h,https://u:pw@h`` (one run, no space)
+    redacts to ``SECRET@h,https://u:***@h`` there and to ``***@h,https://u:***@h`` here. As a
+    lookbehind the engine simply backtracks past the masked occurrence to the unmasked one, so the
+    veto is per-occurrence instead of per-run. The predicate is unchanged (a match ends with the
+    host, so "the match ends in ``***@host``" and "the ``@`` is preceded by ``***``" are the same
+    test); only its blast radius is.
+
+    ⚠ **The run anchor is a complexity fix with a stated precondition** (CI-073). ``[^\s'"]*`` is
+    greedy, so at a position with no ``@host`` after it the engine walks to the end of the run and
+    backtracks over every character of it — O(run) thrown away, repeated from every position of the
+    run, O(run²) for the pass. Every match this pattern can find already begins at a run boundary:
+    if a match started at ``p`` and ``text[p - 1]`` were neither whitespace nor a quote, the same
+    match would have been found one character earlier, so ``re.sub`` would never have chosen ``p``.
+    Anchoring on that boundary is therefore free — except at the position ``re.sub`` *resumes* from
+    after a replacement, which is the one place it can land mid-run.
+
+    It lands mid-run only when a match ended mid-run, and a match ends with the host, so that needs
+    a host carrying a quote somewhere other than its last character (``@ho'st``: reachable, because
+    the host group runs to the next ``/?#``/space and a message that quotes a URL puts the closing
+    quote inside it). Then, and only then, the anchor is dropped and the scan is the slower one that
+    is exactly today's — masking is never traded for speed, the precondition is checked rather than
+    assumed, and a trailing quote (``@host'``, the common quoted-URL case) keeps the fast path
+    because the resume position follows the quote.
+
+    Args:
+        hosts: The hosts to mask, longest first. Never empty, and never containing an empty host.
+
+    Returns:
+        The compiled pattern, capturing the matched host in group 1.
+    """
+    alternation = '|'.join(re.escape(host) for host in hosts)
+    anchor = '' if any(_RUN_DELIMITER.search(host[:-1]) for host in hosts) else r'(?<![^\s\'"])'
+    return re.compile(rf'{anchor}[^\s\'"]*(?<!{re.escape(REDACTED)})@({alternation})')
+
+
+def _mop_up_bare_userinfo(text: str, hosts: Sequence[str]) -> str:
+    """Mask any bare ``<something>@host`` left over after the URLs themselves were masked.
 
     The URL is not the only place a password appears. ``http.client._get_hostport`` slices the
     netloc at ``host.rfind(':')`` and reports the remainder as ``nonnumeric port: '<rest>@<host>'``
@@ -181,24 +253,25 @@ def _mop_up_bare_userinfo(text: str, host: str) -> str:
     fixed so the next reader does not over-trust the paragraph above — and so that whoever needs
     it closed knows the cost of closing it.
 
+    ⚠ **All hosts in one pass, deliberately** (CI-073). This used to be called once per host, and
+    each call re-scanned the whole message, so a log record carrying *h* DSNs cost O(h · n) — with
+    *h* itself growing with the message, that is the quadratic CI-073 filed (0.51 s at 20 000
+    characters). One alternation sees every host in a single left-to-right scan. The rewrite is
+    positional and idempotent, and :func:`_bare_userinfo_pattern` keeps the run anchor, so the
+    result is the same text the sequential loop produced.
+
     Args:
         text: The partly-masked message.
-        host: The host of a URL that carried userinfo. Never empty (the caller guards), or the
-            pattern would degrade to "every ``x@y`` in the text".
+        hosts: The hosts of the URLs that carried userinfo, longest first. Never empty and never
+            containing an empty host (the caller guards), or the pattern would degrade to "every
+            ``x@y`` in the text".
 
     Returns:
-        ``text`` with every bare ``<something>@host`` masked.
+        ``text`` with every bare ``<something>@host`` masked, for every host given.
     """
-
-    def mask(match: re.Match[str]) -> str:
-        # The URL occurrence was already rewritten to `scheme://user:***@host`; leave it alone so
-        # the scheme and the (diagnostic, non-secret) username survive.
-        if match.group(0).endswith(f'{REDACTED}@{host}'):
-            return match.group(0)
-        return f'{REDACTED}@{host}'
-
-    # Quotes are excluded from the run so `nonnumeric port: '<jwt>@host'` keeps its quoting.
-    return re.sub(rf'[^\s\'"]*@{re.escape(host)}', mask, text)
+    # The occurrence the URL pass already rewrote to `scheme://user:***@host` is skipped by the
+    # pattern itself, not here -- see `_bare_userinfo_pattern`.
+    return _bare_userinfo_pattern(hosts).sub(lambda match: f'{REDACTED}@{match.group(1)}', text)
 
 
 def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
@@ -229,9 +302,13 @@ def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
         return f'{scheme}{REDACTED}@{host}'
 
     masked = _URL_USERINFO.sub(mask, text)
-    for _, host in found:
-        if host:
-            masked = _mop_up_bare_userinfo(masked, host)
+    # Distinct, longest first, ties broken lexically -- the same total order `_key_spellings` uses,
+    # and for the same two reasons: a set's iteration order varies with PYTHONHASHSEED (Hard Rule
+    # #9 forbids that in a printed string), and the longest host wins where one host is a prefix of
+    # another. Deduplication is what stops n DSNs to one host from costing n scans.
+    hosts = sorted({host for _, host in found if host}, key=lambda host: (-len(host), host))
+    if hosts:
+        masked = _mop_up_bare_userinfo(masked, hosts)
     return masked, [secret for secret, _ in found if secret]
 
 
@@ -255,6 +332,33 @@ def _mask_secret_parameters(text: str) -> str:
         return match.group(0)
 
     return _QUERY_PARAM.sub(mask, text)
+
+
+def _mask_spellings(text: str, spellings: Sequence[str]) -> str:
+    """Replace every spelling of every secret in one left-to-right scan.
+
+    ⚠ **One pass, not one per spelling** (CI-073). This was a ``str.replace`` per spelling, each
+    re-scanning the whole message; with one password per URL in the text, the number of spellings
+    grows with the message and O(spellings · n) is quadratic. The alternation is ordered exactly as
+    the sequential loop was — longest first, ties lexical — and Python's alternation takes the first
+    branch that matches at a position, so where two spellings both match the longer still wins.
+
+    The single scan is also *less* destructive than the loop it replaces: a replacement can no
+    longer be re-scanned and re-matched by a later spelling, and one spelling can no longer be
+    truncated out of the text by an earlier one that overlapped it.
+
+    Args:
+        text: The partly-masked message.
+        spellings: The spellings to mask, longest first, from :func:`_key_spellings`. Never empty
+            (the caller guards) — an empty alternation matches at every position.
+
+    Returns:
+        ``text`` with every occurrence of every spelling replaced by :data:`REDACTED`.
+    """
+    pattern = re.compile('|'.join(re.escape(spelling) for spelling in spellings))
+    # A function replacement, not the bare string: `re.sub` would read a backslash or a `\g<...>`
+    # in the template, and REDACTED is a constant somebody may one day change.
+    return pattern.sub(lambda _: REDACTED, text)
 
 
 def redact(text: str, key: str | None = None) -> str:
@@ -286,6 +390,14 @@ def redact(text: str, key: str | None = None) -> str:
        (``?key=eq.5`` → ``?key=***``). Pre-existing behaviour; over-masking a diagnostic filter
        is far cheaper than leaking a credential.
 
+    **Cost is linear in the length of the text** (CI-073), and that is load-bearing rather than
+    tidy: ``RedactingFilter`` runs this on every log record and on a rendered traceback, neither of
+    which is length-capped the way ``_snippet`` caps an error body, and a source adapter can log a
+    document that is megabytes. It was quadratic on two independent counts — a scan repeated once
+    per secret found, and a greedy pattern restarted from every position of a run — which cost
+    0.51 s on 20 000 characters of DSNs and 0.18 s on 20 000 characters carrying no secret at all.
+    Each pass below now sees the text once; nothing here may be changed back into a per-secret loop.
+
     Args:
         text: The message about to be shown to the user.
         key: The API key in play, if any. Every spelling of it is replaced when it is long
@@ -298,8 +410,9 @@ def redact(text: str, key: str | None = None) -> str:
     """
     masked, url_secrets = _mask_url_userinfo(text)
     masked = _mask_secret_parameters(masked)
-    for spelling in _key_spellings(key, *url_secrets):
-        masked = masked.replace(spelling, REDACTED)
+    spellings = _key_spellings(key, *url_secrets)
+    if spellings:
+        masked = _mask_spellings(masked, spellings)
     return masked
 
 

@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-08-09)
+
+### Features
+
+- **ir**: Report volatility as unknown below PostgREST 13.0.5
+  ([`041496a`](https://github.com/kmbhm1/castiron/commit/041496a4ab76b1f6a0dd4bcf4a7b31761cbec942))
+
+castiron's only volatility signal was "the /rpc/ path has no GET operation", and that inference is
+  only sound on PostgREST >= 13.0.5. Below that floor the document carries a GET for EVERY function,
+  so castiron silently reported every mutation as `is_read_only=True` -- exactly what CI-012's typed
+  client would turn into a GET request for an INSERT.
+
+The boundary is exact and it is NOT 12-vs-14. `makeProcPathItem` in
+  src/PostgREST/Response/OpenAPI.hs reads
+
+pe = (mempty :: PathItem) & get ?~ getOp & post ?~ postOp
+
+unconditionally at v12.2.3, v12.2.12 (the last 12.x) and v13.0.4, and
+
+pe = case pdVolatility pd of Volatile -> (mempty :: PathItem) & post ?~ postOp _ -> (mempty ::
+  PathItem) & get ?~ getOp & post ?~ postOp
+
+from v13.0.5 onward (PR #4174, CHANGELOG [13.0.5] - 2025-08-24). So 13.0.0-13.0.4 are affected too
+  and no 12.x release carries the fix.
+
+Below the floor -- or when info.version is absent or unparseable, treated the same way,
+  conservatively -- `FunctionInfo.volatility` and `.is_read_only` are both None. The IR already
+  modelled this: both fields are tri-state and their docstring already promised "None means unknown,
+  never a guess", so the honest degradation costs zero shape change. A consumer's rule becomes "POST
+  unless is_read_only is True", which fails safe: a None misread as falsy gives a POST, correct and
+  merely unoptimised, rather than a GET for an INSERT.
+
+The new `Schema.postgrest_version` records the document's verbatim info.version so a consumer can
+  tell "unknown because the format cannot say" from "unknown because the server is too old". It is
+  provenance, not schema: no emitter may write it into generated output, or `castiron check` would
+  report drift on a server upgrade against an unchanged schema (Hard Rule #9). A regression test
+  proves two documents differing only in info.version emit byte-identical modules.
+
+Argument order is deliberately NOT gated. `makeProcGetParams` is byte-identical across the boundary,
+  so a sub-floor GET array is still declaration order -- and because a sub-floor server emits it for
+  VOLATILE functions too, order and VARIADIC are recovered in MORE cases there, not fewer. Gating
+  them would have destroyed real fidelity.
+
+Also repairs the CI-005 fixture, which declared 12.2.3 while carrying mixed /rpc/ verb sets -- a
+  document that version cannot produce, the third instance of the CI-076 class after CI-133. Its
+  verb shape is the >= 13.0.5 shape, so the version was the wrong byte; it is now 14.14. The
+  sub-floor test fixture is synthetic and labelled as such in the file and in every test that reads
+  it: it is evidence about castiron, never about PostgREST.
+
+`castiron gen` prints one warning naming the observed version and the affected function count,
+  before the --infer-generated-primary-keys early return.
+
+The five ir.json goldens gain one additive key each; no module golden and no fingerprint manifest
+  moves, and no golden's volatility census changes.
+
+Refs: CI-141, CI-145; PostgREST PR #4174.
+
+
 ## v0.3.1 (2026-08-09)
 
 ### Performance Improvements

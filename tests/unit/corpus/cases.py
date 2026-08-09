@@ -244,6 +244,29 @@ KNOWN_DEFECTS: dict[str, Defect] = {
             'as evidence about PostgREST.'
         ),
     ),
+    'CI-078': Defect(
+        row_id='CI-078',
+        summary=(
+            "A VOLATILE function's argument order is only PARTLY recoverable here, so the "
+            'defaulted tail stays alphabetical.'
+        ),
+        why_it_is_wrong=(
+            'A PostgREST document encodes argument order in two ORDERED arrays -- the GET '
+            'operation, emitted only for a STABLE/IMMUTABLE function, and the POST body `required` '
+            'list, which covers only the non-defaulted arguments. castiron now reads both '
+            '(search_products is reported (p_terms, p_limit), as declared). create_order is '
+            'VOLATILE, so there is no GET, and only ONE of its three arguments is required -- so '
+            '`required` fixes the first position and nothing else. The testbed declares '
+            'create_order(p_customer_id, p_status, p_lines) and this golden says '
+            '[p_customer_id, p_lines, p_status]: the defaulted tail is name-sorted and the last '
+            'two are SWAPPED. THAT BYTE IS STILL WRONG, which is why this entry is registered. '
+            'What changed is that castiron now DECLARES the limit -- the function carries '
+            'parameter_order="DECLARED_PREFIX" -- so CI-012 can emit p_customer_id positionally '
+            'and the rest keyword-only, rather than a positional signature it cannot justify. The '
+            'tail is unrecoverable from this source; pg_proc.proargnames supplies it in '
+            'CI-010/CI-011, and this entry retires then.'
+        ),
+    ),
     'CI-090': Defect(
         row_id='CI-090',
         summary='Every constraint name is synthesized from a Postgres default template, not read.',
@@ -343,6 +366,10 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=SourceOptions(),
         emitter_config=EmitterConfig(),
         status='characterized',
+        # ⚠ NOT 'CI-078', deliberately. The fixture is hand-authored, so its `create_order` has no
+        # real pg declaration to be wrong about -- citing CI-078 here would manufacture evidence,
+        # which is the CI-076 mistake. Its parameter order DID move on this branch (the fixture's
+        # `required` array has two entries), but "moved" is not "provably wrong".
         defects=('CI-076', 'CI-090'),
         compiles=True,
         # Points at CI-005's committed golden rather than duplicating 14 KB of identical bytes.
@@ -355,7 +382,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=SourceOptions(),
         emitter_config=EmitterConfig(),
         status='characterized',
-        defects=('CI-090',),
+        defects=('CI-078', 'CI-090'),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'default.py.txt',
         golden_ir=GOLDEN_DIR / 'testbed-public' / 'ir.json',
@@ -366,7 +393,7 @@ CASES: tuple[CorpusCase, ...] = (
         source_options=_MAXIMAL_SOURCE,
         emitter_config=_MAXIMAL_EMITTER,
         status='characterized',
-        defects=('CI-090',),
+        defects=('CI-078', 'CI-090'),
         compiles=True,
         golden_module=GOLDEN_DIR / 'testbed-public' / 'maximal.py.txt',
         # A DIFFERENT IR from `testbed-public-default`: both source options are flipped, and the

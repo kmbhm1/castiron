@@ -39,11 +39,28 @@ Positional tuple contracts (the source ↔ builder boundary)
   typtype, enum_values)`` — only ``typtype == 'e'`` rows are enums.
 - **enum-type-mapping row (6-tuple):** ``(column_name, table_name, namespace,
   type_name, type_category, type_description)``.
-- **function row (8-tuple):** ``(schema, function_name, description, return_type,
-  returns_set, raw_volatility, is_read_only, parameters)`` -- ``returns_set`` and
-  ``is_read_only`` are ``bool | None`` (``None`` == unknown); ``raw_volatility`` is the
+- **function row (9-tuple):** ``(schema, function_name, description, return_type,
+  returns_set, raw_volatility, is_read_only, parameters, parameter_order)`` -- ``returns_set``
+  and ``is_read_only`` are ``bool | None`` (``None`` == unknown); ``raw_volatility`` is the
   source's raw code (pg ``provolatile``: ``'v'|'s'|'i'``) or ``None``; ``parameters`` is a
   list of **parameter 5-tuples**.
+
+  ⚠ **This row grew a trailing element in CI-078** (it was an 8-tuple).
+  ``parameter_order`` is a :class:`~castiron.ir.models.ParameterOrder` saying how much of
+  **this row's** declaration order the source established -- fully, only the non-defaulted
+  prefix, or not at all. It is deliberately **per row, not per source**, for the same reason
+  CI-090's ``name_is_synthesized`` is: on the OpenAPI source "order established" happens to
+  correlate with volatility (a GET operation exists only for a STABLE/IMMUTABLE function), but
+  that correlation is an artifact of *that* source. A live-DB source reads ``pg_proc.proargnames``
+  -- an ordered array for a VOLATILE function too -- and the DDL source (CI-013/CI-020) will
+  carry mixed provenance inside one document. A source-level switch could not express any of
+  that, and a consumer must not have to know which source built the IR to find out (decision D3).
+
+  ⚠ **It carries the MEMBER, not a raw code.** The three normalization maps below
+  (``VOLATILITY_MAP``, ``PARAMETER_MODE_MAP``, ``CONSTRAINT_TYPE_MAP``) exist to keep pg-native
+  vocabulary (``'v'``, ``'i'``, ``'p'``) out of the canonical IR. ``ParameterOrder`` is
+  castiron-native -- there is no pg spelling of it to normalize away -- so there is no
+  ``PARAMETER_ORDER_MAP``, exactly as there is none for ``TableType`` (decision D11).
 - **parameter row (5-tuple):** ``(name, raw_type, raw_mode, has_default,
   array_element_type)`` -- ``raw_mode`` is the source's raw code (pg ``proargmodes``:
   ``'i'|'o'|'b'|'v'|'t'``) or ``None`` (which normalizes to ``ParameterMode.IN``).
@@ -1448,17 +1465,19 @@ def construct_functions(
     schema: str = 'public',
     enums: Sequence[EnumInfo] = (),
 ) -> list[FunctionInfo]:
-    """Parse function rows (8-tuple contract) into :class:`FunctionInfo` nodes.
+    """Parse function rows (9-tuple contract) into :class:`FunctionInfo` nodes.
 
     Raw source codes are normalized here (``raw_volatility`` →
     :class:`~castiron.ir.models.FunctionVolatility`, a parameter's ``raw_mode`` →
     :class:`~castiron.ir.models.ParameterMode`), mirroring how constraint codes are
     handled. Rows are *not* filtered by ``schema`` -- each row carries its own, matching
     how :func:`get_enum_types` is called unfiltered. Function order is row order: ordering
-    is the source's responsibility (Hard Rule #9).
+    is the source's responsibility (Hard Rule #9), and so is **parameter** order -- the row's
+    ``parameter_order`` is passed through untouched, never re-derived here, because only the
+    source can see which encoding it came out of.
 
     Args:
-        function_details: Function rows (8-tuple contract).
+        function_details: Function rows (9-tuple contract).
         schema: The schema name to fall back on when a row does not carry one.
         enums: The schema's enum registry, used to link parameter enum types.
 
@@ -1476,6 +1495,7 @@ def construct_functions(
             raw_volatility,
             is_read_only,
             parameters,
+            parameter_order,
         ) = row
         functions.append(
             FunctionInfo(
@@ -1489,6 +1509,7 @@ def construct_functions(
                 volatility=normalize_volatility(raw_volatility),
                 is_read_only=is_read_only,
                 description=description,
+                parameter_order=parameter_order,
             )
         )
     return functions

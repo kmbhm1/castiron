@@ -161,7 +161,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     }
   ]
 }

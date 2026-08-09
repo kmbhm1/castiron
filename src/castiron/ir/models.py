@@ -81,6 +81,23 @@ class ParameterMode(str, Enum):
     TABLE = 'TABLE'
 
 
+class ParameterOrder(str, Enum):
+    """How much of a function's declaration order the source was able to establish.
+
+    Unlike :class:`ParameterMode` and :class:`FunctionVolatility` this is **castiron-native
+    vocabulary**, not a normalized pg code, so a source emits the member directly rather than a
+    raw token the build layer maps (decision D11). :class:`TableType` works the same way.
+
+    A source sets this from the *encoding* it read the order out of, never from a guess: a JSON
+    **array** preserves order, a JSON **object** does not. See :attr:`FunctionInfo.parameter_order`
+    for what each member licenses a consumer to do.
+    """
+
+    DECLARED = 'DECLARED'
+    DECLARED_PREFIX = 'DECLARED_PREFIX'
+    UNKNOWN = 'UNKNOWN'
+
+
 @dataclass
 class EnumInfo:
     """A database enum type: its name, values, and owning schema.
@@ -361,6 +378,12 @@ class FunctionInfo:
     ``parameters[].has_default``full (``name not in schema.required``)      full
     ``parameters[].mode``       ``IN``; ``VARIADIC`` from the GET operation full ``proargmodes``
     ``parameters[].enum_info``  only if the enum is on a scalar column too  full
+    ``parameter_order``         ``DECLARED`` from the GET operation         always ``DECLARED``
+                                (STABLE/IMMUTABLE) or from ``required``     (``proargnames`` is
+                                when no argument has a default;             an ordered array)
+                                ``DECLARED_PREFIX`` when some do;
+                                ``UNKNOWN`` only when every argument has
+                                a default and there is no GET
     ``return_type``             **always None** -- never encoded            full
     ``returns_set``             **always None** -- never encoded            ``proretset``
     ``volatility``              ``VOLATILE`` iff POST-only, else ``None``   full
@@ -374,6 +397,31 @@ class FunctionInfo:
     ``volatility is not FunctionVolatility.VOLATILE``. Two fields rather than one because a
     coarse source can honestly assert *"non-volatile"* without knowing *which* -- collapsing
     them would either discard that fact or fabricate ``STABLE``.
+
+    Attributes:
+        parameter_order: How much of the declaration order ``parameters`` actually carries, so a
+            consumer never has to know which source built the IR to find out (decision D3).
+
+            - :attr:`~ParameterOrder.DECLARED` -- ``parameters`` is in declaration order, in full.
+              The source read it out of an **ordered** encoding (a JSON array / an ordered pg
+              catalog column), never out of a name-sorted one.
+            - :attr:`~ParameterOrder.DECLARED_PREFIX` -- precisely: the parameters with
+              ``has_default=False`` are in declaration order **and precede** every parameter with
+              ``has_default=True``; the defaulted tail is in an arbitrary (name-sorted) order.
+              Locating the boundary needs no second field -- the known positions are exactly the
+              ``has_default=False`` parameters, which is the same array by construction, so a
+              ``prefix_length`` would be a second encoding of one fact (Hard Rule #6). Postgres
+              forbids a defaulted parameter before a non-defaulted one, which is *why* the known
+              part is a prefix rather than a scattered subset.
+            - :attr:`~ParameterOrder.UNKNOWN` -- nothing was established. **Not** a claim the order
+              is wrong: a function's arguments may happen to be declared alphabetically.
+
+            The named consumer is **CI-012, the typed client: it emits keyword-only parameters for
+            every position this field does not cover** -- ``def f(p_zulu, p_alpha, *, p_beta=None)``
+            for a ``DECLARED_PREFIX`` function, all-keyword for ``UNKNOWN``. Python's ``*`` divides
+            on required-vs-defaulted, which is exactly the axis castiron can prove. Nothing is lost
+            on the wire either way: PostgREST's RPC format is a **named** JSON object, so only the
+            Python signature's ergonomics depend on this.
     """
 
     name: str
@@ -384,6 +432,7 @@ class FunctionInfo:
     volatility: FunctionVolatility | None = None
     is_read_only: bool | None = None
     description: str | None = None
+    parameter_order: ParameterOrder = ParameterOrder.UNKNOWN
 
     def __str__(self) -> str:
         """Return a short, human-readable representation of the function."""

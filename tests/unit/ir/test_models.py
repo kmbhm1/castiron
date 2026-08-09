@@ -15,6 +15,7 @@ from castiron.ir import (
     FunctionVolatility,
     ParameterInfo,
     ParameterMode,
+    ParameterOrder,
     RelationshipInfo,
     RelationType,
     Schema,
@@ -292,6 +293,7 @@ def test_schema_as_dict_renders_functions_as_plain_builtins() -> None:
                 volatility=FunctionVolatility.STABLE,
                 is_read_only=True,
                 description='Stats.',
+                parameter_order=ParameterOrder.DECLARED,
             )
         ]
     )
@@ -316,6 +318,9 @@ def test_schema_as_dict_renders_functions_as_plain_builtins() -> None:
             'volatility': 'STABLE',
             'is_read_only': True,
             'description': 'Stats.',
+            # A `str, Enum` renders as its VALUE, not a repr -- the golden `ir.json` files are
+            # `json.dumps`-able only because `_serialize` unwraps it.
+            'parameter_order': 'DECLARED',
         }
     ]
     assert json.dumps(as_dict) == json.dumps(schema.as_dict())

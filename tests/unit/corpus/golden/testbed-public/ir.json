@@ -4032,6 +4032,62 @@
       "parameter_order": "DECLARED"
     },
     {
+      "name": "probe_volatile_all_optional",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_alpha",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_zebra",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": null,
+      "parameter_order": "UNKNOWN"
+    },
+    {
+      "name": "probe_volatile_two_required",
+      "schema": "public",
+      "parameters": [
+        {
+          "name": "p_zebra",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "p_alpha",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        }
+      ],
+      "return_type": null,
+      "returns_set": null,
+      "volatility": "VOLATILE",
+      "is_read_only": false,
+      "description": null,
+      "parameter_order": "DECLARED"
+    },
+    {
       "name": "reserved_args",
       "schema": "public",
       "parameters": [

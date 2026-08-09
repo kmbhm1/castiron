@@ -222,8 +222,14 @@ def test_build_schema_empty_inputs() -> None:
     assert schema.tables == []
     assert schema.enums == []
     assert schema.functions == []
+    # CI-141: ``postgrest_version`` is a SOURCE fact, not a row fact. ``build_schema`` is
+    # source-neutral and must never learn PostgREST vocabulary, so it leaves the field alone and
+    # the OpenAPI source assigns it afterwards (see
+    # ``castiron.sources.openapi.build_schema_from_document``). This is the guard for that split.
+    assert schema.postgrest_version is None
     # CI-005 amendment: ``Schema.functions`` adds exactly one additive serialization key.
-    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': []}
+    # CI-141 amendment: so does ``Schema.postgrest_version``.
+    assert schema.as_dict() == {'tables': [], 'enums': [], 'functions': [], 'postgrest_version': None}
 
 
 # ---------------------------------------------------------------------------

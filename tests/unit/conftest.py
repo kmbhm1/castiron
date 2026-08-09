@@ -18,6 +18,13 @@ OPENAPI_FIXTURE_PATH = Path(__file__).parent / 'sources' / 'openapi' / 'fixtures
 #: The committed golden module CI-005 emits from that document with default settings.
 OPENAPI_GOLDEN_PATH = Path(__file__).parent / 'sources' / 'openapi' / 'golden' / 'schema.py.txt'
 
+#: CI-141's SYNTHETIC sub-floor document -- ``info.version = '12.2.3 (519615d)'`` and a ``get`` on
+#: every ``/rpc/`` path. ⚠ Evidence about **castiron**, never about PostgREST; the upstream claim
+#: rests on ``makeProcPathItem``, not on this file (see the file's own ``info.description``).
+OPENAPI_SUB_FLOOR_PATH = (
+    Path(__file__).parent / 'sources' / 'openapi' / 'fixtures' / 'postgrest_openapi_v12_shaped.json'
+)
+
 
 @pytest.fixture
 def openapi_fixture_path() -> Path:
@@ -36,3 +43,10 @@ def openapi_fixture_document() -> dict[str, Any]:
 def openapi_golden_text() -> str:
     """The committed golden module text emitted from that document with all defaults."""
     return OPENAPI_GOLDEN_PATH.read_text(encoding='utf-8')
+
+
+@pytest.fixture
+def openapi_sub_floor_document() -> dict[str, Any]:
+    """CI-141's SYNTHETIC document as a PostgREST below 13.0.5 would serve it, decoded."""
+    decoded: dict[str, Any] = json.loads(OPENAPI_SUB_FLOOR_PATH.read_text(encoding='utf-8'))
+    return decoded

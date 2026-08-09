@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from castiron.sources.openapi import MIN_VOLATILITY_SIGNAL_VERSION, volatility_is_encoded
 from tests.unit.corpus.cases import FAMILIES, InputFamily
 from tests.unit.corpus.conftest import family_ids, iter_families
 
@@ -56,6 +57,28 @@ class TestProvenanceMatchesTheDocument:
             pytest.skip(f'{family.family_id} is not a capture; it records no PostgREST version by design')
         record = _provenance(family)
         assert corpus_documents[family.family_id]['info']['version'] == record['postgrest_version']
+
+    @pytest.mark.parametrize('family', iter_families(), ids=family_ids())
+    def test_a_captured_input_is_at_or_above_the_volatility_floor(
+        self, family: InputFamily, corpus_documents: dict[str, dict[str, Any]]
+    ) -> None:
+        """``CI-141``: a re-capture from a downgraded runtime must not silently void the census.
+
+        A PostgREST below 13.0.5 serves a ``get`` for every ``/rpc/`` path (PR #4174, CHANGELOG
+        ``[13.0.5] - 2025-08-24``), so castiron reports ``volatility`` and ``is_read_only`` as
+        unknown for **every** function there. Every committed capture is above the floor today, and
+        every ``ir.json`` golden's volatility census depends on that staying true -- so a future
+        capture taken against an older server fails here, with one version string, rather than as
+        an unexplained wave of ``null``s in a 4 000-line golden diff.
+        """
+        if family.origin != 'captured':
+            pytest.skip(f'{family.family_id} is synthetic; its declared version is not a measurement')
+        version = corpus_documents[family.family_id]['info']['version']
+        assert volatility_is_encoded(version), (
+            f'{family.family_id} was captured from PostgREST {version!r}, which is below '
+            f'{MIN_VOLATILITY_SIGNAL_VERSION} -- its functions carry NO volatility signal. '
+            f'Re-capture from 13.0.5 or later rather than accepting the golden churn.'
+        )
 
     @pytest.mark.parametrize('family', iter_families(), ids=family_ids())
     def test_the_recorded_counts_match_the_document(

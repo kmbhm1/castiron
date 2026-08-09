@@ -36,6 +36,15 @@ generated for it. The user cannot tell from the output that anything is missing 
 is a perfectly ordinary one -- which is precisely why it is worth a line. It is source-agnostic (the
 predicate reads only the IR, and a DDL or single-schema live-DB run reaches the same state), and it
 follows CI5-D11 like its siblings: one aggregated warning per run, at most three named.
+
+The sixth (CI-141) is a structural loss of a different kind again: one caused by the **server build**
+rather than the schema. PostgREST only started withholding the ``get`` operation for VOLATILE
+functions in **13.0.5**; below that the document carries a ``get`` for every ``/rpc/`` path, so
+volatility is simply not in it and castiron reports ``volatility`` and ``is_read_only`` as unknown
+for every function rather than asserting that every mutation is read-only. Unlike its five siblings
+it names **no** individual objects -- the set is always *all* the functions, so a sample would be
+misleading -- and its warning takes a second argument, the observed version, because the version and
+the remedy are the actionable part of the message.
 """
 
 import logging
@@ -47,7 +56,7 @@ from castiron.ir.build import (
     column_name_reserved_exceptions,
     parse_constraint_definition_for_fk,
 )
-from castiron.sources.openapi import INTEGER_FAMILY
+from castiron.sources.openapi import INTEGER_FAMILY, volatility_is_encoded
 from castiron.utils.naming import ClassStem, EnumClass, class_stem_reason, enum_class_reason
 
 logger = logging.getLogger(__name__)
@@ -305,6 +314,56 @@ def dangling_foreign_key_warning(entries: list[str]) -> str:
     )
 
 
+def volatility_unknown_functions(schema: Schema) -> list[str]:
+    """Return every function name whose volatility the serving PostgREST was too old to encode.
+
+    ⚠ **Source-agnostic, and it needs no new predicate input.** It reads only
+    :attr:`~castiron.ir.Schema.postgrest_version`, which is ``None`` for every source that is not
+    PostgREST -- so this stays quiet for a DDL or live-DB run without a ``from_openapi`` gate,
+    exactly like :func:`dangling_foreign_keys`.
+
+    Args:
+        schema: The schema that was just loaded (treated as read-only).
+
+    Returns:
+        Every function name, in ``Schema.functions`` order, when the document's PostgREST is below
+        the volatility floor; empty otherwise (including when the schema has no functions, which
+        makes the fact unactionable).
+    """
+    if schema.postgrest_version is None or volatility_is_encoded(schema.postgrest_version):
+        return []
+    return [function.name for function in schema.functions]
+
+
+def volatility_unknown_warning(names: list[str], postgrest_version: str | None) -> str:
+    """Build the unknown-volatility warning for ``names``, naming the version rather than the names.
+
+    ⚠ **Two deliberate deviations from the rest of the family**, both stated here so a reviewer
+    reads them as decisions rather than accidents. First, this builder takes a **second argument**:
+    the observed version is the actionable half of the message and the remedy depends on it, while
+    the names do not distinguish anything. Second, it does **not** use the ``MAX_NAMED_TABLES``
+    "and N more" elision, because the affected set is always *every* function -- naming three of
+    them would imply the other N-3 were fine.
+
+    Args:
+        names: The affected function names (already collected by
+            :func:`volatility_unknown_functions`); only their count is reported.
+        postgrest_version: The document's verbatim ``info.version``.
+
+    Returns:
+        The warning line, in the same voice as :func:`dangling_foreign_key_warning`.
+    """
+    subject = 'function' if len(names) == 1 else 'functions'
+    return (
+        f'PostgREST {postgrest_version} does not encode function volatility: below 13.0.5 it serves a GET '
+        f'operation for every /rpc/ path, so the document cannot tell a VOLATILE function from a '
+        f'STABLE or IMMUTABLE one. castiron reports volatility and is_read_only as unknown for all '
+        f'{len(names)} {subject} rather than asserting every one of them is read-only -- a wrong '
+        f'read-only is what turns an INSERT into a GET request. Upgrade PostgREST to 13.0.5 or later to '
+        f'recover the signal.'
+    )
+
+
 def report(
     schema: Schema,
     *,
@@ -349,6 +408,11 @@ def report(
     dangling = dangling_foreign_keys(schema)
     if dangling:
         logger.warning(dangling_foreign_key_warning(dangling))
+    # Also before the early return, and for the same reason: an old server build has nothing to do
+    # with the identity inference, so --infer-generated-primary-keys must not mute it.
+    unknown_volatility = volatility_unknown_functions(schema)
+    if unknown_volatility:
+        logger.warning(volatility_unknown_warning(unknown_volatility, schema.postgrest_version))
     if infer_generated_primary_keys:
         return
     candidates = identity_pk_candidates(schema)

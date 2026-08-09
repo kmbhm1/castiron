@@ -386,11 +386,25 @@ class FunctionInfo:
                                 a default and there is no GET
     ``return_type``             **always None** -- never encoded            full
     ``returns_set``             **always None** -- never encoded            ``proretset``
-    ``volatility``              ``VOLATILE`` iff POST-only, else ``None``   full
-    ``is_read_only``            full (a ``get`` operation exists)           ``provolatile != 'v'``
+    ``volatility``              ``VOLATILE`` iff POST-only, else ``None``,  full
+                                **only on PostgREST >= 13.0.5**; below
+                                that always ``None``
+    ``is_read_only``            a ``get`` operation exists, **only on**     ``provolatile != 'v'``
+                                **PostgREST >= 13.0.5**; below that
+                                always ``None``
     ``description``             full (the raw SQL comment)                  ``pg_description``
     overloads                   **collapsed upstream** to one signature     full
     ==========================  =========================================  ==================
+
+    ⚠ **The version floor on the last two rows is not a nicety.** PostgREST only started
+    withholding the ``get`` operation for VOLATILE functions in **13.0.5** (PR #4174,
+    CHANGELOG ``[13.0.5] - 2025-08-24``); at 13.0.4 and below -- including the whole 12.x line,
+    which ends at 12.2.12 -- ``makeProcPathItem`` emits ``get`` **unconditionally**, so the
+    document cannot distinguish VOLATILE from STABLE/IMMUTABLE at all. castiron reports both
+    fields as ``None`` there rather than asserting every function is read-only, and records the
+    observed version on :attr:`Schema.postgrest_version`. ``parameter_order`` is *not* affected:
+    ``makeProcGetParams`` is byte-identical across those releases, so a sub-floor GET array is
+    still declaration order.
 
     Documented invariant (not runtime-validated -- these are plain mutable dataclasses per
     decision D1): when ``volatility`` is known, ``is_read_only`` equals
@@ -451,15 +465,31 @@ class Schema:
     ``functions`` is the function/RPC registry (added in CI-005, filling the forward slot
     CI-003 documented). It is populated from a source's function rows; the OpenAPI source
     leaves ``FunctionInfo.return_type`` and ``returns_set`` as ``None`` (PostgREST never
-    encodes them) and can only assert ``volatility`` when a function is ``VOLATILE``.
+    encodes them) and can only assert ``volatility`` when a function is ``VOLATILE`` *and*
+    the serving PostgREST is new enough to encode it (see ``postgrest_version``).
     CI-011's live-DB ``pg_proc`` path *enriches* those fields rather than redesigning the
-    node. The field is appended last so positional ``Schema(tables, enums)`` construction
+    node. Each field is appended last so positional ``Schema(tables, enums)`` construction
     stays valid.
+
+    Attributes:
+        postgrest_version: The **verbatim** ``info.version`` of the PostgREST that served the
+            document -- e.g. ``'14.14'`` or ``'12.2.3 (519615d)'``. ``None`` for every source
+            that is not PostgREST, and for a document that states no version.
+
+            It exists because ``volatility`` and ``is_read_only`` are only knowable from a
+            document served by PostgREST >= 13.0.5; below that both are ``None`` and this string
+            is the only thing that says *why*. See
+            :func:`castiron.sources.openapi.volatility_is_encoded`.
+
+            ⚠ **It is provenance, not schema. No emitter may write it into generated output.**
+            Doing so would make ``castiron check`` report drift when a server is upgraded and the
+            schema has not changed at all (Hard Rule #9 -- emitter output is byte-stable).
     """
 
     tables: list[TableInfo] = field(default_factory=list)
     enums: list[EnumInfo] = field(default_factory=list)
     functions: list[FunctionInfo] = field(default_factory=list)
+    postgrest_version: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return a stable, JSON-serializable projection of the schema.

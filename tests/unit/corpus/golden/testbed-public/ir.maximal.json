@@ -4183,5 +4183,6 @@
       "description": null,
       "parameter_order": "DECLARED"
     }
-  ]
+  ],
+  "postgrest_version": "14.14"
 }

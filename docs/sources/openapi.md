@@ -5,8 +5,10 @@
 > RPC argument names, types and (in almost every case) declaration order. It cannot see unique
 > or check constraints, identity/generated columns, exact integer widths below `bigint`, or
 > function return types — and for a `VOLATILE` function with defaulted arguments it recovers
-> only part of the argument order, telling you which part. Point castiron at the database
-> itself when you need those.
+> only part of the argument order, telling you which part. **Function volatility depends on your
+> server: below PostgREST 13.0.5 the document does not encode it at all**, and castiron reports
+> it as unknown rather than guessing ([why](#volatility-depends-on-your-postgrest-version)).
+> Point castiron at the database itself when you need those.
 
 That is the whole page in one paragraph. The rest explains *why* each limit exists, what it
 does to your generated code, and what to do about it — because a code generator that
@@ -98,12 +100,13 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | --- | --- | --- | --- |
 | Name, schema | ✅ full | ✅ | the `/rpc/<name>` path key |
 | Argument names, has-default | ✅ full | ✅ | the POST body schema's `properties` and `required` |
-| Argument **order** | ✅ **full** for a `STABLE`/`IMMUTABLE` function, and for a `VOLATILE` one whose arguments are all required; ⚠ **partial** for a `VOLATILE` function with defaulted arguments — the required prefix is right and the defaulted tail is name-sorted. `FunctionInfo.parameter_order` says which you got. See [below](#argument-order-is-only-partly-encoded) | ✅ | the POST body's `properties` is a sorted map, but the GET `parameters` and the body's `required` are **ordered arrays** |
+| Argument **order** | ✅ **full** for a `STABLE`/`IMMUTABLE` function, and for a `VOLATILE` one whose arguments are all required; ⚠ **partial** for a `VOLATILE` function with defaulted arguments — the required prefix is right and the defaulted tail is name-sorted. `FunctionInfo.parameter_order` says which you got. Below PostgREST 13.0.5 a GET exists for **every** function, so order is recovered in **full** for `VOLATILE` ones too. See [below](#argument-order-is-only-partly-encoded) | ✅ | the POST body's `properties` is a sorted map, but the GET `parameters` and the body's `required` are **ordered arrays** |
 | Argument types | ⚠ **as degraded as a column type, plus one loss beyond it** — `smallint` and `integer` both arrive as `int32`, and `char(2)` arrives as `character` with **no `maxLength`**, which the same column would carry | ✅ exact | `toSwaggerFormat` again; `maxLength` is emitted for columns only |
 | An argument's **enum values** | ❌ **never carried on the argument** — it links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise the argument keeps a bare type name and no values | ✅ | the parameter declares `format` but no `enum` list, and its type name is unqualified |
 | **Return type** | ❌ **never available** | ✅ | responses carry only `"OK"` |
 | **Set-returning** | ❌ **never available** | ✅ `proretset` | not encoded |
-| Volatility | ⚠ **binary only** — `VOLATILE` (POST-only) vs non-volatile (a GET exists); `STABLE` vs `IMMUTABLE` unknown | ✅ | inferred from method gating |
+| Volatility | ⚠ **binary only, and only on PostgREST ≥ 13.0.5** — `VOLATILE` (POST-only) vs non-volatile (a GET exists); `STABLE` vs `IMMUTABLE` unknown. **Below 13.0.5** the document emits a GET for every `/rpc/` path, so castiron reports `None` — unknown — rather than asserting anything. See [below](#volatility-depends-on-your-postgrest-version) | ✅ `provolatile` | the GET is only gated on volatility from **13.0.5** onward |
+| `is_read_only` | ⚠ **only on PostgREST ≥ 13.0.5** — a GET operation exists. **Below 13.0.5** it is `None`, unknown, for every function; castiron will not tell you a mutation is read-only | ✅ `provolatile != 'v'` | the same method gating, so the same version floor |
 | **Overloads** | ❌ **collapsed upstream** — one arbitrary signature survives | ✅ | one path key per function name |
 | `OUT` / `INOUT` / `TABLE` params | ⚠ `INOUT` appears as an input; `OUT` params are excluded | ✅ | not encoded as inputs |
 
@@ -370,7 +373,7 @@ matters is JSON's: a **map** has no meaningful order, an **array** does.
 | Where | Shape | Order | Emitted for |
 | --- | --- | --- | --- |
 | POST body `properties` | object (map) | **alphabetical** | every function |
-| GET operation `parameters` | array | **declaration** | `STABLE` / `IMMUTABLE` only |
+| GET operation `parameters` | array | **declaration** | `STABLE` / `IMMUTABLE` only on PostgREST ≥ 13.0.5 — **every** function below it |
 | POST body `required` | array | **declaration**, non-defaulted arguments only | every function |
 
 For `search_products(p_terms text[], p_limit integer default 20)` the body arrives sorted:
@@ -408,6 +411,65 @@ above). It matters the moment one does: a client that generated a **positional**
 exactly why the IR states the limit rather than leaving it to be assumed. Call PostgREST
 functions by argument name, which is what the JSON body is anyway, and the order never matters.
 
+!!! note "Below PostgREST 13.0.5, order is recovered in *more* cases, not fewer"
+    An old server emits the GET operation for every function, including `VOLATILE` ones — so
+    `DECLARED_PREFIX` and `UNKNOWN` largely disappear and you get full declaration order even for
+    a mutation. That half is a genuine gain; the volatility signal is what you lose, and the next
+    section is about that.
+
+### Volatility depends on your PostgREST version
+
+This is the one limit on this page that is a property of **your server build** rather than of the
+document format, so it is the one you can fix by upgrading.
+
+PostgREST decides a function's path item in `makeProcPathItem`
+(`src/PostgREST/Response/OpenAPI.hs`). Until 13.0.5 that decision did not exist:
+
+```haskell
+-- v12.2.3, v12.2.12 (the last 12.x) and v13.0.4 — UNCONDITIONAL
+pe = (mempty :: PathItem)
+  & get  ?~ getOp
+  & post ?~ postOp
+```
+
+```haskell
+-- v13.0.5 and later — GATED ON VOLATILITY
+pe = case pdVolatility pd of
+  Volatile -> (mempty :: PathItem) & post ?~ postOp
+  _        -> (mempty :: PathItem) & get ?~ getOp & post ?~ postOp
+```
+
+The change is [PR #4174](https://github.com/PostgREST/postgrest/pull/4174), released in
+**13.0.5** (2025-08-24) as *"Fix OpenAPI specification incorrectly exposing GET methods for
+volatile functions"*.
+
+**So the floor is 13.0.5, not "13", and not "not 12".** Releases 13.0.0 through 13.0.4 are
+affected too, and **no 12.x release carries the fix** — the 12.x line ends at 12.2.12
+(2025-05-01), which predates it. Self-hosted Supabase and long-lived deployments do run these.
+
+**What castiron does below the floor.** For every function:
+
+- `FunctionInfo.volatility` is `None` and `FunctionInfo.is_read_only` is `None` — *unknown*, both
+  of them, together.
+- `Schema.postgrest_version` records the document's verbatim `info.version` (`'12.2.3 (519615d)'`,
+  `'14.14'`), so a consumer can tell "unknown because the format cannot say" from "unknown because
+  the server is too old". It is provenance only: **no emitter writes it into generated code**, so
+  upgrading your server never shows up as drift in `castiron check`.
+- `castiron gen` prints **one** warning naming the observed version and the affected function count.
+
+Everything else in the document is unaffected — tables, columns, nullability, enums, foreign keys,
+argument names, argument types and argument order are all exactly as good as they are on a current
+server. Only those two fields degrade.
+
+**Why *unknown* and not "assume `VOLATILE`".** Assuming `VOLATILE` would be exactly as unfounded as
+the old behaviour's implicit assumption of non-volatile; castiron does not guess in either
+direction. The asymmetry that matters is in the consequences: `is_read_only=None` makes a consumer
+fall back to `POST`, which is correct and merely unoptimised, while `is_read_only=True` for a
+mutation is a `GET` request for an `INSERT`.
+
+**The remedy** is to upgrade PostgREST to 13.0.5 or later. (A live-database source reads
+`pg_proc.provolatile` and never has this problem — it is on the roadmap.)
+
 ### Integer widths
 
 `smallint` and `integer` are the same token (`int32`) in the document. For the Pydantic
@@ -433,6 +495,8 @@ Reach for a live-database source when any of these are load-bearing for you:
 - composite foreign keys, composite primary-key order, cross-schema relationships
 - function return types, set-returning functions, overloads, or the declared order of a
   function's arguments
+- function **volatility**, if you are stuck on a PostgREST below 13.0.5
+  ([why](#volatility-depends-on-your-postgrest-version))
 - anything your API role cannot see
 
 The live-database source is on the roadmap and is not shipped yet. Until it lands, this

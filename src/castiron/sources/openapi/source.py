@@ -46,7 +46,7 @@ def build_schema_from_document(
         schema=schema,
         infer_generated_primary_keys=infer_generated_primary_keys,
     )
-    return build_schema(
+    result = build_schema(
         rows.column_details,
         rows.fk_details,
         rows.constraints,
@@ -57,6 +57,11 @@ def build_schema_from_document(
         function_details=rows.function_details,
         table_details=rows.table_details,
     )
+    # Assigned rather than passed: `build_schema` is source-neutral and must not learn PostgREST
+    # vocabulary. `Schema` is a plain mutable dataclass by design (IR decision D1), so this is the
+    # intended mechanism for a source-specific provenance fact.
+    result.postgrest_version = rows.postgrest_version
+    return result
 
 
 def load_openapi_schema(

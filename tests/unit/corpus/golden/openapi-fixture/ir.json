@@ -1012,5 +1012,6 @@
       "description": "Search products\n\nReturns matching product rows.",
       "parameter_order": "DECLARED"
     }
-  ]
+  ],
+  "postgrest_version": "14.14"
 }

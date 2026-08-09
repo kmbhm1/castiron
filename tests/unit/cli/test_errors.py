@@ -2,9 +2,12 @@
 
 import json
 import os
+import random
 import socket
 import subprocess
 import sys
+import timeit
+from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -12,6 +15,7 @@ from urllib.parse import urlsplit
 import click
 import pytest
 
+from castiron.cli import errors
 from castiron.cli.errors import (
     EXIT_DRIFT,
     EXIT_ERROR,
@@ -488,6 +492,494 @@ class TestRedactSecretParameters:
         # Unlike the substring gap above, cutting the *value* costs nothing here: the parameter
         # mask keys on the name, so whatever survives the cut is still masked.
         assert SERVICE_ROLE_KEY[:8] not in redact(f'{SERVICE_ROLE_URL[:60]}...')
+
+
+# ---------------------------------------------------------------------------
+# CI-073. `redact` was quadratic in the length of the text, and the row is only reachable through
+# `RedactingFilter`, which runs it on every log record and on a rendered traceback -- neither
+# length-capped the way `_snippet` caps an error body. Measured on `main` @ d4455ae:
+#
+#   20 000 characters of DSNs           0.515 s   (2 000 characters: 0.005 s -- 99x for 10x)
+#   20 000 characters of base64          0.185 s   ...carrying NO secret at all
+#   both in one message                  0.979 s
+#
+# Three independent causes, two of them fixed here: a `re.sub` per host, a `str.replace` per key
+# spelling, and a greedy pattern restarted from every position of a run.
+#
+# ⚠ The whole point of this row is that it must not cost coverage, so the tests below are the
+# regression checklist rather than a benchmark. `TestRedactableShapes` pins the exact output of
+# every shape `redact` masks -- generated from `main`'s implementation and asserted byte-for-byte
+# against this one -- and `TestRedactPlantedSecrets` is the property version of the same claim.
+# ---------------------------------------------------------------------------
+
+#: Every parameter name the credential-word list and its boundary rules accept. Each has its value
+#: masked whole, and the name echoed back exactly as the user spelled it.
+CREDENTIAL_PARAM_NAMES = (
+    'apikey',
+    'APIKEY',
+    'api_key',
+    'api-key',
+    'api.key',
+    'api%5Fkey',
+    'x-api-key',
+    'service_role_key',
+    'serviceRoleKey',
+    'sb-publishable-key',
+    'anon_key',
+    'keyMaterial',
+    'key',
+    'client_secret',
+    'secret',
+    'refresh_token',
+    'access_token',
+    'token',
+    'authorization',
+    'x-auth',
+    'user-credentials',
+    'user-credential',
+    'password',
+    'db-passwd',
+    'db-pwd',
+    'request-signature',
+    'request-sig',
+    'session_id',
+    'session',
+    'bearer',
+    'jwt',
+)
+
+#: (name, text, key, expected) for every *other* shape. The expected column is the output of the
+#: implementation this row replaced -- not of this one -- so a shape whose masking changes fails
+#: here rather than being silently re-baselined.
+REDACTABLE_SHAPES: tuple[tuple[str, str, str | None, str], ...] = (
+    # -- URL userinfo, http and DSN. The username survives; the password does not. --
+    (
+        'userinfo password',
+        f'Could not reach https://user:{PASSWORD}@x.supabase.co/rest/v1/: boom',
+        None,
+        'Could not reach https://user:***@x.supabase.co/rest/v1/: boom',
+    ),
+    (
+        'userinfo dsn',
+        'postgresql://postgres:hunter2pass@db.x.supabase.co:5432/postgres',
+        None,
+        'postgresql://postgres:***@db.x.supabase.co:5432/postgres',
+    ),
+    ('userinfo mysql dsn', 'mysql://root:hunter2pass@127.0.0.1:3306/app', None, 'mysql://root:***@127.0.0.1:3306/app'),
+    ('userinfo last at sign wins', f'https://a@b:{PASSWORD}@host/x', None, 'https://a@b:***@host/x'),
+    ('userinfo colonless', 'https://ghp_abcdefghijklmnop@github.com/o/r', None, 'https://***@github.com/o/r'),
+    ('userinfo bad port', f'https://u:{PASSWORD}@h:notaport/', None, 'https://u:***@h:notaport/'),
+    ('userinfo truncated ipv6', f'https://user:{PASSWORD}@[::1', None, 'https://user:***@[::1'),
+    ('userinfo percent-encoded', 'https://user:SEC%52ETPASS@x.supabase.co/', None, 'https://user:***@x.supabase.co/'),
+    (
+        'userinfo empty host',
+        'reached https://a:b@ ; contact bob@example.com',
+        None,
+        'reached https://a:***@ ; contact bob@example.com',
+    ),
+    (
+        'userinfo port-only host',
+        'https://u:pw12@:5432/x -- repeated pw12@:5432',
+        None,
+        'https://u:***@:5432/x -- repeated ***@:5432',
+    ),
+    (
+        'userinfo none present',
+        'Could not reach https://x.supabase.co/rest/v1/',
+        None,
+        'Could not reach https://x.supabase.co/rest/v1/',
+    ),
+    (
+        'userinfo cut before its at sign',
+        f'Could not reach https://user:{PASSWORD}',
+        None,
+        f'Could not reach https://user:{PASSWORD}',
+    ),
+    # -- the bare `<secret>@host` http.client quotes back with no scheme in front --
+    (
+        'nonnumeric port',
+        NONNUMERIC_PORT,
+        None,
+        "Could not reach https://user:***@x.supabase.co/rest/v1/: nonnumeric port: '***@x.supabase.co'",
+    ),
+    (
+        'nonnumeric port, password under the length gate',
+        "Could not reach https://user:pw12@x.supabase.co/: nonnumeric port: 'pw12@x.supabase.co'",
+        None,
+        "Could not reach https://user:***@x.supabase.co/: nonnumeric port: '***@x.supabase.co'",
+    ),
+    (
+        'nonnumeric port, only the password suffix quoted back',
+        f"https://user:1:{JWT}@x.supabase.co/: nonnumeric port: '{JWT}@x.supabase.co'",
+        None,
+        "https://user:***@x.supabase.co/: nonnumeric port: '***@x.supabase.co'",
+    ),
+    (
+        'bare recurrence away from its host',
+        f'https://user:{PASSWORD}@x.supabase.co/ -- the value {PASSWORD} was logged bare',
+        None,
+        'https://user:***@x.supabase.co/ -- the value *** was logged bare',
+    ),
+    (
+        'colonless userinfo recurring bare',
+        'https://ghp_x@github.com/o/r rejected: ghp_x@github.com',
+        None,
+        'https://***@github.com/o/r rejected: ***@github.com',
+    ),
+    # The documented mop-up gap, asserted rather than pretended closed: the run class excludes
+    # quotes so a message keeps its own quoting, and a password carrying one is masked only from
+    # its last quote onward.
+    (
+        'quote inside the password strands its prefix',
+        "https://u:SECRETPREFIX9'x@x.supabase.co/ -- nonnumeric port: 'SECRETPREFIX9'x@x.supabase.co'",
+        None,
+        "https://u:***@x.supabase.co/ -- nonnumeric port: 'SECRETPREFIX9'***@x.supabase.co'",
+    ),
+    # -- the --key value, in every spelling a renderer can produce --
+    ('key literal', f'HTTP 401 for {JWT}', JWT, 'HTTP 401 for ***'),
+    ('key too short to mask', 'the code is nope and nope', 'nop', 'the code is nope and nope'),
+    ('key too short in every spelling', 'the code is nope and nope', 'nop\r', 'the code is nope and nope'),
+    ('key rendered by repr', f'value {JWT + chr(13)!r} rejected', JWT + '\r', "value '***' rejected"),
+    (
+        'key rendered by repr of bytes',
+        f'Invalid header value {("Bearer " + JWT + chr(13)).encode()!r}',
+        JWT + '\r',
+        "Invalid header value b'Bearer ***'",
+    ),
+    (
+        'key trimmed of its control character',
+        'the server rejected abcdefghij',
+        '\rabcdefghij',
+        'the server rejected ***',
+    ),
+    ('key with its backslash escaped', "value 'abcdefg\\\\hijk' rejected", 'abcdefg\\hijk', "value '***' rejected"),
+    ('no key in play', 'plain message', None, 'plain message'),
+    # -- everything at once, and the shapes a traceback carries --
+    (
+        'userinfo, parameter and key in one message',
+        f'https://u:{PASSWORD}@x.supabase.co/rest/v1/?apikey={JWT}: {PASSWORD}@x.supabase.co',
+        JWT,
+        # ⚠ The parameter value class is greedy up to `&`, `#` or whitespace, so it swallows the
+        # message's own `:` as well -- a documented accepted cost of `redact`, pinned here.
+        'https://u:***@x.supabase.co/rest/v1/?apikey=*** ***@x.supabase.co',
+    ),
+    (
+        'two DSNs, two hosts',
+        'postgresql://a:pw1234@h1.example.com/d and postgresql://b:pw5678@h2.example.com/d',
+        None,
+        'postgresql://a:***@h1.example.com/d and postgresql://b:***@h2.example.com/d',
+    ),
+    (
+        'two DSNs, one host',
+        'postgresql://a:pw1234@h.example.com/d and postgresql://b:pw5678@h.example.com/d',
+        None,
+        'postgresql://a:***@h.example.com/d and postgresql://b:***@h.example.com/d',
+    ),
+    (
+        'quoted url',
+        f"Could not reach 'https://user:{PASSWORD}@x.supabase.co/'",
+        None,
+        "Could not reach 'https://user:***@x.supabase.co/'",
+    ),
+    (
+        'json-rendered url',
+        f'{{"url": "https://user:{PASSWORD}@x.supabase.co/"}}',
+        None,
+        '{"url": "https://user:***@x.supabase.co/"}',
+    ),
+    ('empty text', '', None, ''),
+    ('a bare at sign', '@', None, '@'),
+    ('a scheme with nothing in it', '://@', None, '://@'),
+    # A colonless userinfo is masked whole -- in a URL castiron prints it is far more often a
+    # bearer token than a username -- even with no host after it.
+    ('userinfo with no host at all', 'https://user@', None, 'https://***@'),
+)
+
+
+@pytest.mark.unit
+class TestRedactableShapes:
+    """The regression checklist: every shape `redact` masks, pinned to an exact output."""
+
+    @pytest.mark.parametrize('name', CREDENTIAL_PARAM_NAMES)
+    def test_a_credential_parameter_value_is_masked_whole(self, name: str) -> None:
+        assert redact(f'https://x.supabase.co/rest/v1/?{name}={SERVICE_ROLE_KEY}') == (
+            f'https://x.supabase.co/rest/v1/?{name}={REDACTED}'
+        )
+
+    @pytest.mark.parametrize('name', CREDENTIAL_PARAM_NAMES)
+    def test_a_credential_fragment_parameter_value_is_masked_whole(self, name: str) -> None:
+        # A Supabase auth redirect puts its token in the fragment, so `#` leads a pair too.
+        assert redact(f'https://x.supabase.co/#{name}={SERVICE_ROLE_KEY}') == (
+            f'https://x.supabase.co/#{name}={REDACTED}'
+        )
+
+    @pytest.mark.parametrize(
+        ('name', 'text', 'key', 'expected'), REDACTABLE_SHAPES, ids=[shape[0] for shape in REDACTABLE_SHAPES]
+    )
+    def test_the_shape_is_masked_exactly_as_it_was(self, name: str, text: str, key: str | None, expected: str) -> None:
+        assert redact(text, key) == expected, f'the {name!r} shape no longer redacts the way it did'
+
+
+@pytest.mark.unit
+class TestRedactPlantedSecrets:
+    """The property version: a secret planted in any masked shape, anywhere, never survives."""
+
+    #: Deliberately not `random.seed()`-free. A fixed seed makes a failure reproducible, and Hard
+    #: Rule #9's determinism applies to the suite as much as to an emitter.
+    SEED = 20260809
+
+    NOISE = (
+        ' ',
+        "'",
+        '"',
+        '\r',
+        '\n',
+        '\t',
+        '@',
+        ':',
+        '/',
+        '//',
+        '://',
+        'https://',
+        'postgresql://',
+        '?',
+        '&',
+        '#',
+        '=',
+        'a',
+        'db',
+        'user',
+        'x.supabase.co',
+        'nonnumeric port: ',
+        REDACTED,
+        '.',
+        '-',
+        '+',
+        '1',
+        '5432',
+        'ghp_y',
+        ',',
+        ']',
+        '[',
+        '%5F',
+        'Could not reach ',
+        'rest/v1',
+    )
+    HOSTS = ('x.supabase.co', 'db.example.com', 'h1', 'localhost:5432', '127.0.0.1', 'z', '[::1]', ':5432')
+
+    def shapes(self, secret: str, rng: random.Random) -> list[tuple[str, str | None]]:
+        """(text carrying `secret`, key) for one draw of each masked shape."""
+        host = rng.choice(self.HOSTS)
+        user = rng.choice(['user', 'postgres', 'a@b', 'a:b'])
+        name = rng.choice(CREDENTIAL_PARAM_NAMES)
+        lead = rng.choice(['?', '&', '#'])
+        scheme = rng.choice(['https', 'http', 'postgresql', 'mysql', 'postgres'])
+        return [
+            (f'{scheme}://{user}:{secret}@{host}/x', None),
+            (f'{scheme}://{secret}@{host}/x', None),
+            (f"{scheme}://{user}:{secret}@{host}/x: port '{secret}@{host}'", None),
+            (f"{scheme}://{user}:1:{secret}@{host}/x: port '{secret}@{host}'", None),
+            # ⚠ A colon-free username, deliberately. A recurrence away from its host is reachable
+            # only through the spelling pass, and `urlsplit` splits the userinfo at its FIRST colon
+            # -- so with a `a:b` username the secret in play is `b:<secret>` and the bare `<secret>`
+            # alone is not one of its spellings. That is the documented cost of the host anchor
+            # (see `_mop_up_bare_userinfo`), pre-existing and unrelated to this row.
+            (f'{scheme}://user:{secret}@{host}/x -- {secret} logged bare', None),
+            (f'https://{host}/rest/v1/{lead}{name}={secret}', None),
+            (f'HTTP 401 for {secret}', secret),
+            (f'HTTP 401 for {secret}', f'\r{secret} '),
+            (f'value {secret + chr(13)!r} rejected', f'{secret}\r'),
+            (f'Invalid header value {("Bearer " + secret + chr(13)).encode()!r}', f'{secret}\r'),
+        ]
+
+    def test_a_planted_secret_never_survives_wherever_it_is_buried(self) -> None:
+        # ⚠ The secret is distinctive on purpose: a short or wordlike one would make `not in` pass
+        # on unrelated prose and the property would be vacuous.
+        secret = 'ZQXSECRETPAYLOAD42'
+        rng = random.Random(self.SEED)
+        checked = 0
+        for _ in range(2_000):
+            text, key = rng.choice(self.shapes(secret, rng))
+            before = ''.join(rng.choice(self.NOISE) for _ in range(rng.randint(0, 10)))
+            after = ''.join(rng.choice(self.NOISE) for _ in range(rng.randint(0, 10)))
+            # ⚠ The noise is whitespace-separated from the shape, and that is a concession with a
+            # measured reason. Every pass here is a `re.sub`, and `re.sub` matches do not overlap:
+            # noise that *starts* a construct immediately in front of the shape -- a second
+            # `scheme://` whose host class runs into the real URL's scheme, or a `?` whose parameter
+            # name runs through the real `?apikey=` -- consumes the shape's own lead, and the
+            # secret prints. Both are pre-existing: `main` @ d4455ae produces byte-identical output
+            # on those inputs (checked by the CI-073 differential), so asserting the property
+            # without the separator would be asserting something `redact` has never had. Every
+            # class of character still lands adjacent to the secret *inside* the shape.
+            buried = f'{before} {text} {after}'
+            assert secret in buried  # not vacuous
+            assert secret not in redact(buried, key), f'the secret survived in {buried!r}'
+            checked += 1
+        assert checked == 2_000
+
+
+#: A whitespace-free base64 run: what a source adapter logging a document looks like, and the shape
+#: that made `redact` quadratic while carrying nothing to mask.
+BLOB = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9w'
+
+
+@pytest.mark.unit
+class TestRedactStaysLinear:
+    """Structural guards: nothing here may go back to one full-text pass per secret."""
+
+    @staticmethod
+    def dsns(count: int) -> str:
+        """`count` DSNs, each with its own host and its own password."""
+        return ' '.join(f'postgresql://user{i}:hunter2pass{i}@db{i}.example.com:5432/x' for i in range(count))
+
+    @staticmethod
+    def spy_on_the_mop_up(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        """Record the host list of every `_mop_up_bare_userinfo` call `redact` makes."""
+        calls: list[list[str]] = []
+        original = errors._mop_up_bare_userinfo
+
+        def spy(text: str, hosts: Sequence[str]) -> str:
+            calls.append(list(hosts))
+            return original(text, hosts)
+
+        monkeypatch.setattr(errors, '_mop_up_bare_userinfo', spy)
+        return calls
+
+    def test_the_mop_up_sees_every_host_in_one_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ⚠ This is the assertion the row is about. The mop-up used to be called once per host,
+        # each call re-scanning the whole message; with the host count growing with the message
+        # that is the quadratic. Deleting the alternation and restoring the loop fails here.
+        calls = self.spy_on_the_mop_up(monkeypatch)
+        redact(self.dsns(20))
+        assert len(calls) == 1
+        assert len(calls[0]) == 20
+
+    def test_the_spelling_pass_sees_every_spelling_in_one_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[list[str]] = []
+        original = errors._mask_spellings
+
+        def spy(text: str, spellings: Sequence[str]) -> str:
+            calls.append(list(spellings))
+            return original(text, spellings)
+
+        monkeypatch.setattr(errors, '_mask_spellings', spy)
+        redact(self.dsns(20), JWT)
+        assert len(calls) == 1
+        assert len(calls[0]) == 21  # 20 passwords + the key
+
+    def test_the_mop_up_pattern_carries_every_host(self) -> None:
+        pattern = errors._bare_userinfo_pattern(['h2.example.com', 'h1.example.com'])
+        assert 'h1\\.example\\.com' in pattern.pattern
+        assert 'h2\\.example\\.com' in pattern.pattern
+
+    def test_repeated_hosts_collapse_to_one_alternative(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Deduplication is what stops n DSNs to one host from costing n scans.
+        calls = self.spy_on_the_mop_up(monkeypatch)
+        redact(' '.join(f'postgresql://u{i}:pw{i}@one.example.com/x' for i in range(20)))
+        assert calls == [['one.example.com']]
+
+    def test_the_hosts_are_ordered_deterministically(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Longest first, ties lexical -- a set's iteration order varies with PYTHONHASHSEED, and a
+        # printed string may not (Hard Rule #9).
+        calls = self.spy_on_the_mop_up(monkeypatch)
+        redact('https://a:p1@bbb.example.com/x https://b:p2@a.example.com/x https://c:p3@b.example.com/x')
+        assert calls == [['bbb.example.com', 'a.example.com', 'b.example.com']]
+
+    #: 8x the input. Linear is 8x the time, the worst measured shape here is 13x (the alternation
+    #: still tries one branch per secret at a candidate position, which is not free), and quadratic
+    #: is 64x -- measured at 64x, 63x and 62x on `main` @ d4455ae for the three shapes below. The
+    #: bound sits between, with enough room for a loaded CI matrix runner: it is a ratio of two
+    #: measurements on the same machine, so a slow machine slows both.
+    GROWTH_BUDGET = 30
+
+    @pytest.mark.parametrize(
+        ('name', 'build'),
+        [
+            # The row's own shape: one password and one host per DSN, so the secret count grows
+            # with the message.
+            ('many dsns', lambda n: (TestRedactStaysLinear.dsns(n // 60) + ' ')[:n]),
+            # ⚠ No secret in it at all. `_URL_USERINFO`'s greedy scheme run restarted from every
+            # position of a base64 blob, so `redact` was quadratic on text it never masks -- which
+            # is what a source adapter logging a document actually looks like.
+            ('a base64 blob', lambda n: (BLOB * (n // len(BLOB) + 1))[:n]),
+            # Both at once: the mop-up's own greedy run walk, over a message with no whitespace to
+            # break it up.
+            (
+                'a blob in the same message as a dsn',
+                lambda n: f'postgresql://u:hunter2pass@db.example.com/x {(BLOB * (n // len(BLOB) + 1))[:n]}',
+            ),
+        ],
+    )
+    def test_the_cost_does_not_grow_quadratically(self, name: str, build: Callable[[int], str]) -> None:
+        small, large = build(5_000), build(40_000)
+
+        def cost(text: str) -> float:
+            return min(timeit.repeat(lambda: redact(text, JWT), number=1, repeat=5))
+
+        # The small measurement is floored: on a fast machine it is a few microseconds, where timer
+        # noise alone would swamp the ratio and make the test flap. The floor cannot hide the defect
+        # it guards -- on `main` the large measurement is 0.2-4 s, thousands of times the floor.
+        growth = cost(large) / max(cost(small), 1e-4)
+        assert growth < self.GROWTH_BUDGET, f'{name} grew {growth:.0f}x for 8x the input'
+
+
+@pytest.mark.unit
+class TestRedactMopUpVeto:
+    """What the URL pass has already masked is skipped per occurrence, not per run (CI-073)."""
+
+    def test_an_already_masked_url_keeps_its_scheme_and_username(self) -> None:
+        # The reason the veto exists at all: `https://user:***@host` is more diagnostic than
+        # `***@host`, and the username is not conventionally secret.
+        assert redact('Could not reach https://user:hunter2pass@x.supabase.co/x') == (
+            'Could not reach https://user:***@x.supabase.co/x'
+        )
+
+    def test_it_no_longer_vetoes_a_bare_secret_earlier_in_the_same_run(self) -> None:
+        # ⚠ A leak on `main` @ d4455ae, found by the CI-073 differential rather than by review.
+        # The veto was a test on the whole match, and the run is greedy: with no whitespace between
+        # them, the already-masked URL at the end of the run vetoed masking the bare
+        # `<password>@host` in front of it, and `main` prints `hunter2pass@h.example.com` here.
+        text = 'hunter2pass@h.example.com,https://u:hunter2pass@h.example.com/x'
+        masked = redact(text)
+        assert masked == '***@h.example.com,https://u:***@h.example.com/x'
+        assert 'hunter2pass' not in masked
+
+    def test_a_host_quoted_at_its_end_keeps_the_fast_path(self) -> None:
+        # The common shape: a message that quotes a URL puts the closing quote inside the host
+        # group. It is a *trailing* delimiter, so the run anchor is still exact.
+        assert errors._bare_userinfo_pattern(["x.supabase.co'"]).pattern.startswith('(?<!')
+        assert redact("Could not reach 'https://user:hunter2pass@x.supabase.co' -- boom") == (
+            "Could not reach 'https://user:***@x.supabase.co' -- boom"
+        )
+
+    def test_a_host_quoted_in_its_middle_drops_the_anchor_rather_than_masking_less(self) -> None:
+        # ⚠ The one input where the fast path would diverge: `re.sub` resumes mid-run after a match
+        # that ended mid-run, and only an interior quote in the host can do that. Speed gives way.
+        assert not errors._bare_userinfo_pattern(["ho'st"]).pattern.startswith('(?<!')
+        masked = redact("https://u:hunter2pass@ho'st/x SECRETONE@ho'st SECRETTWO@ho'st")
+        assert 'SECRETONE' not in masked
+        assert 'SECRETTWO' not in masked
+
+
+@pytest.mark.unit
+class TestRedactSchemeMatching:
+    """The `scheme://` anchor still matches exactly what it matched (CI-073)."""
+
+    def test_a_scheme_run_starting_with_a_digit_is_still_masked(self) -> None:
+        # The lookbehind anchors the match at the start of the scheme run, so the first character
+        # can no longer be required to be a letter. This is the input that proves the requirement
+        # had to move into a lookahead rather than be dropped.
+        assert redact('see 123https://user:hunter2pass@x.supabase.co/x') == ('see 123https://user:***@x.supabase.co/x')
+
+    def test_a_letter_free_scheme_run_still_does_not_match(self) -> None:
+        # ⚠ Not a tightening for its own sake. Letting `-://` match makes the match swallow the
+        # real `https://` URL that follows it inside the same run -- `re.sub` matches do not
+        # overlap -- and the password of the real URL then prints. Measured, not reasoned.
+        masked = redact('-://localhostuser@z.https://user:hunter2pass@h/x')
+        assert 'hunter2pass' not in masked
+
+    def test_the_scheme_is_echoed_back_exactly_as_it_was_written(self) -> None:
+        assert redact('POSTGRESQL://u:hunter2pass@h/x') == 'POSTGRESQL://u:***@h/x'
 
 
 @pytest.mark.unit

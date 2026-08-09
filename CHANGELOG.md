@@ -1,6 +1,71 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-08-09)
+
+### Features
+
+- **ir**: Recover and declare RPC declaration order
+  ([`d41a5db`](https://github.com/kmbhm1/castiron/commit/d41a5db86ba2e62131af1e2c7251d84db720a4dd))
+
+castiron read a function's parameter order out of the POST body's `properties` and handed it
+  downstream as pg declaration order. It is not: `properties` is a JSON **object**, and PostgREST
+  serializes it sorted by name. CI-012 will generate positional RPC calls from this list, and a
+  positional call built from an alphabetical order type-checks, runs, and returns the wrong answer.
+
+The same document carries the real order in TWO places, both of which survive because they are JSON
+  **arrays**:
+
+- the GET operation's `parameters` -- emitted only for a STABLE or IMMUTABLE function, and true pg
+  declaration order. Measured against `pg_proc.proargnames` with three purpose-built
+  anti-alphabetical probes, which falsified the only rival reading ("required first, then
+  alphabetical within group"): for probe_mixed the rival predicts [p_alpha, p_zulu, p_beta] and the
+  document says [p_zulu, p_alpha, p_beta]. - the POST body's `required` -- emitted for EVERY
+  function regardless of volatility, listing only the non-defaulted arguments. Postgres forbids a
+  defaulted parameter before a non-defaulted one, so that set is necessarily the declaration-order
+  PREFIX, never a scattered subset. This is the only order signal a VOLATILE function exposes, and a
+  VOLATILE mutation with no defaults recovers its order in full.
+
+`_declaration_order` reads the GET when it has one, else `required` followed by a name-sorted tail,
+  else keeps the body order. Every ordering comes from a list in document order; `sorted()` appears
+  once, inside an equality comparison (Hard Rule #9).
+
+Because the recovery is genuinely partial, the new IR field is a three-member enum rather than a
+  bool. `ParameterOrder.DECLARED_PREFIX` earns its complexity by having a concrete consumer action:
+  CI-012 emits `def f(p_zulu, p_alpha, *, p_beta=None)` -- positional prefix, keyword-only tail --
+  because Python's `*` divides on required-vs-defaulted, exactly the axis castiron can prove. A bool
+  would collapse that into False and throw away a correct positional prefix on the commonest RPC
+  shape there is. No `prefix_length` field: the known positions ARE the `has_default=False`
+  parameters, the same array by construction, and a second encoding of one fact is Hard Rule #6.
+
+The function row grows to a 9-tuple carrying the member itself. It rides the ROW, not the source,
+  for CI-090's reason: on this source "order known" happens to correlate with volatility, but a
+  live-DB source reads `pg_proc.proargnames` (ordered for VOLATILE too) and the DDL source will
+  carry mixed provenance in one document.
+
+Measured effect: 4 of 13 corpus artifacts move, all `ir.json`, and every diff line is inside
+  `functions[]` -- `tables` and `enums` decode identical and no parameter's content changed, only
+  its position plus one new key. ZERO `*.py.txt` goldens and ZERO fingerprint rows move, because no
+  emitter consumes `Schema.functions`. So no generated output changes and nobody's `castiron check`
+  goes red because of this.
+
+KNOWN_DEFECTS gains `CI-078`, cited by the two `testbed-public` cases: `create_order` is VOLATILE
+  with one required argument of three, so `required` fixes the first position and the defaulted tail
+  stays name-sorted -- the testbed declares (p_customer_id, p_status, p_lines) and the golden still
+  says [p_customer_id, p_lines, p_status]. That byte is still wrong. What changed is that castiron
+  now DECLARES the limit. The fixture case is deliberately NOT cited: it is hand-authored, so no
+  byte in it can be proved wrong, and citing it would manufacture evidence.
+
+Honest residual: `ParameterOrder.UNKNOWN` has no live witness. It needs a VOLATILE function with two
+  or more arguments and every one defaulted, and no capture -- present or pending -- has one, so it
+  rests on a synthetic unit test that says so in its own comment. `required`-is-declaration-order is
+  likewise measured on STABLE probes only. A falsifier cross-checks the two ordered encodings
+  against each other on every push wherever both are informative (two functions, asserted by name so
+  it cannot pass vacuously). CI-140 tracks seeding the VOLATILE probes.
+
+Refs: CI-078 (half 2), CI-139, CI-140
+
+
 ## v0.2.0 (2026-08-08)
 
 ### Bug Fixes

@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.3.1 (2026-08-09)
+
+### Performance Improvements
+
+- **cli**: Scan a message once per pass, not once per secret
+  ([`43a8af6`](https://github.com/kmbhm1/castiron/commit/43a8af6756fa789a8367fe8ccda2fc1dabe529e9))
+
+`redact` was quadratic in the length of the text on three counts, two of them fixed here. It is only
+  reachable through `RedactingFilter`, which runs on every log record and on a rendered traceback --
+  neither length-capped the way `_snippet` caps an error body -- so a source adapter logging a
+  document is enough to hit it.
+
+Measured at d4455ae, 20 000 characters: DSNs 0.511 s, a base64 blob carrying no secret at all 0.185
+  s, both in one message 0.979 s. Here: 0.00178 s, 0.00019 s and 0.00063 s -- 287x, 963x and 1554x,
+  and 12.8x/3.9x/7.7x growth for 8x the input against 69.9x/64.9x/63.7x before.
+
+- the bare `<secret>@host` mop-up ran one `re.sub` over the whole message per host, and the host
+  count grows with the message; hosts are now deduplicated, totally ordered, and matched in one
+  alternation pass. - `_URL_USERINFO`'s greedy scheme run restarted from every position of a run,
+  which made `redact` quadratic on text it never masks; a lookbehind anchors it at the run start and
+  a lookahead re-imposes the old pattern's real precondition, so the match set is unchanged. - the
+  key spellings ran one `str.replace` each; they now share one pass.
+
+The `***` veto moves from the mop-up's replacement function into its pattern, which it has to for
+  the alternation to be safe: as a test on the whole match, one already-masked URL at the end of a
+  greedy run vetoed masking every bare `<secret>@host` in front of it.
+  `hunter2pass@h,https://u:hunter2pass@h/x` leaks on main and does not here.
+
+Equivalence was proved rather than assumed, against a frozen copy of the implementation this
+  replaces: 82 enumerated shapes and 131 878 exhaustive inputs byte-identical, and of 193 575
+  planted-secret cases where the old code hid the secret, the new code hides all 193 575 -- zero
+  regressions, one improvement (the veto leak above). Tests go 219 -> 332, `errors.py` stays at 100%
+  coverage, and 8/8 mutants that revert part of the fix are killed.
+
+Refs CI-073.
+
+
 ## v0.3.0 (2026-08-09)
 
 ### Features

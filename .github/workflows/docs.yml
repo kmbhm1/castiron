@@ -5,14 +5,29 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Read at the workflow level, write only on the job that needs it — the same split release.yml
+# already uses. A workflow-level `contents: write` is granted to EVERY job the file grows, and the
+# grant would then arrive silently, attached to nothing anyone chose (zizmor's
+# `excessive-permissions`, CI-137).
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # `mkdocs gh-deploy` pushes the built site to the `gh-pages` branch
     steps:
-      - uses: actions/checkout@v4
+      # ⚠ NO `persist-credentials: false` HERE, unlike ci.yml. `mkdocs gh-deploy` (below) shells
+      # out to `git push origin gh-pages` through ghp-import, and `origin`'s only credential IS the
+      # one checkout persists into `.git/config` — dropping it turns the deploy into a 403. The
+      # workflow-level `contents: write` above exists for exactly that push.
+      #
+      # zizmor's `artipacked` flags the persistence at Low confidence; its threat model is a
+      # credential escaping through an uploaded workspace, and this job uploads no artifact (its
+      # output goes to the `gh-pages` branch). Suppressed per-site rather than by config, so the
+      # reason travels with the line.
+      - uses: actions/checkout@v4 # zizmor: ignore[artipacked]
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

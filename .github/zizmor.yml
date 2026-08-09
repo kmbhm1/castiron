@@ -1,0 +1,55 @@
+# zizmor — the SECURITY lint for `.github/workflows/` (CI-137). Run from
+# `.pre-commit-config.yaml` only, and deliberately NOT from `make validate`: adding a blocking
+# gate is the captain's call, exactly as recorded for `actionlint` in that file.
+#
+# It exists because `actionlint` does not cover this axis, and the split is narrower than it
+# sounds — measured, not assumed. Both tools flag `run: echo "${{ github.event.* }}"`; only zizmor
+# flags `run: echo "${{ inputs.* }}"` from a `workflow_dispatch` input (actionlint exits 0). What
+# actionlint cannot see AT ALL is credential persistence, action-pinning policy, App-token scope
+# and `permissions:` breadth — on this repo's own three workflows it reported 0 and zizmor reported
+# 13. `release.yml` carries `id-token: write` (PyPI Trusted Publishing) and `contents: write`, so a
+# careless edit there can publish to PyPI, which is precisely that blast radius.
+#
+# ONE rule is configured, and it is a POLICY with named exceptions rather than a suppression.
+#
+# `unpinned-uses` defaults to a blanket `hash-pin` policy: every `uses:` must name a commit SHA.
+# THAT DEFAULT IS KEPT HERE (there is no `'*'` entry below), so an action added tomorrow must be
+# hash-pinned or added to this list on purpose. Only the actions this repo already uses are
+# lowered to `ref-pin`, one line each, for the reasons below.
+#
+# ⚠ Measured, not assumed: under `ref-pin` zizmor accepts `@main` as readily as `@v4` — the two
+# policies differ only on "is it a hash". So each line below is a real reduction in what the audit
+# catches for that action, which is why they are enumerated instead of globbed to `'*'`.
+#
+#   * python-semantic-release/python-semantic-release — its major is LOAD-BEARING and is READ by
+#     `tests/unit/test_repo_tooling.py::TestTheReleaseBuildCommandCanRunWhereItRuns::
+#     test_every_variable_the_command_reads_is_one_the_pinned_psr_major_provides`, which uses it to
+#     decide which environment variables `[tool.semantic_release].build_command` may reference.
+#     That is the CI-115 trap: `$PACKAGE_NAME` is injected by PSR v10 and is EMPTY under the v9
+#     this repo pins, and `uv lock --upgrade-package ""` is a hard error that aborts the release.
+#     A SHA carries no readable major, so hash-pinning would turn that guard red and the only way
+#     to green it would be to weaken it.
+#   * python-semantic-release/publish-action — `release.yml` requires its major to stay in lockstep
+#     with the version step's (CI-116). Two SHAs cannot be compared for that.
+#   * pypa/gh-action-pypi-publish — upstream prescribes the `@release/v1` branch ref for Trusted
+#     Publishing, and that step is the one that talks to PyPI. Deviating from the documented ref on
+#     the untestable release path is the larger risk of the two.
+#   * actions/checkout, astral-sh/setup-uv, actions/create-github-app-token — floating majors, and
+#     nothing here can keep a SHA fresh: there is no `.github/dependabot.yml` in this repo, so a
+#     pinned hash never receives an upstream security fix. Hash-pinning without a bot trades "an
+#     action could move under us" for "an action is frozen at a version with a known CVE,
+#     silently", which is the worse failure because it is the quiet one.
+#
+# ⚠ FOLLOW-UP, and it is one decision rather than six: hash-pinning is the stronger posture and the
+# right end state, but it needs Dependabot AND a rewrite of the two guards named above. That is a
+# captain decision, not a config edit — do not take it piecemeal by deleting lines from this list.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        actions/checkout: ref-pin
+        actions/create-github-app-token: ref-pin
+        astral-sh/setup-uv: ref-pin
+        pypa/gh-action-pypi-publish: ref-pin
+        python-semantic-release/publish-action: ref-pin
+        python-semantic-release/python-semantic-release: ref-pin

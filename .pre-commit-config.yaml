@@ -64,13 +64,53 @@ repos:
   # commit that does not touch one.
   #
   # ⚠ Deliberately NOT in `make validate`: adding a blocking gate is the captain's call, and this
-  # is pre-commit only. `zizmor` (the security linter for the same files) is a separate decision
-  # and is deliberately not here.
+  # is pre-commit only. The same applies to `zizmor` below.
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
       - id: actionlint
         stages: [pre-commit]
+  # `zizmor` is the SECURITY lint for the same files, and it is a different axis from `actionlint`
+  # rather than more of it (CI-137). That gap matters HERE specifically: `release.yml` carries
+  # `id-token: write` (PyPI Trusted Publishing) and `contents: write`, so a careless edit there can
+  # publish to PyPI.
+  #
+  # Measured on this repo's own three workflows, not assumed: actionlint reports 0, zizmor reported
+  # 13. None of the four audit classes it raised is one actionlint can see —
+  #   * `github-app`            — the App token was minted with BLANKET installation permissions;
+  #   * `artipacked`            — the checkout credential persists into `.git/config`;
+  #   * `unpinned-uses`         — the action-pinning policy (see `.github/zizmor.yml`);
+  #   * `excessive-permissions` — `docs.yml` held `contents: write` at the WORKFLOW level.
+  #
+  # ⚠ The two DO overlap on template injection, and the overlap is partial in a way worth knowing:
+  # actionlint carries its own hardcoded untrusted-context list, so both flag
+  # `run: echo "${{ github.event.pull_request.title }}"`. Only zizmor flags
+  # `run: echo "${{ inputs.who }}"` from a `workflow_dispatch` input — measured, actionlint exits 0
+  # on it. `release.yml` is `workflow_dispatch`-only and carried exactly such an input until the
+  # captain removed the `rehearse` mode (CI-123), so that is this repo's shape, not a hypothetical.
+  #
+  # It needs NO network and NO token: zizmor runs its offline audits by default (it says so on
+  # startup) and only the online ones want `GH_TOKEN`. Verified with both `GH_TOKEN` and
+  # `GITHUB_TOKEN` unset, so a fresh contributor gets the same verdict.
+  #
+  # ⚠ The repo is `zizmorcore/zizmor-pre-commit`, NOT `zizmorcore/zizmor`: the hook is distributed
+  # from a separate repository so pre-commit can install a prebuilt wheel from PyPI instead of
+  # building the Rust binary. `zizmorcore/zizmor` carries no `.pre-commit-hooks.yaml` at all
+  # (checked at v1.29.0), so pointing at it fails with a bare "hook id not found".
+  #
+  # ⚠ `--config` is passed EXPLICITLY, and `--no-progress` is repeated because `args:` replaces
+  # upstream's defaults wholesale rather than extending them (upstream's README says so). The
+  # explicit path is not belt-and-braces: zizmor resolves the repository root by looking for a
+  # `.git` DIRECTORY, and in a `git worktree` — which is how every agent dispatch in this repo
+  # works — `.git` is a FILE, so discovery walks past the checkout and finds either the enclosing
+  # repository's config or none at all. Measured: the same tree reports 9 `unpinned-uses` errors
+  # under discovery in a worktree and 0 in a plain clone. Naming the file removes the difference.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.29.0
+    hooks:
+      - id: zizmor
+        stages: [pre-commit]
+        args: [--no-progress, --config, .github/zizmor.yml]
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v3.29.1
     hooks:

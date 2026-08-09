@@ -57,3 +57,57 @@ jobs:
       # not reach CI by inheritance. tests/unit/test_repo_tooling.py holds the two in sync.
       - name: Test (pytest, offline suite, 90% floor)
         run: uv run pytest -m "not integration" --cov=src/castiron --cov-report=term-missing --cov-fail-under=90
+
+  # The two WORKFLOW linters, which pre-commit alone could not be relied on to run (CI-144).
+  # Both hooks carry an upstream `files:` filter -- `^\.github/workflows/` for actionlint,
+  # `(\.github/(workflows/.*|dependabot.ya?ml))|(action\.ya?ml)$` for zizmor -- so locally they fire
+  # only on a commit that touches one of those files. Correct as an incremental hook, and exactly
+  # why it is weak as the only enforcement: the property they check ("this repo's workflows are
+  # well-formed and not over-privileged") is a property of the FILES, which are present on every run
+  # here regardless of what a commit touched. An action pin that goes stale, or a `permissions:`
+  # that widened three PRs ago, is otherwise audited by nobody until someone edits that file again.
+  #
+  # ⚠ Deliberately NOT added to `make validate` (captain's ruling): both scope to `.github/`, so as
+  # gate prerequisites they would be a no-op on ~99% of pushes while costing every push the
+  # toolchain bootstrap below.
+  #
+  # ⚠ Run THROUGH pre-commit, not as `uvx zizmor` / a bare actionlint binary, and that is the whole
+  # design of this job. A direct invocation would be a SECOND declaration of each tool's version and
+  # arguments, drifting from `.pre-commit-config.yaml` the moment either moves -- the CI-105 shape
+  # (a gate covering something different from the check next to it), which has already cost this
+  # repo two red pushes on the ruff axis. Here the hook config IS the invocation: same `rev`, same
+  # `args` (zizmor's `--config .github/zizmor.yml` among them), one place to change.
+  # `tests/unit/test_repo_tooling.py::TestEveryWorkflowLinterInThePreCommitConfigAlsoRunsInCi`
+  # asserts that every workflow-lint hook declared there is named by a step here.
+  #
+  # Neither tool needs the network or a token at audit time: zizmor runs its offline audits by
+  # default (its online ones want `GH_TOKEN`, which is not set here), and actionlint reads only the
+  # workflow files. pre-commit does fetch each hook's toolchain on a cold run -- a Go toolchain for
+  # actionlint, a wheel for zizmor -- which is why this is its own job, in parallel with the four
+  # matrix legs, rather than a fifth step inside each of them.
+  workflows:
+    name: workflow lint (actionlint + zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      # `persist-credentials: false` for the reason the quality job records: nothing here writes to
+      # git, and the workflow's `permissions:` is `contents: read`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      # One step per hook because `pre-commit run` takes at most ONE hook id, and two steps also
+      # keep the two verdicts separately named in the checks UI.
+      - name: Lint workflows (actionlint)
+        run: uv run pre-commit run --all-files actionlint
+
+      - name: Audit workflows (zizmor)
+        run: uv run pre-commit run --all-files zizmor

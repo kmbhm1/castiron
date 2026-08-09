@@ -302,11 +302,16 @@ OPENAPI_FIXTURE = InputFamily(
     origin='synthetic',
 )
 
-#: The corpus's centre of gravity: 26 tables, 3 enums, 14 functions, a cross-schema enum
+#: The corpus's centre of gravity: 26 tables, 3 enums, 16 functions, a cross-schema enum
 #: collision, a dangling FK, and the view-classification defect, in real PostgREST encodings.
-#: Three of those functions are the ``CI-139`` argument-order probes, added by the 2026-08-08
-#: recapture (testbed ``f839fce``): they are the only functions in the corpus whose GET array
-#: can distinguish pg declaration order from required-first-then-alphabetical. See
+#: Five of those functions are the argument-order probes: the three STABLE ones from the
+#: 2026-08-08 recapture (``CI-139``, testbed ``f839fce``) are the only functions in the corpus
+#: whose GET array can distinguish pg declaration order from required-first-then-alphabetical,
+#: and the two VOLATILE ones from the 2026-08-09 recapture (``CI-140``, testbed ``752649a``)
+#: measure the POST body's ``required`` array where it is the *only* order signal. One of those,
+#: ``probe_volatile_all_optional``, is the corpus's **only** witness for
+#: :attr:`~castiron.ir.models.ParameterOrder.UNKNOWN` -- before it, that public enum member
+#: rested on a hand-written document alone. See
 #: ``tests/unit/sources/openapi/test_parse.py::TestTheArgumentOrderProbes``.
 TESTBED_PUBLIC = InputFamily(
     family_id='testbed-public',

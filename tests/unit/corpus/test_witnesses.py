@@ -635,20 +635,76 @@ class TestCi078PartiallyRecoveredArgumentOrder:
     def test_create_order_is_the_only_function_that_is_not_fully_declared(
         self, corpus_irs: dict[tuple[str, Any], Schema]
     ) -> None:
-        # Enumerated, not sampled (CI-072). If a future capture adds a second partly-recovered
-        # function, someone reads this test and decides deliberately whether CI-078's description
-        # still covers it -- rather than the new one slipping into a golden unnamed.
+        """The whole ``ParameterOrder`` census of this capture, as one comparison.
+
+        Enumerated, not sampled (``CI-072``). If a future capture adds a second partly-recovered
+        function, someone reads this test and decides deliberately whether ``CI-078``'s description
+        still covers it -- rather than the new one slipping into a golden unnamed.
+
+        ⚠ **``UNKNOWN`` is not a defect and is deliberately not registered as one.** This assertion
+        read ``'UNKNOWN' not in by_state`` until the ``CI-140`` recapture (testbed ``752649a``),
+        with a message saying no capture produced that shape. One does now:
+        ``probe_volatile_all_optional`` is VOLATILE with two arguments and both defaulted, so there
+        is no GET operation *and* no ``required`` array, and **nothing in the document carries
+        order**. Reporting ``UNKNOWN`` there is castiron declining to claim an order it cannot
+        justify -- the correct answer, and the opposite of ``create_order``'s ``DECLARED_PREFIX``,
+        which is a real residual with real wrong bytes. Do not merge the two.
+        """
         ir = _ir('testbed-public-default', corpus_irs)
         by_state: dict[str, list[str]] = {}
         for function in ir['functions']:
             by_state.setdefault(function['parameter_order'], []).append(function['name'])
+
         assert by_state.get('DECLARED_PREFIX') == ['create_order'], by_state
-        assert 'UNKNOWN' not in by_state, (
-            f'a captured function now establishes NO order at all: {by_state.get("UNKNOWN")}. That '
-            f'needs a VOLATILE function with >=2 arguments and every one defaulted -- no capture '
-            f'produced one before (CI-140), so the corpus input changed shape.'
+        assert by_state.get('UNKNOWN') == ['probe_volatile_all_optional'], (
+            f'the UNKNOWN census moved to {by_state.get("UNKNOWN")}. That state needs a VOLATILE '
+            f'function with >=2 arguments and every one of them defaulted; the seed carries '
+            f'exactly one such function on purpose (CI-140), and it is the only live witness this '
+            f'public enum member has. If it vanished, RE-CAPTURE -- do not relax this to a subset '
+            f'check, and do not add it to KNOWN_DEFECTS: UNKNOWN is correct behaviour.'
         )
-        assert len(by_state['DECLARED']) == 13, by_state
+        assert len(by_state['DECLARED']) == 14, by_state
+        assert sum(len(names) for names in by_state.values()) == len(ir['functions']) == 16, by_state
+
+    def test_the_unknown_witness_would_report_a_different_state_if_it_were_shaped_otherwise(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        """Both properties that make ``UNKNOWN`` reachable, asserted rather than assumed.
+
+        ``UNKNOWN`` needs **two** things at once, and the seed comment warns that either edit
+        deletes the witness while leaving something that still looks like a probe. So both are
+        checked here, against the capture, next to the ``DECLARED`` sibling that differs from it in
+        exactly one respect: ``probe_volatile_two_required`` is the same function with its defaults
+        removed, and it recovers its **full** order from ``required`` alone.
+        """
+        ir = _ir('testbed-public-default', corpus_irs)
+        unknown = _function(ir, 'probe_volatile_all_optional')
+        assert [p['has_default'] for p in unknown['parameters']] == [True, True], (
+            'probe_volatile_all_optional no longer has EVERY argument defaulted, so `required` '
+            'recovers a prefix and the UNKNOWN witness is gone.'
+        )
+        assert len(unknown['parameters']) >= 2, 'a one-argument list is trivially in declaration order'
+        assert unknown['volatility'] == 'VOLATILE', 'a STABLE function carries a GET, which establishes the order'
+
+        document = json.loads(TESTBED_PUBLIC.input_path.read_text(encoding='utf-8'))
+        item = document['paths']['/rpc/probe_volatile_all_optional']
+        assert 'get' not in item, 'PostgREST now emits a GET for a VOLATILE function; re-derive CI-078'
+        body = next(p for p in item['post']['parameters'] if p.get('in') == 'body')
+        assert body['schema'].get('required', []) == [], 'the `required` array came back; order is recoverable again'
+
+        # The one-variable control. Same argument names, same order, same volatility -- only the
+        # defaults differ -- and it lands DECLARED, so UNKNOWN is attributable to the defaults
+        # rather than to volatility or to castiron simply giving up on VOLATILE functions.
+        control = _function(ir, 'probe_volatile_two_required')
+        assert [p['name'] for p in control['parameters']] == ['p_zebra', 'p_alpha']
+        assert [p['has_default'] for p in control['parameters']] == [False, False]
+        assert control['volatility'] == 'VOLATILE'
+        assert control['parameter_order'] == 'DECLARED'
+        assert [p['name'] for p in unknown['parameters']] == ['p_alpha', 'p_zebra'], (
+            'the UNKNOWN function keeps the alphabetical body order verbatim -- UNKNOWN is a '
+            'refusal to CLAIM an order, not a claim that this one is wrong. Its declaration is '
+            '(p_zebra, p_alpha), the same as the control, which is why the two lists disagree.'
+        )
 
 
 # ---------------------------------------------------------------------------

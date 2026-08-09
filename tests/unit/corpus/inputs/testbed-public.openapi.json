@@ -3713,6 +3713,46 @@
         ]
       }
     },
+    "/rpc/probe_volatile_all_optional": {
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_zebra": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_volatile_all_optional"
+        ]
+      }
+    },
     "/rpc/create_order": {
       "post": {
         "parameters": [
@@ -4586,6 +4626,50 @@
         },
         "tags": [
           "(rpc) probe_two_required"
+        ]
+      }
+    },
+    "/rpc/probe_volatile_two_required": {
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_zebra": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_zebra",
+                "p_alpha"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_volatile_two_required"
         ]
       }
     }

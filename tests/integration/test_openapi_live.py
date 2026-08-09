@@ -20,6 +20,7 @@ Reading guide for the three kinds of assertion in this file:
 
 import re
 import sys
+import unicodedata
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType
@@ -39,6 +40,7 @@ from castiron.ir import (
     TableInfo,
 )
 from castiron.sources.openapi import build_schema_from_document
+from castiron.utils.naming import python_class_name, python_member_names
 from tests.integration.conftest import DocumentLoader
 
 pytestmark = pytest.mark.integration
@@ -209,11 +211,15 @@ class TestEnvelope:
             assert 'event_log' not in {t.name for t in schema.tables}
 
     def test_the_edge_schema_is_the_quarantine_seed(self, live_edge_schema: Schema) -> None:
+        # `mangling_probe` arrived with the CI-140 recapture (testbed 752649a). It exists ONLY to
+        # carry `edge.mangling_torture`: castiron discovers enums by walking COLUMNS, so a type no
+        # column references never enters its registry and the CI-113 witness would be invisible.
         assert [t.name for t in live_edge_schema.tables] == [
             'dual_fk_child',
             'geese',
             'goslings',
             'identifier_torture',
+            'mangling_probe',
             'parent_a',
             'parent_b',
         ]
@@ -852,10 +858,14 @@ class TestFunctions:
             'monthly_totals',
             'normalize_email',
             'ping',
-            # The three CI-139 argument-order probes, seeded at testbed f839fce.
+            # The three STABLE CI-139 argument-order probes, seeded at testbed f839fce...
             'probe_mixed',
             'probe_two_optional',
             'probe_two_required',
+            # ...and the two VOLATILE CI-140 ones, seeded at 752649a. They are the first two with
+            # volatility flipped and nothing else changed.
+            'probe_volatile_all_optional',
+            'probe_volatile_two_required',
             'reserved_args',
             'search_products',
             'split_name',
@@ -881,11 +891,17 @@ class TestFunctions:
             'list_statuses': (None, True),
             'monthly_totals': (None, True),
             'normalize_email': (None, True),  # IMMUTABLE, reported identically to STABLE
-            # The probes are STABLE by design -- a VOLATILE probe would get no GET operation and
-            # could not carry the declaration order it exists to expose.
+            # Group 1 is STABLE by design -- a VOLATILE probe gets no GET operation and could not
+            # carry the declaration order it exists to expose...
             'probe_mixed': (None, True),
             'probe_two_optional': (None, True),
             'probe_two_required': (None, True),
+            # ...and group 2 is VOLATILE for exactly that reason: with the GET gone, the POST
+            # body's `required` array is the only order signal left, which is what CI-140 measures.
+            # This row is also the live proof that flipping volatility in the seed really does
+            # change what the document says -- the pair is otherwise identical.
+            'probe_volatile_all_optional': (FunctionVolatility.VOLATILE, False),
+            'probe_volatile_two_required': (FunctionVolatility.VOLATILE, False),
             'reserved_args': (None, True),
             'search_products': (None, True),
             'split_name': (None, True),
@@ -915,6 +931,14 @@ class TestFunctions:
             'probe_mixed': ['p_zulu', 'p_alpha', 'p_beta'],
             'probe_two_optional': ['p_zebra', 'p_alpha'],
             'probe_two_required': ['p_zebra', 'p_alpha'],
+            # ⚠ The CI-140 pair, and the two rows in this table that disagree with each other.
+            # Both are declared `(p_zebra, p_alpha)` and both are VOLATILE, so neither has a GET.
+            # The one whose arguments are all REQUIRED recovers that order in full from the POST
+            # body's `required` array; the one whose arguments are all DEFAULTED has no `required`
+            # at all, so castiron keeps the alphabetical body verbatim and says UNKNOWN rather
+            # than passing it off as declaration order (asserted in the next test).
+            'probe_volatile_all_optional': ['p_alpha', 'p_zebra'],  # ⚠ NOT the declaration order
+            'probe_volatile_two_required': ['p_zebra', 'p_alpha'],
             'reserved_args': ['class', 'def'],
             'search_products': ['p_terms', 'p_limit'],
             'split_name': ['p_full'],  # OUT -- excluded
@@ -924,10 +948,15 @@ class TestFunctions:
     def test_every_parameter_order_state_is_the_measured_one(self, live_public_schema: Schema) -> None:
         # Per function, not a spot check (CI-072) -- the same shape as
         # `test_every_parameter_mode_is_the_measured_one`. `create_order` is the ONLY partly
-        # recovered function in this schema, and nothing here reaches UNKNOWN: that needs a
-        # VOLATILE function with >=2 arguments and every one defaulted, which the seed has none of
-        # (`CI-140`). If a probe ever lands DECLARED_PREFIX or UNKNOWN, the implementation is
-        # wrong, not the seed.
+        # recovered function in this schema.
+        #
+        # ⚠ **This comment used to say "nothing here reaches UNKNOWN", and CI-140 closed that.**
+        # The seed now carries `probe_volatile_all_optional` -- VOLATILE, >=2 arguments, every one
+        # defaulted -- so there is no GET operation AND no `required` array, and nothing in the
+        # document carries order at all. That member of a public enum shipped in 0.3.0 had no
+        # witness from a real database until this row. It is not a defect: UNKNOWN is castiron
+        # declining to claim an order it cannot justify. A group-1 (STABLE) probe landing anything
+        # but DECLARED still means the implementation is wrong, not the seed.
         assert {f.name: f.parameter_order for f in live_public_schema.functions} == {
             'bump_counter': ParameterOrder.DECLARED,  # one argument -- true by arity (D6)
             'create_order': ParameterOrder.DECLARED_PREFIX,
@@ -939,11 +968,87 @@ class TestFunctions:
             'probe_mixed': ParameterOrder.DECLARED,
             'probe_two_optional': ParameterOrder.DECLARED,
             'probe_two_required': ParameterOrder.DECLARED,
+            'probe_volatile_all_optional': ParameterOrder.UNKNOWN,  # ⚠ the only one, anywhere
+            'probe_volatile_two_required': ParameterOrder.DECLARED,  # recovered from `required`
             'reserved_args': ParameterOrder.DECLARED,
             'search_products': ParameterOrder.DECLARED,
             'split_name': ParameterOrder.DECLARED,
             'tally': ParameterOrder.DECLARED,
         }
+
+    def test_the_live_apparatus_witnesses_every_parameter_order_member(self, live_public_schema: Schema) -> None:
+        """Every ``ParameterOrder`` member is produced by a **real** PostgREST, not just by a fixture.
+
+        Stated as an equality over the enum's own members rather than as three spot checks, so
+        adding a fourth member fails here until someone decides -- deliberately -- whether the
+        apparatus can witness it. Before ``CI-140`` this claim was **false**: ``UNKNOWN`` was
+        reachable only from a hand-authored document in the unit suite, which is exactly the
+        ``CI-076`` posture (a claim about a real source resting on synthetic bytes).
+        """
+        census: dict[ParameterOrder, list[str]] = {}
+        for function in live_public_schema.functions:
+            census.setdefault(function.parameter_order, []).append(function.name)
+
+        assert set(census) == set(ParameterOrder), (
+            f'the live apparatus no longer witnesses every ParameterOrder member. Missing: '
+            f'{sorted(state.name for state in set(ParameterOrder) - set(census))}. Re-seed the '
+            f'testbed rather than weakening this to a subset check.'
+        )
+        assert census[ParameterOrder.UNKNOWN] == ['probe_volatile_all_optional']
+        assert census[ParameterOrder.DECLARED_PREFIX] == ['create_order']
+
+    def test_the_volatile_pair_isolates_defaultness_as_the_only_variable(self, live_public_schema: Schema) -> None:
+        # The one-variable design, live. `probe_volatile_two_required` and
+        # `probe_volatile_all_optional` are declared with the SAME two argument names in the SAME
+        # anti-alphabetical order and the SAME volatility; only their defaults differ. So the
+        # difference in what castiron reports is attributable to defaultness and to nothing else,
+        # and neither half can be explained away as "castiron gives up on VOLATILE functions".
+        recovered = _function(live_public_schema, 'probe_volatile_two_required')
+        unrecovered = _function(live_public_schema, 'probe_volatile_all_optional')
+
+        assert recovered.volatility is unrecovered.volatility is FunctionVolatility.VOLATILE
+        assert {p.name for p in recovered.parameters} == {p.name for p in unrecovered.parameters}
+        assert [p.has_default for p in recovered.parameters] == [False, False]
+        assert [p.has_default for p in unrecovered.parameters] == [True, True]
+
+        # Declared `(p_zebra, p_alpha)` in the seed. One recovers it; the other cannot and says so.
+        assert [p.name for p in recovered.parameters] == ['p_zebra', 'p_alpha']
+        assert recovered.parameter_order is ParameterOrder.DECLARED
+        assert [p.name for p in unrecovered.parameters] == ['p_alpha', 'p_zebra']
+        assert unrecovered.parameter_order is ParameterOrder.UNKNOWN
+        assert [p.name for p in recovered.parameters] != [p.name for p in unrecovered.parameters], (
+            'the pair now reports the same list, so it no longer shows that the recovery is real'
+        )
+
+    def test_the_required_array_is_the_only_order_signal_a_volatile_function_has(
+        self, live_public_document: Mapping[str, Any]
+    ) -> None:
+        # 🔴 THE measurement CI-140 exists for, at the DOCUMENT level so a failure separates
+        # "PostgREST changed" from "castiron changed". `required` was believed to be declaration
+        # order, but had only ever been measured on STABLE functions -- which also carry a GET, so
+        # the belief was never load-bearing there. Here it is the whole answer.
+        #
+        # ⚠ If a PostgREST upgrade alphabetizes this array, castiron's ParameterOrder.DECLARED for
+        # a volatile mutation becomes a SILENT LIE. This test failing is how anyone finds out.
+        item = live_public_document['paths']['/rpc/probe_volatile_two_required']
+        assert 'get' not in item, 'a VOLATILE function acquired a GET operation (PostgREST v12.2.3 does this)'
+        body = next(p for p in item['post']['parameters'] if p.get('in') == 'body')['schema']
+        assert list(body['required']) == ['p_zebra', 'p_alpha'], 'declaration order, matching pg_proc.proargnames'
+        assert list(body['properties']) == ['p_alpha', 'p_zebra'], 'the body object is alphabetical, as always'
+        assert list(body['required']) != sorted(body['required']), (
+            'the probe is seeded anti-alphabetically ON PURPOSE; a sorted array satisfies both '
+            'rival readings and measures nothing.'
+        )
+
+        # And the shape where even that is gone: `required` is ABSENT, not present-and-empty.
+        optional = live_public_document['paths']['/rpc/probe_volatile_all_optional']
+        assert 'get' not in optional
+        optional_body = next(p for p in optional['post']['parameters'] if p.get('in') == 'body')['schema']
+        assert list(optional_body['properties']) == ['p_alpha', 'p_zebra']
+        assert 'required' not in optional_body, (
+            'PostgREST now emits an explicit empty `required` for an all-optional function. That '
+            'is a source change; castiron must still reach UNKNOWN, but record the change first.'
+        )
 
     def test_a_volatile_functions_argument_order_is_only_partly_recoverable(self, live_public_schema: Schema) -> None:
         # ⚠ Retitled: this was `..._is_unrecoverable`, which `CI-078` measured to be too strong.
@@ -1044,6 +1149,10 @@ class TestFunctions:
             ('probe_two_optional', 'p_zebra'): ParameterMode.IN,
             ('probe_two_required', 'p_alpha'): ParameterMode.IN,
             ('probe_two_required', 'p_zebra'): ParameterMode.IN,
+            ('probe_volatile_all_optional', 'p_alpha'): ParameterMode.IN,
+            ('probe_volatile_all_optional', 'p_zebra'): ParameterMode.IN,
+            ('probe_volatile_two_required', 'p_alpha'): ParameterMode.IN,
+            ('probe_volatile_two_required', 'p_zebra'): ParameterMode.IN,
             ('reserved_args', 'class'): ParameterMode.IN,
             ('reserved_args', 'def'): ParameterMode.IN,
             ('search_products', 'p_limit'): ParameterMode.IN,
@@ -1276,12 +1385,159 @@ class TestEdgeQuarantine:
         exec(compile(module, 'schema.py', 'exec'), {})  # noqa: S102 -- executing IS the assertion
 
 
+class TestTheNameManglingEnum:
+    """``edge.mangling_torture`` — ``CI-113``'s witness, in a real Postgres (captain-ruled permanent).
+
+    **The defect.** Python's ``EnumMeta`` swallows a member already spelled
+    ``_<EnclosingClassName>__x`` (CPython's ``enum._is_private``): py3.10 keeps it under the mangled
+    name with a ``DeprecationWarning``, **py3.11+ drop it silently**. castiron emitted exactly that
+    shape at ``castiron gen`` **exit 0**, so an emitted module's *meaning* depended on which
+    interpreter imported it and one enum label simply vanished.
+
+    **Why it needs two labels, not one.** The class-private clause is keyed to the **enclosing
+    class name**, so a spelling that is fatal under one enum is perfectly legal under another. This
+    type therefore carries both, and the pair is what makes the guard falsifiable:
+
+    - ``_EᵈᵍᵉMªⁿᵍˡᵢⁿᵍTºʳᵗᵘʳᵉEⁿᵘᵐ__X`` → NFKC ``_EdgeManglingTortureEnum__X``. **The trigger**:
+      class-private under *this* enum's own generated class name. Must be repaired.
+    - ``_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X`` → NFKC ``_PublicOrderStatusEnum__X``. The label from castiron's
+      own unit test, byte for byte. **The negative control**: legal here, so it must be left
+      **untouched**. A guard keyed to a blacklist of spellings rather than to the enclosing class
+      would repair this one too, and this class is what catches that.
+
+    **The mechanism, so nobody "tidies" the labels.** castiron uppercases a label to build a member
+    name, so an ASCII spelling can never reach the shape (``.upper()`` destroys the lowercase a
+    class name needs). These labels are written in **modifier letters**, which ``str.upper()``
+    leaves alone and which CPython NFKC-normalizes **at compile time** — after castiron has stopped
+    looking. ⚠ **Retyping either label in ASCII makes every assertion here vacuous while looking
+    identical in a terminal**, so both halves are asserted: each label folds onto the shape *and*
+    is not already spelled that way. The testbed's ``verify.sh`` asserts the same two halves at the
+    document level.
+    """
+
+    #: NFKC forms, in ``enumsortorder``. Written as the folded ASCII on purpose — the un-folded
+    #: bytes live in the seed migration and in the capture, and duplicating them into a Python
+    #: source file is one more place for a well-meaning editor to normalize them away.
+    CONTROL_LABEL = '_PublicOrderStatusEnum__X'
+    TRIGGER_LABEL = '_EdgeManglingTortureEnum__X'
+
+    @staticmethod
+    def _enum(schema: Schema) -> Any:
+        """Return the ``edge.mangling_torture`` enum, or fail listing what the schema has."""
+        for enum in schema.enums:
+            if enum.name == 'mangling_torture':
+                return enum
+        raise AssertionError(
+            f'edge.mangling_torture is absent. Present: {[(e.schema, e.name) for e in schema.enums]}. '
+            f'castiron finds enums by walking COLUMNS, so check that edge.mangling_probe.label is '
+            f'still there -- a type no column references never enters the registry.'
+        )
+
+    def test_the_enum_arrives_with_its_three_labels_in_catalog_order(self, live_edge_schema: Schema) -> None:
+        enum = self._enum(live_edge_schema)
+        assert (enum.schema, enum.name) == ('edge', 'mangling_torture')
+        folded = [unicodedata.normalize('NFKC', value) for value in enum.values]
+        assert folded == ['ok', self.TRIGGER_LABEL, self.CONTROL_LABEL], (
+            'the labels are not the seeded three in enumsortorder. Order is contractual here '
+            '(pg enumsortorder, preserved end to end), and both crafted labels are load-bearing.'
+        )
+        # ⚠ The half that stops an ASCII retype from passing vacuously. Without it, every
+        # assertion in this class survives someone "fixing the encoding" of the seed.
+        assert enum.values[1] != self.TRIGGER_LABEL, 'the trigger must be the modifier-letter spelling'
+        assert enum.values[2] != self.CONTROL_LABEL, 'the control must be the modifier-letter spelling'
+
+    def test_the_carrier_column_is_why_the_enum_is_visible_at_all(self, live_edge_schema: Schema) -> None:
+        # Stated as an assertion rather than a comment: castiron discovers enums by walking
+        # columns, so deleting `mangling_probe` deletes the witness without deleting the type.
+        label = _column(live_edge_schema, 'mangling_probe', 'label')
+        assert label.raw_type == 'edge.mangling_torture'
+        assert label.enum_info is not None
+        assert [unicodedata.normalize('NFKC', v) for v in label.enum_info.values] == [
+            'ok',
+            self.TRIGGER_LABEL,
+            self.CONTROL_LABEL,
+        ]
+
+    def test_the_trigger_is_repaired_and_the_control_is_left_alone(self, live_edge_schema: Schema) -> None:
+        """🔴 The claim, as one comparison: the guard is keyed to the enclosing class, not to a spelling.
+
+        ``note`` is the observable difference. The trigger carries ``'reserved by Enum'`` — castiron
+        saying it changed the name and why; the control carries ``None`` — castiron saying it did
+        not. A guard that blacklisted the *shape* rather than resolving it against *this* class
+        name would repair both, and this test is what fails.
+        """
+        enum = self._enum(live_edge_schema)
+        class_name = python_class_name(enum)
+        assert class_name == 'EdgeManglingTortureEnum', (
+            'the enum type or its schema was renamed, which VOIDS the trigger: the class-private '
+            'clause fires only when the label folds onto `_<this exact class name>__`.'
+        )
+
+        members = python_member_names(enum, class_name)
+        by_label = {unicodedata.normalize('NFKC', m.label): m for m in members}
+        assert [by_label[label].note for label in ('ok', self.TRIGGER_LABEL, self.CONTROL_LABEL)] == [
+            None,
+            'reserved by Enum',
+            None,
+        ]
+
+        trigger = by_label[self.TRIGGER_LABEL]
+        assert unicodedata.normalize('NFKC', trigger.name) == f'{self.TRIGGER_LABEL}__', (
+            'the trigger must be repaired OUT of the class-private shape by appending underscores; '
+            'a name ending `__` is not class-private and EnumMeta leaves it alone.'
+        )
+        control = by_label[self.CONTROL_LABEL]
+        assert control.name == control.label, (
+            'the control was renamed. Under EdgeManglingTortureEnum the spelling '
+            '`_PublicOrderStatusEnum__X` is perfectly legal, so repairing it means the guard is '
+            'keyed to a blacklist of spellings rather than to the enclosing class -- which would '
+            'also mean it MISSES any label crafted for a class name not on the list.'
+        )
+
+    def test_every_label_survives_into_the_emitted_class_on_this_interpreter(self, live_edge_schema: Schema) -> None:
+        """🔴 The end-to-end proof, and the only one that can see the original defect.
+
+        Nothing short of **executing** the module catches this: the broken output *compiled*
+        cleanly, and the member vanished when ``EnumMeta`` built the class. There is deliberately no
+        ``sys.version_info`` branch — the whole point of ``CI-113`` is that the emitted module means
+        the same thing on 3.10 and on 3.11+, and ``make test-matrix`` runs all four.
+        """
+        with _executed(live_edge_schema) as module:
+            emitted = module.EdgeManglingTortureEnum
+            assert len(list(emitted)) == 3, (
+                f'a label was SWALLOWED by EnumMeta: {[m.name for m in emitted]}. That is CI-113, '
+                f'and on py3.11+ it happens silently at castiron gen exit 0.'
+            )
+            # Values are the labels VERBATIM -- the repair renames the member, never the value, so
+            # the wire format is untouched and a round-trip through the database still works.
+            assert [m.value for m in emitted] == self._enum(live_edge_schema).values
+            for value in self._enum(live_edge_schema).values:
+                assert emitted(value).value == value
+
+            # And the two crafted members are addressable under the names the IR promised.
+            names = [unicodedata.normalize('NFKC', m.name) for m in emitted]
+            assert names == ['OK', f'{self.TRIGGER_LABEL}__', self.CONTROL_LABEL]
+
+    def test_the_enum_is_not_reachable_from_any_committed_corpus_input(self) -> None:
+        # Why this class is integration-only, asserted rather than assumed. The `edge` schema is
+        # deliberately NEVER a corpus input (its document form is not contractual -- a PostgREST
+        # upgrade could move it), so this witness cannot be moved into the offline gate. The
+        # offline half of the CI-113 claim is `tests/unit/utils/test_naming.py`, against a crafted
+        # EnumInfo; this is the half that proves the bytes survive Postgres -> PostgREST -> JSON.
+        from tests.unit.corpus.cases import FAMILIES
+
+        assert [f.schema for f in FAMILIES if f.origin == 'captured'] == ['public', 'inventory']
+
+
 class TestCommittedCaptureIsStillFaithful:
     """Does the corpus's committed capture still match the apparatus it was taken from?
 
     This is the standing check that keeps a committed capture from silently going stale. The
-    corpus (``tests/unit/corpus/``) is a set of goldens derived from two documents captured at
-    testbed revision ``3150132`` / PostgREST ``14.14``. Those goldens are only *falsifiable*
+    corpus (``tests/unit/corpus/``) is a set of goldens derived from two committed documents, each
+    stamped with the testbed revision that produced it (``inputs/*.provenance.json``:
+    ``testbed-public`` at ``752649a``, ``testbed-inventory`` at ``3150132`` — the inventory schema
+    has not moved since, and its capture is byte-identical across every recapture, so it is not
+    re-stamped for its own sake). Both are PostgREST ``14.14``. Those goldens are only *falsifiable*
     while the capture still represents something real — SEED-D2's whole premise is that an
     unreproducible seed makes every golden derived from it unfalsifiable, because you can no
     longer tell "castiron changed" from "the schema changed".

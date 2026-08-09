@@ -990,16 +990,18 @@ class TestRpcParameterOrderInTheRealCaptures:
 
     #: Captured ``/rpc/*`` bodies with >1 parameter -- the only ones whose order carries any
     #: information. Asserted by name, so the sweep below cannot pass vacuously if a capture is
-    #: replaced by one with no multi-argument function (``CI-072``, ``CI-091``). The three
-    #: ``probe_*`` entries arrived with the ``CI-139`` recapture (testbed ``f839fce``), which
-    #: seeded them as migrations precisely so they cannot vanish again; see
-    #: :class:`TestTheArgumentOrderProbes`.
+    #: replaced by one with no multi-argument function (``CI-072``, ``CI-091``). The five
+    #: ``probe_*`` entries arrived with the ``CI-139`` (testbed ``f839fce``, the three STABLE ones)
+    #: and ``CI-140`` (testbed ``752649a``, the two VOLATILE ones) recaptures, which seeded them as
+    #: migrations precisely so they cannot vanish again; see :class:`TestTheArgumentOrderProbes`.
     INFORMATIVE_BODIES = (
         'create_order',
         'get_customer_stats',
         'probe_mixed',
         'probe_two_optional',
         'probe_two_required',
+        'probe_volatile_all_optional',
+        'probe_volatile_two_required',
         'reserved_args',
         'search_products',
     )
@@ -1110,13 +1112,17 @@ class TestRpcParameterOrderInTheRealCaptures:
         assert len(checked) == 12, f'expected 12 GET-bearing captured RPCs, swept {sorted(checked)}'
 
     def test_the_required_array_agrees_with_the_get_order_wherever_both_are_informative(self) -> None:
-        # 🔴 **THE FALSIFIER for the `required`-is-declaration-order premise.** castiron recovers a
-        # VOLATILE function's order from `required` alone, and no VOLATILE function in the corpus
-        # can check that claim (none has >1 required argument). What CAN check it is a function
-        # that carries BOTH encodings: where a GET exists and `required` has >=2 entries, the
-        # required names must appear in the GET array in the same relative order. If they ever
-        # disagree, `_declaration_order`'s rule 3 is unsound -- stop and re-derive it, do not
-        # adjust this test.
+        # 🔴 **THE CROSS-CHECK for the `required`-is-declaration-order premise.** castiron recovers
+        # a VOLATILE function's order from `required` alone. What corroborates that INSIDE one
+        # function is a function carrying BOTH encodings: where a GET exists and `required` has
+        # >=2 entries, the required names must appear in the GET array in the same relative order.
+        # If they ever disagree, `_declaration_order`'s rule 3 is unsound -- stop and re-derive it,
+        # do not adjust this test.
+        #
+        # ⚠ A GET-bearing function is by definition NOT the case rule 3 exists for, so this is
+        # corroboration and not the measurement. The measurement is `probe_volatile_two_required`
+        # (`CI-140`), where `required` is the entire order signal; see
+        # `TestTheArgumentOrderProbes.test_the_required_array_is_the_only_order_a_volatile_probe_can_carry`.
         informative: list[str] = []
         for path in self.CAPTURES:
             for name, item in self._rpc_items(self._document(path)).items():
@@ -1262,10 +1268,13 @@ class TestRpcParameterOrderInTheRealCaptures:
         # with no defaults has its COMPLETE declaration order in `required`, so it is DECLARED --
         # not DECLARED_PREFIX -- even with no GET operation anywhere in the document.
         #
-        # Synthetic for the same reason as the D7 case above: the testbed has no VOLATILE function
-        # with >=2 required arguments (`CI-140`). The *premise* this leans on -- that `required` is
-        # declaration order -- is checked against real captured bytes by
-        # `test_the_required_array_agrees_with_the_get_order_wherever_both_are_informative`.
+        # Synthetic, and it stays synthetic now that a real one exists: this document has THREE
+        # required arguments in a deliberately anti-alphabetical order, which is a stronger
+        # arrangement than any capture carries. The real witness landed with the `CI-140`
+        # recapture -- `probe_volatile_two_required`, asserted in `TestTheArgumentOrderProbes` --
+        # so this is no longer the *only* evidence for the case rule 3 exists for, which is
+        # exactly the CI-076 posture the corpus wants: a claim about a real source resting on
+        # captured bytes, with the synthetic document kept as the wider-input variant.
         document = {
             'swagger': '2.0',
             'definitions': {'t': {'properties': {'a': {'format': 'text'}}}},
@@ -1298,13 +1307,19 @@ class TestRpcParameterOrderInTheRealCaptures:
         assert all(parameter[3] is False for parameter in function(rows, 'place_order')[7]), 'none is defaulted'
 
     def test_a_volatile_function_with_every_argument_defaulted_establishes_nothing(self) -> None:
-        # ⚠ **The ONLY place `ParameterOrder.UNKNOWN` is reachable**, and it is reachable only from
-        # a synthetic document. Measured on this branch: no committed input produces this shape --
-        # it needs >=2 arguments, ALL defaulted, and NO GET, i.e. a VOLATILE all-optional function.
-        # `probe_two_optional` is all-optional but STABLE (so it has a GET and lands DECLARED);
-        # `create_order` is VOLATILE but has one required argument. `CI-140` tracks seeding a real
-        # one; until then this member has no live witness and this comment says so rather than
-        # letting a reader assume the corpus covers it.
+        # The minimal shape that reaches `ParameterOrder.UNKNOWN`: >=2 arguments, ALL defaulted,
+        # and NO GET -- i.e. a VOLATILE all-optional function. `probe_two_optional` is all-optional
+        # but STABLE (so it has a GET and lands DECLARED); `create_order` is VOLATILE but has one
+        # required argument.
+        #
+        # ⚠ **This used to be the ONLY place UNKNOWN was reachable, and `CI-140` closed that.** The
+        # comment here said the member had no live witness -- a public enum member shipped in
+        # `0.3.0` whose entire evidence was the hand-written document below, which is the `CI-076`
+        # posture the corpus exists to avoid. The testbed now seeds `probe_volatile_all_optional`
+        # (`752649a`), and `TestTheArgumentOrderProbes` asserts UNKNOWN against those captured
+        # bytes. This test is kept as the MINIMAL synthetic form, distinguishable from the capture
+        # in one way that matters: it carries `required: []` explicitly, where PostgREST v14.14
+        # OMITS the key entirely. Both must reach UNKNOWN, and only one of them is a real document.
         #
         # UNKNOWN is NOT a claim the order is wrong -- the body order is kept verbatim, and these
         # two arguments may well be declared alphabetically. It is a refusal to claim.
@@ -1362,7 +1377,7 @@ def _post_body_required(item: dict[str, Any]) -> list[str]:
 
 @pytest.mark.unit
 class TestTheArgumentOrderProbes:
-    """The three seeded ``probe_*`` functions, and the one claim they make falsifiable.
+    """The five seeded ``probe_*`` functions, and the claims they make falsifiable.
 
     ``search_products`` above proves the POST body and the GET operation **disagree**, so at most
     one of them can be declaration order. What it cannot say is *which*: with two arguments
@@ -1372,9 +1387,11 @@ class TestTheArgumentOrderProbes:
     wrong under the loser -- and the corpus could not tell them apart.
 
     The ``probe_*`` functions break the tie. They were designed against ``pg_proc.proargnames``
-    as the oracle, and the ``CI-139`` testbed change seeded them **as migrations** so the finding
-    is reproducible from committed SQL instead of from an ad-hoc ``psql`` session that died with
-    its container:
+    as the oracle, and the testbed seeds them **as migrations** so the findings are reproducible
+    from committed SQL instead of from an ad-hoc ``psql`` session that died with its container.
+
+    **Group 1 -- STABLE (``CI-139``, testbed ``f839fce``).** A GET operation exists, and the GET
+    array is the experiment:
 
     - ``probe_two_required(p_zebra text, p_alpha text)`` -- declaration order is anti-alphabetical.
     - ``probe_two_optional(p_zebra text DEFAULT NULL, p_alpha text DEFAULT NULL)`` -- same, with
@@ -1383,10 +1400,27 @@ class TestTheArgumentOrderProbes:
       required-first-then-alphabetical predicts ``[p_alpha, p_zulu, p_beta]``, declaration order
       predicts ``[p_zulu, p_alpha, p_beta]``, and the document says the latter.
 
-    **So the GET operation's query-parameter array is true pg declaration order** -- the fact
-    ``CI-078`` turns on, now asserted from committed bytes rather than from a note. Every
-    expectation below is visible in ``tests/unit/corpus/inputs/testbed-public.openapi.json``; no
-    test here needs a live server, and none of them appeals to the seed's SQL as evidence.
+    **Group 2 -- VOLATILE (``CI-140``, testbed ``752649a``).** PostgREST v14.14 emits **no GET**
+    for a VOLATILE function, so the POST body's ``required`` array is the document's only order
+    signal -- and until this recapture that array had only ever been measured on the STABLE
+    probes, i.e. on functions that carry a GET as well, which is exactly where the answer does not
+    matter. These two are the first two above with the volatility flipped and **nothing else
+    changed**, so any difference is attributable to volatility alone:
+
+    - ``probe_volatile_two_required(p_zebra text, p_alpha text)`` -- ``required`` is the whole
+      list, so the order is recovered in FULL with no GET anywhere: ``DECLARED``.
+    - ``probe_volatile_all_optional(p_zebra text DEFAULT NULL, p_alpha text DEFAULT NULL)`` -- no
+      GET **and** no ``required``, so nothing in the document carries order. This is the **only**
+      shape that produces :attr:`~castiron.ir.models.ParameterOrder.UNKNOWN`, and before this
+      capture that public enum member -- shipped in ``0.3.0`` -- had no witness anywhere but a
+      hand-written document (see
+      :meth:`TestRpcParameterOrderInTheRealCaptures.test_a_volatile_function_with_every_argument_defaulted_establishes_nothing`).
+
+    **So the GET operation's query-parameter array is true pg declaration order, and the POST
+    body's ``required`` array is its declaration-order prefix** -- the two facts ``CI-078`` turns
+    on, now asserted from committed bytes rather than from a note. Every expectation below is
+    visible in ``tests/unit/corpus/inputs/testbed-public.openapi.json``; no test here needs a live
+    server, and none of them appeals to the seed's SQL as evidence.
 
     ⚠ ``CI-078`` has **LANDED**: castiron now builds its parameter list in the recovered order,
     so the last test in this class asserts the ``declared`` column where it once asserted
@@ -1404,16 +1438,67 @@ class TestTheArgumentOrderProbes:
     #: The parametrization ids, so a failure names the probe rather than an index.
     PROBE_IDS = [probe[0] for probe in PROBES]
 
-    def test_all_three_probes_are_present_in_the_capture(self) -> None:
-        # If this fails on a fresh capture, the document did NOT come from a database carrying
-        # the merged testbed migrations (f839fce or later) -- do not delete the probes to make it
-        # pass, re-capture. They are the only functions in the corpus that can distinguish
-        # declaration order from required-first-alphabetical.
+    #: Group 2. ``(function, pg declaration order, POST ``properties`` order, POST ``required``
+    #: array, the :class:`~castiron.ir.models.ParameterOrder` castiron must report)``. The
+    #: declaration order is the testbed's SQL and is **not** asserted as a document fact for
+    #: ``probe_volatile_all_optional`` -- the whole point is that this document cannot express it.
+    VOLATILE_PROBES: tuple[tuple[str, list[str], list[str], list[str], ParameterOrder], ...] = (
+        (
+            'probe_volatile_two_required',
+            ['p_zebra', 'p_alpha'],
+            ['p_alpha', 'p_zebra'],
+            ['p_zebra', 'p_alpha'],
+            ParameterOrder.DECLARED,
+        ),
+        (
+            'probe_volatile_all_optional',
+            ['p_zebra', 'p_alpha'],
+            ['p_alpha', 'p_zebra'],
+            [],
+            ParameterOrder.UNKNOWN,
+        ),
+    )
+
+    #: The group-2 parametrization ids.
+    VOLATILE_PROBE_IDS = [probe[0] for probe in VOLATILE_PROBES]
+
+    def test_all_five_probes_are_present_in_the_capture(self) -> None:
+        # If this fails on a fresh capture, the document did NOT come from a database carrying the
+        # merged testbed migrations (752649a or later) -- do not delete a probe to make it pass,
+        # re-capture. They are the only functions in the corpus that can distinguish declaration
+        # order from required-first-alphabetical (group 1) or reach UNKNOWN at all (group 2).
         present = sorted(name for name in _public_rpc_items() if name.startswith('probe_'))
-        assert present == sorted(self.PROBE_IDS), (
-            f'the capture carries {present}, not the three CI-139 argument-order probes. A capture '
-            f'without them cannot settle what the GET parameter array orders by.'
+        assert present == sorted([*self.PROBE_IDS, *self.VOLATILE_PROBE_IDS]), (
+            f'the capture carries {present}, not the five seeded argument-order probes. A capture '
+            f'without the three STABLE ones cannot settle what the GET parameter array orders by; '
+            f'a capture without the two VOLATILE ones leaves `required` measured only where a GET '
+            f'also exists, and leaves ParameterOrder.UNKNOWN with no witness from a real database.'
         )
+
+    def test_the_two_groups_are_the_same_functions_with_only_volatility_flipped(self) -> None:
+        # ⚠ The one-variable design, asserted rather than trusted. Group 2 is worth having ONLY
+        # because it differs from group 1 in exactly one respect: same argument names, same
+        # declaration order, same defaultness -- so every difference in the captured document is
+        # attributable to volatility and to nothing else. If someone "tidies" a probe's arguments,
+        # this goes red before the conclusions drawn from the pair silently stop following.
+        items = _public_rpc_items()
+        for stable, volatile in (
+            ('probe_two_required', 'probe_volatile_two_required'),
+            ('probe_two_optional', 'probe_volatile_all_optional'),
+        ):
+            assert _READER._body_properties(items[stable]) == _READER._body_properties(items[volatile]), (
+                f'{stable} and {volatile} no longer take the same arguments, so the pair no longer '
+                f'isolates volatility as the single variable.'
+            )
+            assert _post_body_required(items[stable]) == _post_body_required(items[volatile]), (
+                f'{stable} and {volatile} no longer agree on which arguments are defaulted.'
+            )
+            assert 'get' in items[stable] and 'get' not in items[volatile], (
+                f'the volatility signal collapsed: PostgREST is meant to emit a GET for {stable} '
+                f'(STABLE) and none for {volatile} (VOLATILE). Both, or neither, means the '
+                f'observer changed -- v12.2.3 emits a GET for every function -- and every VOLATILE '
+                f'conclusion in this class needs re-deriving against the new runtime.'
+            )
 
     @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
     def test_the_get_query_parameters_are_in_declaration_order(
@@ -1484,6 +1569,121 @@ class TestTheArgumentOrderProbes:
         # All three probes are STABLE, so the GET operation establishes the order in FULL -- even
         # `probe_two_optional`, whose `required` array is empty and recovers nothing on its own.
         assert function(rows, name)[8] is ParameterOrder.DECLARED
+
+    @pytest.mark.parametrize(
+        ('name', 'declared', 'alphabetical', 'required', 'state'), VOLATILE_PROBES, ids=VOLATILE_PROBE_IDS
+    )
+    def test_a_volatile_probe_carries_no_get_and_an_alphabetical_body(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str], state: ParameterOrder
+    ) -> None:
+        # The premise every group-2 conclusion rests on, asserted at the DOCUMENT level so a
+        # failure separates "PostgREST changed" from "castiron changed". Two claims: a VOLATILE
+        # function gets no GET operation (v14.14 -- the pinned v12.2.3 profile emits one for
+        # everything, which is a finding recorded in the testbed README, not a thing to work
+        # around here), and its POST body object is alphabetical exactly as a STABLE one's is.
+        item = _public_rpc_items()[name]
+        assert 'get' not in item, (
+            f'{name} carries a GET operation, so it is no longer VOLATILE (or the server is not '
+            f'PostgREST v14.14). "No GET" is this document format\'s ONLY volatility signal.'
+        )
+        body = _READER._body_properties(item)
+        assert body == alphabetical
+        assert body == sorted(body), 'volatility does not change the body object; it is still name-sorted'
+        assert body != declared, f'{name} was seeded anti-alphabetically so the two readings disagree'
+
+    @pytest.mark.parametrize(
+        ('name', 'declared', 'alphabetical', 'required'),
+        [probe[:4] for probe in VOLATILE_PROBES],
+        ids=VOLATILE_PROBE_IDS,
+    )
+    def test_the_required_array_is_the_only_order_a_volatile_probe_can_carry(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
+    ) -> None:
+        # 🔴 **THE measurement CI-140 exists for.** `required` was believed to be declaration
+        # order, but had only ever been checked on functions that ALSO carry a GET -- i.e. where
+        # the belief is not load-bearing. `probe_volatile_two_required` is the first captured
+        # function where it is the entire answer, and it is seeded anti-alphabetically so the two
+        # rival readings disagree. If a PostgREST upgrade ever alphabetizes this array, castiron's
+        # ParameterOrder.DECLARED for a volatile mutation becomes a SILENT LIE -- re-derive
+        # `_declaration_order`'s rule 3, do not adjust this expectation.
+        item = _public_rpc_items()[name]
+        assert _post_body_required(item) == required
+        assert required == declared[: len(required)], (
+            f'{name}: `required` is {required}, which is not a leading run of the declaration '
+            f'order {declared}. Rule 3 (`required` is a declaration-order PREFIX) is unsound.'
+        )
+        if required:
+            assert required != sorted(required), (
+                f'{name} was seeded so `required` is anti-alphabetical ON PURPOSE. A sorted array '
+                f'here is satisfied by both readings and measures nothing.'
+            )
+
+    def test_the_all_optional_volatile_probe_is_the_live_witness_for_unknown(self) -> None:
+        # ⚠ **The only witness in the whole corpus for a public enum member shipped in 0.3.0.**
+        # Both properties are load-bearing and the seed's own comment says so: give either
+        # argument no default and `required` recovers a prefix (DECLARED/DECLARED_PREFIX); drop to
+        # one argument and a one-element list is trivially in declaration order (DECLARED). Either
+        # edit deletes the witness while leaving something that still looks like a probe, so both
+        # are asserted here against the captured bytes.
+        item = _public_rpc_items()['probe_volatile_all_optional']
+        body = _READER._body_properties(item)
+        assert 'get' not in item
+        assert len(body) >= 2, 'a one-argument list is trivially in declaration order; UNKNOWN is unreachable'
+        assert _post_body_required(item) == [], (
+            'a `required` array came back, so the order is recoverable again and this stops being the UNKNOWN witness.'
+        )
+
+        # ⚠ ABSENT, not present-and-empty -- and the distinction is why the synthetic sibling test
+        # (`..._with_every_argument_defaulted_establishes_nothing`, which spells `required: []`
+        # literally) is kept rather than deleted as a duplicate. castiron must reach UNKNOWN from
+        # BOTH encodings, and only this one is what a real PostgREST v14.14 emits. A parser that
+        # read `schema['required']` without a default would raise KeyError on the real document
+        # and pass happily on the synthetic one.
+        schema = next(p for p in item['post']['parameters'] if p.get('in') == 'body')['schema']
+        assert 'required' not in schema, (
+            'PostgREST now emits an explicit empty `required` for an all-optional function. That '
+            'is a change in the source, not in castiron -- record it before regenerating anything.'
+        )
+
+    @pytest.mark.parametrize(
+        ('name', 'declared', 'alphabetical', 'required', 'state'), VOLATILE_PROBES, ids=VOLATILE_PROBE_IDS
+    )
+    def test_castiron_reports_the_measured_state_for_every_volatile_probe(
+        self, name: str, declared: list[str], alphabetical: list[str], required: list[str], state: ParameterOrder
+    ) -> None:
+        # What castiron makes of group 2, and the pair is what makes each half fallible. Same
+        # arguments, same declaration order, same volatility, differing only in defaultness:
+        #
+        #   probe_volatile_two_required -> [p_zebra, p_alpha]  DECLARED   (recovered from `required`)
+        #   probe_volatile_all_optional -> [p_alpha, p_zebra]  UNKNOWN    (nothing to recover from)
+        #
+        # A parser that ignored `required` would report the alphabetical list for BOTH; one that
+        # over-claimed would report DECLARED for both. Only the real rule produces this table.
+        rows = parse_openapi_document(_READER._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        expected = declared if state is ParameterOrder.DECLARED else alphabetical
+        assert [parameter[0] for parameter in function(rows, name)[7]] == expected
+        assert function(rows, name)[8] is state
+        assert declared != alphabetical, f'{name} no longer discriminates: its two orders agree'
+
+    def test_the_capture_witnesses_every_parameter_order_member(self) -> None:
+        # ⚠ The census, as an EQUALITY over the enum's members rather than a spot check. Adding a
+        # fourth ParameterOrder member fails this test until someone decides -- deliberately --
+        # whether the corpus can witness it. Before the CI-140 recapture UNKNOWN was absent here
+        # and reachable only from a hand-written document, which is precisely the CI-076 posture
+        # this corpus exists to avoid: a claim about a real source resting on synthetic bytes.
+        rows = parse_openapi_document(_READER._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        census: dict[ParameterOrder, list[str]] = {}
+        for row in rows.function_details:
+            census.setdefault(row[8], []).append(row[1])
+
+        assert set(census) == set(ParameterOrder), (
+            f'the public capture no longer witnesses every ParameterOrder member. Present: '
+            f'{sorted(state.name for state in census)}; missing: '
+            f'{sorted(state.name for state in set(ParameterOrder) - set(census))}.'
+        )
+        assert census[ParameterOrder.UNKNOWN] == ['probe_volatile_all_optional']
+        assert census[ParameterOrder.DECLARED_PREFIX] == ['create_order']
+        assert len(census[ParameterOrder.DECLARED]) == 14
 
 
 # ---------------------------------------------------------------------------

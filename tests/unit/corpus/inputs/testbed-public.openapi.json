@@ -3942,6 +3942,92 @@
         ]
       }
     },
+    "/rpc/probe_mixed": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_zulu",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_alpha",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_beta",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_mixed"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_beta": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_zulu": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_zulu",
+                "p_alpha"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_mixed"
+        ]
+      }
+    },
     "/rpc/ping": {
       "post": {
         "parameters": [
@@ -4294,6 +4380,77 @@
         ]
       }
     },
+    "/rpc/probe_two_optional": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_zebra",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_alpha",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_two_optional"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_zebra": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_two_optional"
+        ]
+      }
+    },
     "/rpc/split_name": {
       "get": {
         "parameters": [
@@ -4354,6 +4511,81 @@
         },
         "tags": [
           "(rpc) split_name"
+        ]
+      }
+    },
+    "/rpc/probe_two_required": {
+      "get": {
+        "parameters": [
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_zebra",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "format": "text",
+            "in": "query",
+            "name": "p_alpha",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_two_required"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "body",
+            "name": "args",
+            "required": true,
+            "schema": {
+              "properties": {
+                "p_alpha": {
+                  "format": "text",
+                  "type": "string"
+                },
+                "p_zebra": {
+                  "format": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "p_zebra",
+                "p_alpha"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "$ref": "#/parameters/preferParams"
+          }
+        ],
+        "produces": [
+          "application/json",
+          "application/vnd.pgrst.object+json;nulls=stripped",
+          "application/vnd.pgrst.object+json"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "(rpc) probe_two_required"
         ]
       }
     }

@@ -2,7 +2,7 @@
 # regenerate: uv run python -m tests.unit.corpus.regenerate --write
 # input:      testbed-public.openapi.json
 # schema:     public
-# provenance: captured - castiron-testbed 3150132 - PostgREST 14.14
+# provenance: captured - castiron-testbed f839fce - PostgREST 14.14
 # columns:    <config-key>  <sha256>  lines  chars  classes  fields  imports  compiles
 add_null_parent_classes=0,disable_model_prefix_protection=0,generate_crud_models=0,generate_enums=0,include_foreign_keys=0,infer_generated_primary_keys=0,singular_names=0  e705c22d576e8e2efcc8478618fc5dda72b9f3dc227c50306d05ce1b4a8e2b58     605    13864   53   141    5  yes
 add_null_parent_classes=0,disable_model_prefix_protection=0,generate_crud_models=0,generate_enums=0,include_foreign_keys=0,infer_generated_primary_keys=0,singular_names=1  1b6c99cd33e40624674da9217bc160f0f06c2caad3125477603c50fcaa9b2208     605    13756   53   141    5  yes

@@ -1,14 +1,14 @@
 {
   "origin": "captured",
   "source_repo": "github.com/kmbhm1/castiron-testbed",
-  "seed_revision": "3150132",
+  "seed_revision": "f839fce",
   "postgrest_version": "14.14",
   "captured_with": "./scripts/capture.sh",
-  "captured_on": "2026-08-02",
+  "captured_on": "2026-08-08",
   "schema": "public",
   "definition_count": 26,
-  "path_count": 38,
+  "path_count": 41,
   "verified_by": "./scripts/verify.sh - clean-slate double rebuild, run-a and run-b byte-identical for all three documents and the pg_dump schema",
-  "sha256": "67fc3af1734552ad10c26af52b55e5946955372d6f4b398cdb0097f831fe8162",
-  "notes": "Key-free: the API key travels in a header, not the body. host is 0.0.0.0:3000, so the document is port- and hostname-independent. The only environment-identifying field is info.version, which is the PostgREST version - useful provenance, not leakage."
+  "sha256": "09a0b46048c5fe2f605ebdba367551f643ede3c87363e8b6ddd1bb2c544c51cc",
+  "notes": "Key-free: the API key travels in a header, not the body. host is 0.0.0.0:3000, so the document is port- and hostname-independent. The only environment-identifying field is info.version, which is the PostgREST version - useful provenance, not leakage. RE-CAPTURED 2026-08-08 at testbed f839fce (CI-139), which adds three STABLE probe_* functions to the seed - +3 /rpc/ paths, 38 -> 41, definitions unchanged. They exist to make ONE claim permanently reproducible from committed SQL: the GET operation carries true pg DECLARATION order while the POST body properties are alphabetical, and their argument names are chosen so the two orders provably disagree. tests/unit/sources/openapi/test_parse.py's TestTheArgumentOrderProbes asserts that shape here, so deleting or reordering the probes in a future capture goes red."
 }

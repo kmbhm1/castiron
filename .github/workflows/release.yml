@@ -46,6 +46,13 @@ jobs:
       id-token: write   # PyPI Trusted Publishing (OIDC)
       contents: write   # push the version-bump commit + tag
     steps:
+      # `permission-contents: write` narrows the App token to what this job actually does, which
+      # the header comment above already states in prose: push the version-bump commit + tag, and
+      # create the GitHub Release with its assets (all of which live under `contents`). Without a
+      # `permission-*` input the minted token inherits the App's FULL installation permissions —
+      # zizmor's `github-app` audit, and the reason it is High confidence: an installation grows
+      # scopes over time and the token silently grows with it. Inert today (the step is skipped
+      # while `vars.VERSION_BUMPER_APPID` is unset), which is exactly when it is cheap to set.
       - name: Create GitHub App token
         id: app-token
         if: vars.VERSION_BUMPER_APPID != ''
@@ -53,8 +60,26 @@ jobs:
         with:
           app-id: ${{ vars.VERSION_BUMPER_APPID }}
           private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+          permission-contents: write
 
-      - uses: actions/checkout@v4
+      # ⚠ NO `persist-credentials: false` HERE, unlike ci.yml — and this one is a JUDGEMENT CALL,
+      # not a constraint. Measured at the pinned refs, no step in this job consumes the credential
+      # checkout persists: `python-semantic-release@v9` does `export GH_TOKEN="$INPUT_GITHUB_TOKEN"`
+      # (action.sh) and pushes to `hvcs_client.remote_url(use_token=True)` — an explicitly
+      # tokenized URL, not `origin` (cli/commands/version.py:684 of 9.21.2); `publish-action@v9`
+      # exports the same variable and only calls the API; `gh-action-pypi-publish` uses OIDC. So
+      # the flag would very probably be safe.
+      #
+      # It is still not taken, because it buys nothing HERE and the downside is uncapped:
+      # `artipacked` is a Low-confidence audit whose threat model is a credential escaping through
+      # an uploaded workspace, and this job uploads `dist/` — never the workspace — to PyPI and to
+      # the GitHub Release. Against that, this is the one path in the repo that cannot be exercised
+      # without publishing: a wrong guess lands AFTER the version bump and the tag push, which is
+      # how CI-115 and CI-121 both failed. Suppressed per-site so the reasoning travels with it.
+      #
+      # Flipping it is a one-line captain decision; re-read the measurement above first, and note
+      # it must be re-taken if a step is ever added that archives the workspace.
+      - uses: actions/checkout@v4 # zizmor: ignore[artipacked]
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || github.token }}

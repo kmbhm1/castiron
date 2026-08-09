@@ -18,7 +18,15 @@ jobs:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
+      # `persist-credentials: false` keeps the job's token out of `.git/config` (zizmor's
+      # `artipacked`, CI-137). Nothing after this step writes to git — this job lints, type-checks
+      # and tests, and the workflow's own `permissions:` is `contents: read` — so the credential
+      # has no consumer here, and leaving it on disk only widens what an artifact upload or a
+      # compromised dependency could carry off. The other two workflows genuinely push, so this
+      # line is deliberately NOT copied to them; see their own annotations.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

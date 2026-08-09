@@ -9,10 +9,36 @@ castiron uses [`uv`](https://docs.astral.sh/uv/) + `hatchling`.
 
 ```bash
 uv sync                    # environment + dev dependencies
+make pre-commit-setup      # install the git hooks — once, right after the sync
 uv run pytest              # tests
 make validate              # ruff + vulture + mypy + pytest — run before every push
 make help                  # list all targets
 ```
+
+### The git hooks
+
+`make pre-commit-setup` installs three [pre-commit](https://pre-commit.com/) hook types. Do it once,
+straight after `uv sync`: it is what makes the house rules below enforced rather than remembered.
+Skip it and the first thing that tells you a convention was broken is CI, on your open PR.
+
+| Hook stage | What runs |
+| --- | --- |
+| `commit-msg` | commitizen — rejects a message that is not a [Conventional Commit](#house-rules) |
+| `pre-commit` | whitespace and end-of-file fixers, `check-yaml`, `check-toml`, `detect-private-key`, a guard against committing to `main` — plus `actionlint` and `zizmor` when the commit touches `.github/workflows/` |
+| `pre-push` | `ruff check`, `ruff format`, and `mypy --strict` against Python 3.10–3.13 |
+
+Each hook runs its own pinned tool version in an environment pre-commit builds, so the first run
+after installing (or after a version moves in `.pre-commit-config.yaml`) is slow and the rest are
+not. To run them across the whole tree without committing anything:
+
+```bash
+uv run pre-commit run --all-files                        # everything in the commit stage
+uv run pre-commit run --all-files --hook-stage pre-push  # everything in the push stage
+```
+
+The push-stage hooks and `make validate` overlap, and neither contains the other: the hooks also
+check formatting, while `make validate` also runs vulture and the test matrix. Run the gate. If a
+hook does fail, fix what it found — `--no-verify` is not the way past it.
 
 ### The optional live-source tests
 

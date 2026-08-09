@@ -15,6 +15,7 @@ from castiron.ir import (
     FunctionVolatility,
     ParameterInfo,
     ParameterMode,
+    ParameterOrder,
     Row,
     Schema,
     build_schema,
@@ -50,9 +51,24 @@ def function_row(
     raw_volatility: str | None = None,
     is_read_only: bool | None = None,
     parameters: list[Row] | None = None,
+    parameter_order: ParameterOrder = ParameterOrder.UNKNOWN,
 ) -> Row:
-    """Build a function 8-tuple."""
-    return (schema, name, description, return_type, returns_set, raw_volatility, is_read_only, parameters or [])
+    """Build a function 9-tuple.
+
+    ``parameter_order`` defaults to ``UNKNOWN`` -- the conservative value, matching
+    :class:`FunctionInfo`'s own default, so a row that says nothing claims nothing.
+    """
+    return (
+        schema,
+        name,
+        description,
+        return_type,
+        returns_set,
+        raw_volatility,
+        is_read_only,
+        parameters or [],
+        parameter_order,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +96,9 @@ class TestFunctionNodes:
         assert function.volatility is None
         assert function.is_read_only is None
         assert function.description is None
+        # `UNKNOWN` is the same posture in enum clothing: a hand-built node makes NO claim about
+        # its parameter order, so a consumer that forgets to look gets keyword-only arguments.
+        assert function.parameter_order is ParameterOrder.UNKNOWN
         assert str(function) == 'FunctionInfo(public.get_user_stats)'
 
     def test_the_nodes_are_mutable_like_every_other_ir_node(self) -> None:
@@ -94,6 +113,8 @@ class TestFunctionNodes:
         assert ParameterMode.INOUT == 'INOUT'
         assert [member.value for member in FunctionVolatility] == ['VOLATILE', 'STABLE', 'IMMUTABLE']
         assert [member.value for member in ParameterMode] == ['IN', 'OUT', 'INOUT', 'VARIADIC', 'TABLE']
+        assert ParameterOrder.DECLARED_PREFIX == 'DECLARED_PREFIX'
+        assert [member.value for member in ParameterOrder] == ['DECLARED', 'DECLARED_PREFIX', 'UNKNOWN']
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +222,7 @@ class TestConstructFunctions:
         assert functions[0].schema == 'api'
 
     def test_a_none_parameter_list_is_tolerated(self) -> None:
-        row = ('public', 'f', None, None, None, None, None, None)
+        row = ('public', 'f', None, None, None, None, None, None, ParameterOrder.UNKNOWN)
         assert construct_functions([row])[0].parameters == []
 
     def test_parameter_modes_are_normalized(self) -> None:
@@ -286,6 +307,36 @@ class TestConstructFunctions:
     def test_function_order_is_row_order(self) -> None:
         functions = construct_functions([function_row('z'), function_row('a')])
         assert [f.name for f in functions] == ['z', 'a']
+
+    @pytest.mark.parametrize('state', list(ParameterOrder), ids=[member.value for member in ParameterOrder])
+    def test_the_parameter_order_state_round_trips_from_row_element_8(self, state: ParameterOrder) -> None:
+        # Every member, not a sample (CI-072): the build layer must be a pass-through for all
+        # three, including the two no OpenAPI capture currently produces.
+        functions = construct_functions([function_row('f', parameter_order=state)])
+        assert functions[0].parameter_order is state
+
+    def test_construct_functions_does_not_reorder_parameters(self) -> None:
+        # Ordering is the SOURCE's responsibility (Hard Rule #9, and this function's docstring
+        # says so). CI-078 moved the reorder into `sources/openapi/parse.py`; if it ever leaks
+        # down here, two layers would be deciding one fact and a source that already knows the
+        # right order could not express it.
+        rows = [
+            function_row(
+                'f',
+                parameters=[
+                    parameter_row('p_zulu', 'text'),
+                    parameter_row('p_alpha', 'text'),
+                    parameter_row('p_beta', 'text', has_default=True),
+                ],
+                parameter_order=ParameterOrder.DECLARED,
+            )
+        ]
+        assert [p.name for p in construct_functions(rows)[0].parameters] == ['p_zulu', 'p_alpha', 'p_beta']
+
+    def test_a_row_that_says_nothing_leaves_the_conservative_default(self) -> None:
+        # The 9th element is not optional at the boundary -- `function_row` supplies it -- but a
+        # source that has established nothing says so with UNKNOWN rather than omitting it.
+        assert construct_functions([function_row('f')])[0].parameter_order is ParameterOrder.UNKNOWN
 
 
 # ---------------------------------------------------------------------------

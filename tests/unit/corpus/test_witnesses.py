@@ -557,6 +557,101 @@ class TestEveryHostileColumnIsRepairedAndAliased:
 
 
 # ---------------------------------------------------------------------------
+# CI-078 — half the argument order recovered, and the golden says which half.
+# ---------------------------------------------------------------------------
+
+
+def _function(ir: dict[str, Any], name: str) -> dict[str, Any]:
+    """Return one function from a decoded IR golden."""
+    for function in ir['functions']:
+        if function['name'] == name:
+            found: dict[str, Any] = function
+            return found
+    raise AssertionError(f'function {name!r} is absent from the IR golden; the corpus input changed')
+
+
+@pytest.mark.unit
+class TestCi078PartiallyRecoveredArgumentOrder:
+    """A defect that shrank rather than closed, so the witness has to name the residual precisely.
+
+    A PostgREST document serializes one parameter list three ways. Two are JSON **arrays** and
+    keep their order — the GET operation's ``parameters`` (STABLE/IMMUTABLE only) and the POST
+    body's ``required`` (always, non-defaulted arguments only). One is a JSON **object** and does
+    not — the POST body's ``properties``, which arrives name-sorted. castiron used to build from
+    the object; it now builds from whichever array is available.
+
+    That closes the read-only half outright and leaves a **VOLATILE function whose arguments are
+    not all required** partly wrong: ``required`` fixes a prefix and the defaulted tail stays
+    alphabetical. ``create_order`` is exactly that shape, so its bytes in this golden are still
+    demonstrably wrong against the testbed's own SQL — which is what keeps ``CI-078`` registered.
+    """
+
+    def test_the_volatile_functions_defaulted_tail_is_still_name_sorted(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        ir = _ir('testbed-public-default', corpus_irs)
+        create_order = _function(ir, 'create_order')
+        assert [p['name'] for p in create_order['parameters']] == ['p_customer_id', 'p_lines', 'p_status'], (
+            witness_failed(
+                'CI-078',
+                'testbed-public/ir.json',
+                'create_order is reported (p_customer_id, p_lines, p_status). The testbed declares '
+                'it create_order(p_customer_id, p_status, p_lines), so the last two are SWAPPED: '
+                'p_customer_id is recovered from the POST body `required` array and the two '
+                'defaulted arguments after it are left in name-sorted order.',
+                fixed_action=(
+                    'the fix lands with the live-DB source (CI-010/CI-011),\n'
+                    '                        which reads pg_proc.proargnames -- an ordered array\n'
+                    '                        for a VOLATILE function too. Then: ' + FIX_ACTION
+                ),
+            )
+        )
+        # The declared limit, which is the half CI-078 DID close: a consumer is told the tail is
+        # arbitrary instead of having to assume it is not.
+        assert create_order['parameter_order'] == 'DECLARED_PREFIX'
+        # ...and the reason there is no GET to recover the rest from, asserted against the input
+        # document so a failure distinguishes "the defect was fixed" from "the capture changed".
+        document = json.loads(TESTBED_PUBLIC.input_path.read_text(encoding='utf-8'))
+        assert 'get' not in document['paths']['/rpc/create_order'], (
+            'create_order is no longer VOLATILE in the capture, so PostgREST now emits a GET for '
+            'it and its order is fully recoverable. CI-078 needs re-deriving, not regenerating.'
+        )
+
+    def test_the_counter_witness_a_stable_function_is_in_full_declaration_order(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        # ⚠ **The counter-witness, and it is load-bearing.** Without it the witness above cannot
+        # tell "castiron recovers what it can" from "castiron alphabetizes everything" -- both
+        # produce (p_customer_id, p_lines, p_status). `search_products` is declared
+        # `(p_terms, p_limit)` and reported that way, which is NOT alphabetical, so the recovery
+        # is real and CI-078's residual is genuinely confined to the VOLATILE case.
+        ir = _ir('testbed-public-default', corpus_irs)
+        search = _function(ir, 'search_products')
+        names = [p['name'] for p in search['parameters']]
+        assert names == ['p_terms', 'p_limit']
+        assert names != sorted(names), 'the counter-witness stopped being anti-alphabetical'
+        assert search['parameter_order'] == 'DECLARED'
+
+    def test_create_order_is_the_only_function_that_is_not_fully_declared(
+        self, corpus_irs: dict[tuple[str, Any], Schema]
+    ) -> None:
+        # Enumerated, not sampled (CI-072). If a future capture adds a second partly-recovered
+        # function, someone reads this test and decides deliberately whether CI-078's description
+        # still covers it -- rather than the new one slipping into a golden unnamed.
+        ir = _ir('testbed-public-default', corpus_irs)
+        by_state: dict[str, list[str]] = {}
+        for function in ir['functions']:
+            by_state.setdefault(function['parameter_order'], []).append(function['name'])
+        assert by_state.get('DECLARED_PREFIX') == ['create_order'], by_state
+        assert 'UNKNOWN' not in by_state, (
+            f'a captured function now establishes NO order at all: {by_state.get("UNKNOWN")}. That '
+            f'needs a VOLATILE function with >=2 arguments and every one defaulted -- no capture '
+            f'produced one before (CI-140), so the corpus input changed shape.'
+        )
+        assert len(by_state['DECLARED']) == 13, by_state
+
+
+# ---------------------------------------------------------------------------
 # Two fidelity WINS the same capture proves. Asserted, never characterized.
 # ---------------------------------------------------------------------------
 

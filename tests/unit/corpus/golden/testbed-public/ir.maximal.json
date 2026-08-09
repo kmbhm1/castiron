@@ -3801,7 +3801,8 @@
       "returns_set": null,
       "volatility": "VOLATILE",
       "is_read_only": false,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "create_order",
@@ -3845,7 +3846,8 @@
       "returns_set": null,
       "volatility": "VOLATILE",
       "is_read_only": false,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED_PREFIX"
     },
     {
       "name": "get_customer_stats",
@@ -3872,7 +3874,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "list_statuses",
@@ -3882,7 +3885,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "monthly_totals",
@@ -3901,7 +3905,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "normalize_email",
@@ -3920,7 +3925,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "ping",
@@ -3930,12 +3936,21 @@
       "returns_set": null,
       "volatility": "VOLATILE",
       "is_read_only": false,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "probe_mixed",
       "schema": "public",
       "parameters": [
+        {
+          "name": "p_zulu",
+          "raw_type": "text",
+          "mode": "IN",
+          "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
         {
           "name": "p_alpha",
           "raw_type": "text",
@@ -3951,28 +3966,21 @@
           "has_default": true,
           "array_element_type": null,
           "enum_info": null
-        },
-        {
-          "name": "p_zulu",
-          "raw_type": "text",
-          "mode": "IN",
-          "has_default": false,
-          "array_element_type": null,
-          "enum_info": null
         }
       ],
       "return_type": null,
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "probe_two_optional",
       "schema": "public",
       "parameters": [
         {
-          "name": "p_alpha",
+          "name": "p_zebra",
           "raw_type": "text",
           "mode": "IN",
           "has_default": true,
@@ -3980,7 +3988,7 @@
           "enum_info": null
         },
         {
-          "name": "p_zebra",
+          "name": "p_alpha",
           "raw_type": "text",
           "mode": "IN",
           "has_default": true,
@@ -3992,14 +4000,15 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "probe_two_required",
       "schema": "public",
       "parameters": [
         {
-          "name": "p_alpha",
+          "name": "p_zebra",
           "raw_type": "text",
           "mode": "IN",
           "has_default": false,
@@ -4007,7 +4016,7 @@
           "enum_info": null
         },
         {
-          "name": "p_zebra",
+          "name": "p_alpha",
           "raw_type": "text",
           "mode": "IN",
           "has_default": false,
@@ -4019,7 +4028,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "reserved_args",
@@ -4046,20 +4056,13 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "search_products",
       "schema": "public",
       "parameters": [
-        {
-          "name": "p_limit",
-          "raw_type": "integer",
-          "mode": "IN",
-          "has_default": true,
-          "array_element_type": null,
-          "enum_info": null
-        },
         {
           "name": "p_terms",
           "raw_type": "text[]",
@@ -4067,13 +4070,22 @@
           "has_default": false,
           "array_element_type": "text",
           "enum_info": null
+        },
+        {
+          "name": "p_limit",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
         }
       ],
       "return_type": null,
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "split_name",
@@ -4092,7 +4104,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     },
     {
       "name": "tally",
@@ -4111,7 +4124,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": null
+      "description": null,
+      "parameter_order": "DECLARED"
     }
   ]
 }

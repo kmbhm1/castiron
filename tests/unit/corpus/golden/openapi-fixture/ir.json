@@ -906,11 +906,11 @@
       "schema": "public",
       "parameters": [
         {
-          "name": "items",
-          "raw_type": "text[]",
+          "name": "user_id",
+          "raw_type": "bigint",
           "mode": "IN",
-          "has_default": true,
-          "array_element_type": "text",
+          "has_default": false,
+          "array_element_type": null,
           "enum_info": null
         },
         {
@@ -930,11 +930,11 @@
           }
         },
         {
-          "name": "user_id",
-          "raw_type": "bigint",
+          "name": "items",
+          "raw_type": "text[]",
           "mode": "IN",
-          "has_default": false,
-          "array_element_type": null,
+          "has_default": true,
+          "array_element_type": "text",
           "enum_info": null
         }
       ],
@@ -942,25 +942,26 @@
       "returns_set": null,
       "volatility": "VOLATILE",
       "is_read_only": false,
-      "description": "Create an order\n\nInserts a row and returns its id."
+      "description": "Create an order\n\nInserts a row and returns its id.",
+      "parameter_order": "DECLARED_PREFIX"
     },
     {
       "name": "get_user_stats",
       "schema": "public",
       "parameters": [
         {
-          "name": "since",
-          "raw_type": "date",
-          "mode": "IN",
-          "has_default": true,
-          "array_element_type": null,
-          "enum_info": null
-        },
-        {
           "name": "user_id",
           "raw_type": "integer",
           "mode": "IN",
           "has_default": false,
+          "array_element_type": null,
+          "enum_info": null
+        },
+        {
+          "name": "since",
+          "raw_type": "date",
+          "mode": "IN",
+          "has_default": true,
           "array_element_type": null,
           "enum_info": null
         }
@@ -969,7 +970,8 @@
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": "Aggregate statistics for one user\n\nReturns lifetime totals."
+      "description": "Aggregate statistics for one user\n\nReturns lifetime totals.",
+      "parameter_order": "DECLARED"
     },
     {
       "name": "ping",
@@ -979,20 +981,13 @@
       "returns_set": null,
       "volatility": "VOLATILE",
       "is_read_only": false,
-      "description": "Health check"
+      "description": "Health check",
+      "parameter_order": "DECLARED"
     },
     {
       "name": "search_products",
       "schema": "public",
       "parameters": [
-        {
-          "name": "limit_to",
-          "raw_type": "integer",
-          "mode": "IN",
-          "has_default": true,
-          "array_element_type": null,
-          "enum_info": null
-        },
         {
           "name": "terms",
           "raw_type": "text[]",
@@ -1000,13 +995,22 @@
           "has_default": false,
           "array_element_type": "text",
           "enum_info": null
+        },
+        {
+          "name": "limit_to",
+          "raw_type": "integer",
+          "mode": "IN",
+          "has_default": true,
+          "array_element_type": null,
+          "enum_info": null
         }
       ],
       "return_type": null,
       "returns_set": null,
       "volatility": null,
       "is_read_only": true,
-      "description": "Search products\n\nReturns matching product rows."
+      "description": "Search products\n\nReturns matching product rows.",
+      "parameter_order": "DECLARED"
     }
   ]
 }

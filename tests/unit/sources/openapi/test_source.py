@@ -16,7 +16,15 @@ import pytest
 
 from castiron.emitters.config import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
-from castiron.ir import ConstraintType, FunctionVolatility, ParameterMode, RelationType, Schema, build_schema
+from castiron.ir import (
+    ConstraintType,
+    FunctionVolatility,
+    ParameterMode,
+    ParameterOrder,
+    RelationType,
+    Schema,
+    build_schema,
+)
 from castiron.sources import (
     SourceError,
     SourceFetchError,
@@ -400,13 +408,16 @@ class TestFunctions:
         assert create_order.return_type is None
         assert create_order.returns_set is None
         assert create_order.description == 'Create an order\n\nInserts a row and returns its id.'
-        # Alphabetical, because that is the order PostgREST puts the POST body in and castiron
-        # preserves whatever the document gives (`CI-133`; the open defect is `CI-078`).
+        # NOT the alphabetical POST-body order (`[items, status, user_id]`) any more. `CI-078`
+        # reorders out of the body's `required` array, which is `[user_id, status]` here -- so the
+        # first two positions are recovered and `items`, the one defaulted argument, is not.
+        # The row says exactly that much and no more.
         assert [(p.name, p.raw_type, p.mode, p.has_default) for p in create_order.parameters] == [
-            ('items', 'text[]', ParameterMode.IN, True),
-            ('status', 'order_status', ParameterMode.IN, False),
             ('user_id', 'bigint', ParameterMode.IN, False),
+            ('status', 'order_status', ParameterMode.IN, False),
+            ('items', 'text[]', ParameterMode.IN, True),
         ]
+        assert create_order.parameter_order is ParameterOrder.DECLARED_PREFIX
         assert next(p for p in create_order.parameters if p.name == 'items').array_element_type == 'text'
 
     def test_a_non_volatile_function_leaves_volatility_unknown(self, document: dict[str, Any]) -> None:
@@ -417,16 +428,44 @@ class TestFunctions:
         assert stats.is_read_only is True
 
     def test_a_parameter_enum_links_when_the_type_is_known(self, document: dict[str, Any]) -> None:
+        # ⚠ Looked up BY NAME, not by index. This used to read `parameters[1]`, which was the
+        # alphabetical position of `status`; under `CI-078` the list is reordered and index 1 is
+        # still `status` -- by coincidence. An assertion that survives on a coincidence is not an
+        # assertion, so the coincidence is removed rather than relied on.
         schema = build_schema_from_document(document)
-        status = schema.functions[0].parameters[1]
+        create_order = next(f for f in schema.functions if f.name == 'create_order')
+        status = next(p for p in create_order.parameters if p.name == 'status')
         assert status.enum_info is not None
         assert status.enum_info.values == ['pending', 'shipped', 'cancelled']
 
     def test_a_variadic_parameter_is_recovered_from_the_get_operation(self, document: dict[str, Any]) -> None:
+        # Compares a DICT, so it is order-insensitive and stayed green across `CI-078` -- which is
+        # itself worth noting: the reorder did not disturb mode recovery, even though both facts
+        # are read out of the same GET operation.
         schema = build_schema_from_document(document)
         search = next(f for f in schema.functions if f.name == 'search_products')
         modes = {p.name: p.mode for p in search.parameters}
         assert modes == {'limit_to': ParameterMode.IN, 'terms': ParameterMode.VARIADIC}
+
+    def test_a_stable_function_is_built_in_full_declaration_order(self, document: dict[str, Any]) -> None:
+        # The counterpart to `test_the_fill_matrix_for_a_volatile_function`: a GET operation exists
+        # for a STABLE/IMMUTABLE function, so the whole order is established rather than a prefix.
+        # Asserted end-to-end through `build_schema_from_document`, not just at the row boundary.
+        schema = build_schema_from_document(document)
+        search = next(f for f in schema.functions if f.name == 'search_products')
+        assert [p.name for p in search.parameters] == ['terms', 'limit_to']
+        assert search.parameter_order is ParameterOrder.DECLARED
+
+    def test_every_function_declares_how_much_of_its_order_is_known(self, document: dict[str, Any]) -> None:
+        # Enumerated, not sampled (CI-072). `ping` is DECLARED on arity alone (D6), `create_order`
+        # is the only partial one, and nothing in this fixture reaches UNKNOWN.
+        schema = build_schema_from_document(document)
+        assert {f.name: f.parameter_order for f in schema.functions} == {
+            'create_order': ParameterOrder.DECLARED_PREFIX,
+            'get_user_stats': ParameterOrder.DECLARED,
+            'ping': ParameterOrder.DECLARED,
+            'search_products': ParameterOrder.DECLARED,
+        }
 
     def test_a_no_argument_function_has_no_parameters(self, document: dict[str, Any]) -> None:
         schema = build_schema_from_document(document)

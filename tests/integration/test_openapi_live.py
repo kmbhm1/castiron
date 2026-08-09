@@ -28,7 +28,16 @@ from typing import Any
 import pytest
 
 from castiron.emitters import EmitterConfig, PydanticEmitter
-from castiron.ir import ColumnInfo, ConstraintType, FunctionInfo, FunctionVolatility, ParameterMode, Schema, TableInfo
+from castiron.ir import (
+    ColumnInfo,
+    ConstraintType,
+    FunctionInfo,
+    FunctionVolatility,
+    ParameterMode,
+    ParameterOrder,
+    Schema,
+    TableInfo,
+)
 from castiron.sources.openapi import build_schema_from_document
 from tests.integration.conftest import DocumentLoader
 
@@ -824,6 +833,14 @@ class TestFunctions:
 
     ⚠ The CI-008 spec's argument-order assertions are **wrong** and must not be restored. A
     VOLATILE function's POST body ``properties`` are **alphabetical**, not declaration order.
+
+    ⚠ What castiron *reports* changed with ``CI-078``: the body is one of THREE serializations of
+    one parameter list, and the other two are ordered JSON **arrays** — the GET operation's
+    ``parameters`` (STABLE/IMMUTABLE only) and the POST body's ``required`` (always, non-defaulted
+    arguments only). castiron builds from those, so the lists below are declaration order wherever
+    the document proves it, and each function declares how much was proved via
+    :class:`~castiron.ir.models.ParameterOrder`. The sentence above is unchanged: it is a claim
+    about the *document*, and the document did not change.
     """
 
     def test_only_the_executable_functions_are_present(self, live_public_schema: Schema) -> None:
@@ -877,61 +894,107 @@ class TestFunctions:
 
     def test_every_parameter_list_is_the_measured_one(self, live_public_schema: Schema) -> None:
         # Enumerated (CI-072). Three separate losses are visible in this one comparison:
-        # OUT parameters are excluded, INOUT ones are included, TABLE columns are invisible, and
-        # the ORDER is alphabetical rather than declaration order (see the two tests below).
+        # OUT parameters are excluded, INOUT ones are included, and TABLE columns are invisible.
         #
-        # ⚠ **This enumeration pins a DEFECT, and `CI-078` is the row that fixes it.** Every list
-        # below is alphabetical, which for a STABLE/IMMUTABLE function is recoverable declaration
-        # order that castiron discards -- `search_products` is declared `(p_terms, p_limit)` and
-        # appears here as `['p_limit', 'p_terms']`. When `CI-078` lands, the STABLE entries here
-        # move and this test goes red **by design**: update it to declaration order, do not
-        # re-sort the fixture. `test_a_stable_functions_argument_order_is_present_but_not_used`
-        # below is the companion that proves the order is available in the document today.
+        # ⚠ **This enumeration used to pin a DEFECT and now pins its FIX** (`CI-078`, landed).
+        # Every list below was alphabetical; the STABLE/IMMUTABLE ones are now the declaration
+        # order recovered from the GET operation, and `create_order` -- VOLATILE, so no GET -- has
+        # only its one required argument fixed by the POST body's `required` array, leaving the
+        # last two SWAPPED against its real declaration `(p_customer_id, p_status, p_lines)`.
+        # That residual is the part of CI-078 the live-DB source (CI-010/CI-011) closes.
         assert {f.name: [p.name for p in f.parameters] for f in live_public_schema.functions} == {
             'bump_counter': ['p_value'],  # INOUT -- included
-            'create_order': ['p_customer_id', 'p_lines', 'p_status'],
+            'create_order': ['p_customer_id', 'p_lines', 'p_status'],  # ⚠ tail still name-sorted
             'get_customer_stats': ['p_customer_id', 'p_since'],
             'list_statuses': [],
             'monthly_totals': ['p_year'],  # RETURNS TABLE(...) columns are invisible
             'normalize_email': ['p_email'],
             'ping': [],
-            # ⚠ The probes make the defect UNAMBIGUOUS rather than merely visible: each is
-            # declared anti-alphabetically (p_zebra, p_alpha) / (p_zulu, p_alpha, p_beta) and the
-            # same document carries that order in its GET operation.
-            'probe_mixed': ['p_alpha', 'p_beta', 'p_zulu'],
-            'probe_two_optional': ['p_alpha', 'p_zebra'],
-            'probe_two_required': ['p_alpha', 'p_zebra'],
+            # ⚠ The probes are the unambiguous half: each is declared anti-alphabetically, so an
+            # expectation that is not sorted is only satisfiable by real order recovery.
+            'probe_mixed': ['p_zulu', 'p_alpha', 'p_beta'],
+            'probe_two_optional': ['p_zebra', 'p_alpha'],
+            'probe_two_required': ['p_zebra', 'p_alpha'],
             'reserved_args': ['class', 'def'],
-            'search_products': ['p_limit', 'p_terms'],
+            'search_products': ['p_terms', 'p_limit'],
             'split_name': ['p_full'],  # OUT -- excluded
             'tally': ['p_values'],
         }
 
-    def test_a_volatile_functions_argument_order_is_unrecoverable(self, live_public_schema: Schema) -> None:
+    def test_every_parameter_order_state_is_the_measured_one(self, live_public_schema: Schema) -> None:
+        # Per function, not a spot check (CI-072) -- the same shape as
+        # `test_every_parameter_mode_is_the_measured_one`. `create_order` is the ONLY partly
+        # recovered function in this schema, and nothing here reaches UNKNOWN: that needs a
+        # VOLATILE function with >=2 arguments and every one defaulted, which the seed has none of
+        # (`CI-140`). If a probe ever lands DECLARED_PREFIX or UNKNOWN, the implementation is
+        # wrong, not the seed.
+        assert {f.name: f.parameter_order for f in live_public_schema.functions} == {
+            'bump_counter': ParameterOrder.DECLARED,  # one argument -- true by arity (D6)
+            'create_order': ParameterOrder.DECLARED_PREFIX,
+            'get_customer_stats': ParameterOrder.DECLARED,
+            'list_statuses': ParameterOrder.DECLARED,
+            'monthly_totals': ParameterOrder.DECLARED,
+            'normalize_email': ParameterOrder.DECLARED,
+            'ping': ParameterOrder.DECLARED,  # no arguments at all
+            'probe_mixed': ParameterOrder.DECLARED,
+            'probe_two_optional': ParameterOrder.DECLARED,
+            'probe_two_required': ParameterOrder.DECLARED,
+            'reserved_args': ParameterOrder.DECLARED,
+            'search_products': ParameterOrder.DECLARED,
+            'split_name': ParameterOrder.DECLARED,
+            'tally': ParameterOrder.DECLARED,
+        }
+
+    def test_a_volatile_functions_argument_order_is_only_partly_recoverable(self, live_public_schema: Schema) -> None:
+        # ⚠ Retitled: this was `..._is_unrecoverable`, which `CI-078` measured to be too strong.
         # `create_order(p_customer_id, p_status, p_lines)` is VOLATILE, so PostgREST emits no GET
-        # operation and the only argument list in the document is the POST body's `properties` --
-        # which is ALPHABETICAL. Declaration order is simply not present anywhere. A generated
-        # positional RPC call (CI-012) would therefore be silently wrong; CI-078 tracks it.
+        # operation -- but the POST body's `required` array is emitted for EVERY function and is
+        # ordered, so the non-defaulted prefix survives. Here that is one argument out of three,
+        # so position 0 is right and the other two are name-sorted. The list is unchanged from the
+        # alphabetical era by coincidence (a one-element prefix adds nothing); what is new is that
+        # the IR now says how far the claim extends.
         assert [p.name for p in _function(live_public_schema, 'create_order').parameters] == [
             'p_customer_id',
             'p_lines',
             'p_status',
         ]
+        assert _function(live_public_schema, 'create_order').parameter_order is ParameterOrder.DECLARED_PREFIX
 
-    def test_a_stable_functions_argument_order_is_present_but_not_used(
-        self, live_public_document: Mapping[str, Any]
+    def test_a_stable_functions_argument_order_is_present_and_now_used(
+        self, live_public_document: Mapping[str, Any], live_public_schema: Schema
     ) -> None:
-        # A finding this run added to CI-078: for a STABLE/IMMUTABLE function the declaration order
-        # IS recoverable -- the GET operation's `parameters` array preserves it -- but castiron
-        # builds its parameter list from the alphabetical POST body and drops it. castiron already
-        # reads that GET operation (it is where VARIADIC comes from), so the fact is available at
-        # the point it is currently discarded.
+        # ⚠ Retitled: was `..._is_present_but_not_used`. The document-level assertions are byte for
+        # byte the ones that test carried -- they were always true and still are. What changed is
+        # the third one: castiron now builds from the GET array rather than the POST body, so the
+        # two halves of this test agree instead of contradicting each other.
         item = live_public_document['paths']['/rpc/search_products']
         get_parameters = [p['name'] for p in item['get']['parameters']]
         body = next(p for p in item['post']['parameters'] if 'schema' in p)
         post_properties = list(body['schema']['properties'])
         assert get_parameters == ['p_terms', 'p_limit']  # declaration order, available
-        assert post_properties == ['p_limit', 'p_terms']  # alphabetical, and what castiron uses
+        assert post_properties == ['p_limit', 'p_terms']  # alphabetical, and NOT what castiron uses
+        assert [p.name for p in _function(live_public_schema, 'search_products').parameters] == get_parameters
+
+    def test_the_required_array_orders_the_non_defaulted_arguments_live(
+        self, live_public_document: Mapping[str, Any]
+    ) -> None:
+        # The premise `create_order`'s recovery rests on, checked against the LIVE document rather
+        # than the committed capture: `required` is an ordered JSON array whose entries appear in
+        # the same relative order as the GET array, and it is the LEADING RUN of it.
+        #
+        # ⚠ This is a document-level check, not a `pg_proc` oracle. This suite reaches PostgREST
+        # over HTTP and has no database connection (`CASTIRON_TEST_DB_DSN` is declared in conftest
+        # but reserved for CI-010/CI-011), so the catalog cannot be consulted from here. The
+        # oracle-grade version of this claim was established out of band against
+        # `pg_proc.proargnames` and is what seeded the probes; see `CI-140`.
+        for name in ('probe_mixed', 'probe_two_required'):
+            item = live_public_document['paths'][f'/rpc/{name}']
+            get_order = [p['name'] for p in item['get']['parameters'] if 'name' in p]
+            body = next(p for p in item['post']['parameters'] if 'schema' in p)
+            required = list(body['schema']['required'])
+            assert len(required) >= 2, f'{name} is no longer informative about `required` order'
+            assert [n for n in get_order if n in set(required)] == required, name
+            assert get_order[: len(required)] == required, name
 
     def test_the_probes_show_the_get_array_is_declaration_order_not_required_first(
         self, live_public_document: Mapping[str, Any]

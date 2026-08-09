@@ -2,10 +2,11 @@
 
 > The OpenAPI source needs no database credentials and sees everything your API key can
 > see — column types, nullability, primary keys, single-column foreign keys, enums, and
-> RPC argument names and types. It cannot see unique or check constraints, identity/generated
-> columns, exact integer widths below `bigint`, function return types, or the order a
-> function's arguments were declared in. Point castiron at the database itself when you need
-> those.
+> RPC argument names, types and (in almost every case) declaration order. It cannot see unique
+> or check constraints, identity/generated columns, exact integer widths below `bigint`, or
+> function return types — and for a `VOLATILE` function with defaulted arguments it recovers
+> only part of the argument order, telling you which part. Point castiron at the database
+> itself when you need those.
 
 That is the whole page in one paragraph. The rest explains *why* each limit exists, what it
 does to your generated code, and what to do about it — because a code generator that
@@ -97,7 +98,7 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | --- | --- | --- | --- |
 | Name, schema | ✅ full | ✅ | the `/rpc/<name>` path key |
 | Argument names, has-default | ✅ full | ✅ | the POST body schema's `properties` and `required` |
-| Argument **order** | ⚠ **alphabetical — not the order the function was declared with**; recoverable for a `STABLE`/`IMMUTABLE` function only, and castiron does not read it yet. See [below](#argument-order-is-alphabetical) | ✅ | the POST body's `properties` arrive sorted by name |
+| Argument **order** | ✅ **full** for a `STABLE`/`IMMUTABLE` function, and for a `VOLATILE` one whose arguments are all required; ⚠ **partial** for a `VOLATILE` function with defaulted arguments — the required prefix is right and the defaulted tail is name-sorted. `FunctionInfo.parameter_order` says which you got. See [below](#argument-order-is-only-partly-encoded) | ✅ | the POST body's `properties` is a sorted map, but the GET `parameters` and the body's `required` are **ordered arrays** |
 | Argument types | ⚠ **as degraded as a column type, plus one loss beyond it** — `smallint` and `integer` both arrive as `int32`, and `char(2)` arrives as `character` with **no `maxLength`**, which the same column would carry | ✅ exact | `toSwaggerFormat` again; `maxLength` is emitted for columns only |
 | An argument's **enum values** | ❌ **never carried on the argument** — it links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise the argument keeps a bare type name and no values | ✅ | the parameter declares `format` but no `enum` list, and its type name is unqualified |
 | **Return type** | ❌ **never available** | ✅ | responses carry only `"OK"` |
@@ -359,13 +360,20 @@ provenance explicitly: every `ConstraintInfo` and `ForeignKeyInfo` this source p
 `False`. Consumers are meant to read the flag rather than the string: compare constraint names
 only when both sides report `False`, and omit `name=` from generated DDL when it is `True`.
 
-### Argument order is alphabetical
+### Argument order is only partly encoded
 
-This one also runs in the unsafe direction, because nothing about the result *looks* wrong.
+This one used to run in the unsafe direction, because nothing about the result *looked* wrong.
 
-A function's POST body schema lists its arguments **sorted by name**, not in the order the
-function was declared. `search_products(p_terms text[], p_limit integer default 20)` arrives
-as:
+A PostgREST document serializes one parameter list **three** ways, and the difference that
+matters is JSON's: a **map** has no meaningful order, an **array** does.
+
+| Where | Shape | Order | Emitted for |
+| --- | --- | --- | --- |
+| POST body `properties` | object (map) | **alphabetical** | every function |
+| GET operation `parameters` | array | **declaration** | `STABLE` / `IMMUTABLE` only |
+| POST body `required` | array | **declaration**, non-defaulted arguments only | every function |
+
+For `search_products(p_terms text[], p_limit integer default 20)` the body arrives sorted:
 
 ```json
 "properties": {
@@ -374,19 +382,31 @@ as:
 }
 ```
 
-castiron builds its parameter list from that body, so the two land in the IR as
-`p_limit, p_terms` — reversed. Their names, types and defaults are each correct; only the
-order is not.
+...while the GET operation for the same function lists `p_terms` before `p_limit`. castiron
+reads the ordered encodings, so it reports `p_terms, p_limit` — as declared.
 
-Declaration order does survive, in exactly one place: the **GET** operation's `parameters`
-array, which for the same function lists `p_terms` before `p_limit`. PostgREST emits a GET
-operation only for a `STABLE`/`IMMUTABLE` function, so declaration order is recoverable for
-those and **structurally absent for a `VOLATILE` one**. castiron does not read it yet.
+**What you get, and how to tell.** Every `FunctionInfo` carries a `parameter_order`:
 
-Nothing shipped is wrong today — no emitter consumes function parameters (see the note
-above). It matters the moment one does: a client that called an RPC **positionally** from
-this order would swap arguments silently. Call PostgREST functions by argument name, which is
-what the JSON body is anyway, and the order never matters.
+- `DECLARED` — `parameters` is in declaration order, in full. Either a GET operation existed
+  (`STABLE`/`IMMUTABLE`), or every argument was required so `required` covered the whole list,
+  or the function takes at most one argument.
+- `DECLARED_PREFIX` — the arguments **without** a default are in declaration order and come
+  first; the defaulted tail is name-sorted. This is a `VOLATILE` function with at least one
+  defaulted argument: there is no GET operation, and `required` lists only the non-defaulted
+  ones. Postgres forbids a defaulted parameter before a non-defaulted one, so what you have is
+  a correct prefix followed by an unknown tail — never a scrambled middle.
+- `UNKNOWN` — nothing was established: a `VOLATILE` function whose arguments are *all*
+  defaulted, so `required` is empty. The names are reported in alphabetical order, which is not
+  a claim that the order is wrong — the function may simply be declared that way.
+
+A live-database source reads `pg_proc.proargnames`, an ordered array for every function
+regardless of volatility, so it always reports `DECLARED`.
+
+Nothing shipped is affected today — no emitter consumes function parameters (see the note
+above). It matters the moment one does: a client that generated a **positional** call from a
+`DECLARED_PREFIX` function's full list would swap the defaulted arguments silently, which is
+exactly why the IR states the limit rather than leaving it to be assumed. Call PostgREST
+functions by argument name, which is what the JSON body is anyway, and the order never matters.
 
 ### Integer widths
 

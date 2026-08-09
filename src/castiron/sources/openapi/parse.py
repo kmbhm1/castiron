@@ -81,7 +81,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from castiron.ir import Row, TableType
+from castiron.ir import ParameterOrder, Row, TableType
 from castiron.sources.errors import SourceParseError
 
 logger = logging.getLogger(__name__)
@@ -336,15 +336,17 @@ def parse_openapi_document(
     contractual), while ``properties`` order is **preserved** as the document gives it.
 
     ⚠ **Preserved is not the same as meaningful, and the two cases differ.** For a table's
-    columns the document order is real (pg ordinal). For a **function's parameters it is
-    alphabetical, not argument order** — so the order this function hands downstream is not
-    the order the function was declared with, and a positional RPC call built from it
-    (CI-012) would be silently wrong. See :func:`_parse_body_parameters`, which records the
-    measurement, and ``CI-078``, the row that recovers the real order.
+    columns the document order is real (pg ordinal). A **function's parameters are handed
+    downstream REORDERED**, because the ``properties`` object they are built from is
+    alphabetical: ``CI-078`` recovers declaration order from the document's two *ordered*
+    encodings — the GET operation's ``parameters`` array and the POST body's ``required``
+    array — and every function row states how much of it was established, in element 8
+    (:class:`~castiron.ir.models.ParameterOrder`). See :func:`_declaration_order` for the rule.
 
-    ⚠ This paragraph used to claim the opposite — that ``properties`` order was argument
-    position — and that false claim is the origin of ``CI-078``. Do not restate it without
-    measuring against a real PostgREST document first.
+    ⚠ This paragraph has been wrong in both directions. It first claimed ``properties`` order
+    *was* argument position (false — it is alphabetical, measured; that claim is the origin of
+    ``CI-078``), then that argument order was therefore unavailable (also false — it is in the
+    two arrays above). Do not restate either without measuring against a real PostgREST document.
 
     Args:
         document: The decoded OpenAPI document.
@@ -626,7 +628,12 @@ def _record_enum(
 
 
 def _parse_functions(paths: JsonObject, schema: str) -> tuple[Row, ...]:
-    """Parse every ``/rpc/<name>`` path item into a function 8-tuple, sorted by name."""
+    """Parse every ``/rpc/<name>`` path item into a function 9-tuple, sorted by name.
+
+    ⚠ **This is the one place that decides a function's parameter ORDER**, for both parameter
+    paths, so the GET operation is read once and one rule applies everywhere. See
+    :func:`_declaration_order` for the rule and the encodings it reads.
+    """
     functions: list[Row] = []
     for path_key in sorted(key for key in paths if key.startswith(_RPC_PREFIX)):
         name = path_key[len(_RPC_PREFIX) :]
@@ -642,11 +649,19 @@ def _parse_functions(paths: JsonObject, schema: str) -> tuple[Row, ...]:
             continue
 
         body_schema = _find_body_schema(post_op) if post_op is not None else None
-        parameters = (
-            _parse_body_parameters(name, body_schema, get_op)
-            if body_schema is not None
-            else _parse_query_parameters(name, get_op)
-        )
+        if body_schema is not None:
+            parameters = _parse_body_parameters(name, body_schema, get_op)
+            order, parameter_order = _declaration_order(
+                get_op,
+                [value for value in _as_list(body_schema.get('required')) if isinstance(value, str)],
+                [parameter[0] for parameter in parameters],
+            )
+            parameters = _reordered(parameters, order)
+        else:
+            # The GET query-parameter array IS the parameter list here, and it is an ordered
+            # JSON array, so it arrives in declaration order already (decision D8).
+            parameters = _parse_query_parameters(name, get_op)
+            parameter_order = ParameterOrder.DECLARED
 
         functions.append(
             (
@@ -658,9 +673,107 @@ def _parse_functions(paths: JsonObject, schema: str) -> tuple[Row, ...]:
                 'v' if get_op is None else None,
                 get_op is not None,
                 parameters,
+                parameter_order,
             )
         )
     return tuple(functions)
+
+
+def _declaration_order(
+    get_op: JsonObject | None,
+    required: Sequence[str],
+    names: Sequence[str],
+) -> tuple[list[str], ParameterOrder]:
+    """Return the best-known parameter order and how much of it the document established.
+
+    A PostgREST document serializes one parameter list three ways, and **two of them preserve
+    order because they are JSON arrays** while the third does not because it is a JSON object:
+
+    ==========================  ========  =============  ==================================
+    Encoding                    Shape     Order          Present when
+    ==========================  ========  =============  ==================================
+    POST body ``properties``    object    alphabetical   always
+    GET operation ``parameters``array     declaration    ``STABLE``/``IMMUTABLE`` only
+    POST body ``required``      array     declaration    always (non-defaulted arguments)
+    ==========================  ========  =============  ==================================
+
+    The rule, in priority order:
+
+    1. A GET whose names (filtered to ``names``) are a **permutation** of them -> that order,
+       :attr:`~castiron.ir.models.ParameterOrder.DECLARED`. Measured against
+       ``pg_proc.proargnames`` with three purpose-built anti-alphabetical probes, which
+       falsified the only rival reading ("required first, then alphabetical within group").
+    2. ``len(names) <= 1`` -> as given, ``DECLARED``. A list of length =<1 **is** in declaration
+       order; that is a fact, not a guess (decision D6).
+    3. A non-empty ``required`` -> ``required``, then the remaining names in the order given.
+       ``required`` lists exactly the non-defaulted arguments, and Postgres forbids a defaulted
+       parameter before a non-defaulted one, so it is the declaration-order **PREFIX** -- never a
+       scattered subset, so the result is "correct prefix + unknown tail", never interleaved
+       wrongness. All arguments required => the prefix is the whole list => ``DECLARED``;
+       otherwise ``DECLARED_PREFIX``. This is the only signal a **VOLATILE** function exposes,
+       and a VOLATILE mutation with no defaults recovers its order in full.
+    4. Otherwise (no usable GET, >=2 arguments, every one defaulted) -> as given, ``UNKNOWN``.
+
+    A GET that is *not* a permutation of the body's names is a shape no capture exhibits, so it
+    falls through to rule 3 rather than failing or partially reordering (decision D7).
+
+    ⚠ Hard Rule #9: every returned order comes from a **list** in document order. Sets are used
+    for membership only and are never iterated to produce output.
+
+    Args:
+        get_op: The path item's GET operation, or ``None`` for a VOLATILE function.
+        required: The POST body schema's ``required`` array, in document order.
+        names: The POST body schema's ``properties`` keys, in document order (alphabetical).
+
+    Returns:
+        ``(order, parameter_order)`` -- the names to build the parameter list in, and how much of
+        the declaration order that list actually carries.
+    """
+    known = set(names)
+    if get_op is not None:
+        query_order = [name for name in _query_parameter_names(get_op) if name in known]
+        if sorted(query_order) == sorted(names):  # a permutation -- sorted only to COMPARE
+            return query_order, ParameterOrder.DECLARED
+        logger.debug(
+            f'GET query parameters {query_order} are not a permutation of the POST body names '
+            f'{list(names)}; falling back to the `required` array for declaration order'
+        )
+
+    if len(names) <= 1:
+        return list(names), ParameterOrder.DECLARED
+
+    prefix = [name for name in required if name in known]
+    if not prefix:
+        return list(names), ParameterOrder.UNKNOWN
+
+    tail = [name for name in names if name not in set(prefix)]
+    state = ParameterOrder.DECLARED if not tail else ParameterOrder.DECLARED_PREFIX
+    return prefix + tail, state
+
+
+def _reordered(parameters: Sequence[Row], order: Sequence[str]) -> list[Row]:
+    """Return ``parameters`` sorted into ``order`` (the parameter name is row element 0).
+
+    Args:
+        parameters: The parameter 5-tuples, in the order they were parsed.
+        order: The parameter names, in the order to emit them. A permutation of the rows' names.
+
+    Returns:
+        The same rows, reordered. Deterministic: driven by ``order``, which is a list.
+    """
+    by_name = {parameter[0]: parameter for parameter in parameters}
+    return [by_name[name] for name in order]
+
+
+def _query_parameter_names(get_op: JsonObject) -> list[str]:
+    """Return the GET operation's query-parameter names, in document (declaration) order."""
+    names: list[str] = []
+    for raw_parameter in _as_list(get_op.get('parameters')):
+        parameter = _as_object(raw_parameter)
+        parameter_name = _as_str(parameter.get('name')) if parameter is not None else None
+        if parameter_name is not None:
+            names.append(parameter_name)
+    return names
 
 
 def _find_body_schema(post_op: JsonObject) -> JsonObject | None:
@@ -687,23 +800,26 @@ def _function_description(body_schema: JsonObject | None, operation: JsonObject 
 def _parse_body_parameters(name: str, body_schema: JsonObject, get_op: JsonObject | None) -> list[Row]:
     """Parse the POST body schema's ``properties`` into parameter 5-tuples, in document order.
 
-    ⚠ **Document order is ALPHABETICAL, not pg argument order.** This docstring used to claim
-    the opposite — that ``properties`` is insertion-ordered from ``pdParams``, so "JSON key order
-    *is* pg argument order". Measured false against a real PostgREST (CI-089): ``create_order``
-    is declared ``(p_customer_id, p_status, p_lines)`` and its POST body ``properties`` arrive as
+    ⚠ **Document order is ALPHABETICAL, not pg argument order**, which is why this function does
+    **not** decide the final order — :func:`_parse_functions` reorders these rows through
+    :func:`_declaration_order`. This docstring used to claim the opposite — that ``properties`` is
+    insertion-ordered from ``pdParams``, so "JSON key order *is* pg argument order". Measured false
+    against a real PostgREST (CI-089): ``create_order`` is declared
+    ``(p_customer_id, p_status, p_lines)`` and its POST body ``properties`` arrive as
     ``['p_customer_id', 'p_lines', 'p_status']``. **That false claim is why ``CI-078`` exists** —
-    someone read this paragraph instead of measuring, so nothing downstream knows the order it
-    receives is not the order the function was declared with.
+    someone read this paragraph instead of measuring.
 
-    Declaration order survives in exactly one place: the **GET** operation's ``parameters`` array,
-    which PostgREST emits only for a STABLE/IMMUTABLE function. So it is recoverable for those and
-    structurally absent for a VOLATILE one. ``CI-078`` is the row that recovers it; this function
-    still builds from the alphabetical body, and a positional RPC call generated from these
-    parameters (CI-012) would be silently wrong until it lands.
+    Declaration order survives in **two** places, and this docstring's successor claim — that it
+    survives "in exactly one place, the GET operation" — was also false. The GET's ``parameters``
+    array is one (PostgREST emits it only for a STABLE/IMMUTABLE function). The POST body's
+    ``required`` array is the other, and it is present regardless of volatility, so it is the only
+    order signal a VOLATILE function exposes at all.
 
     ``required`` is ``idx <= (pronargs - pronargdefaults)``, so a parameter has a default exactly
-    when it is absent from ``required``. That claim is unaffected — it is about set membership,
-    not order.
+    when it is absent from ``required``. ⚠ ``CI-078`` measured that the array carries **order as
+    well as membership**: it is the declaration-order *prefix*, because Postgres forbids a
+    defaulted parameter before a non-defaulted one. The membership claim is unchanged; it is now
+    the weaker half of what the array says.
     """
     required = {value for value in _as_list(body_schema.get('required')) if isinstance(value, str)}
     variadic = _variadic_parameter_names(get_op)
@@ -733,6 +849,10 @@ def _parse_query_parameters(name: str, get_op: JsonObject | None) -> list[Row]:
 
     Only reached for a ``/rpc/*`` path item that has no POST body schema, which PostgREST
     should never emit — every RPC gets a POST operation.
+
+    The result needs no reordering: a GET's ``parameters`` is an ordered JSON **array**, so this
+    list is already in declaration order and :func:`_parse_functions` reports it ``DECLARED``
+    (decision D8).
     """
     if get_op is None:
         return []

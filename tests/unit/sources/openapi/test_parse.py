@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from castiron.ir import Row
+from castiron.ir import ParameterOrder, Row
 from castiron.sources import parse_openapi_document
 from castiron.sources.errors import SourceParseError
 from castiron.sources.openapi.parse import (
@@ -782,36 +782,48 @@ class TestFunctions:
 
     # ⚠ The three parameter-order expectations below read the hand-authored CI-005 fixture,
     # whose RPC bodies are ALPHABETICAL as of `CI-133` -- the order a real PostgREST emits,
-    # measured in TestRpcParameterOrderInTheRealCaptures. They pin "castiron preserves whatever
-    # order the document gives", which is true, and nothing more; they are still **not**
-    # evidence about declaration order, because the fixture is hand-authored and an alphabetical
-    # body cannot carry it (`CI-078`). Before CI-133 the fixture held DECLARATION order -- a
-    # document shape PostgREST cannot emit -- so these expectations agreed with a fiction.
-    def test_parameter_order_is_preserved_and_has_default_comes_from_required(self, document: dict[str, Any]) -> None:
+    # measured in TestRpcParameterOrderInTheRealCaptures. They used to pin "castiron preserves
+    # whatever order the document gives"; as of `CI-078` that is **no longer what castiron does**.
+    # The body is one of THREE serializations of one parameter list, and the other two -- the GET
+    # `parameters` array and the POST body's `required` array -- are ordered, so castiron reorders
+    # into the best order the document proves (see `_declaration_order`). They are still **not**
+    # evidence about PostgREST, because the fixture is hand-authored; they are evidence about
+    # castiron's recovery rule, which is what a fixture can honestly carry.
+    def test_parameter_order_is_recovered_from_the_get_operation(self, document: dict[str, Any]) -> None:
+        # `get_user_stats` is GET-bearing, so the whole order is established: the body arrives
+        # `[since, user_id]` and the GET array says `[user_id, since]`.
         rows = parse_openapi_document(document)
         assert function(rows, 'get_user_stats')[7] == [
-            ('since', 'date', None, True, None),
             ('user_id', 'integer', None, False, None),
+            ('since', 'date', None, True, None),
         ]
+        assert function(rows, 'get_user_stats')[8] is ParameterOrder.DECLARED
 
     def test_parameter_types_are_normalized_like_columns(self, document: dict[str, Any]) -> None:
+        # POST-only, and `required` is `[user_id, status]` -- two of the three arguments -- so the
+        # recovered order is that prefix plus the name-sorted tail, and the row says so.
         rows = parse_openapi_document(document)
         assert function(rows, 'create_order')[7] == [
-            ('items', 'text[]', None, True, 'text'),
-            ('status', 'order_status', None, False, None),
             ('user_id', 'bigint', None, False, None),
+            ('status', 'order_status', None, False, None),
+            ('items', 'text[]', None, True, 'text'),
         ]
+        assert function(rows, 'create_order')[8] is ParameterOrder.DECLARED_PREFIX
 
     def test_a_no_argument_function_yields_an_empty_parameter_list(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'ping')[7] == []
+        # D6: a list of length <=1 IS in declaration order. `ping` is VOLATILE with no GET, and
+        # the claim still costs nothing -- it is a fact about arity, not a guess about a signal.
+        assert function(rows, 'ping')[8] is ParameterOrder.DECLARED
 
     def test_a_variadic_argument_is_only_visible_through_the_get_operation(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
         assert function(rows, 'search_products')[7] == [
-            ('limit_to', 'integer', None, True, None),
             ('terms', 'text[]', 'v', False, 'text'),
+            ('limit_to', 'integer', None, True, None),
         ]
+        assert function(rows, 'search_products')[8] is ParameterOrder.DECLARED
 
     def test_the_description_comes_from_the_body_schema(self, document: dict[str, Any]) -> None:
         rows = parse_openapi_document(document)
@@ -874,6 +886,9 @@ class TestFunctions:
             ('b', 'text[]', 'v', True, 'text'),
         ]
         assert function(rows, 'f')[2] == 'Query only'
+        # D8: this list IS the GET's `parameters` array, which is an ordered JSON array, so it
+        # arrives in declaration order and needs no reordering.
+        assert function(rows, 'f')[8] is ParameterOrder.DECLARED
 
     def test_a_rpc_path_item_with_neither_post_nor_get_is_skipped(self) -> None:
         document = {
@@ -1059,33 +1074,266 @@ class TestRpcParameterOrderInTheRealCaptures:
         # order: PostgREST emits `parameters` in declaration order for a STABLE/IMMUTABLE
         # function. Asserted from the document above, not from that outside knowledge.
 
-    def test_castiron_takes_the_alphabetical_order_even_when_the_real_one_is_present(self) -> None:
-        # ⚠ **This pins a DEFECT.** castiron reads the body, so it reports `search_products` as
-        # `(p_limit, p_terms)` -- the reverse of how it is declared -- even though the same
-        # document carries the true order in the GET operation that `_parse_body_parameters`
-        # ALREADY reads (it takes VARIADIC from there). A positional RPC call generated from
-        # this (CI-012) would type-check, run, and return the wrong answer.
+    def test_castiron_takes_the_declaration_order_when_the_get_operation_carries_it(self) -> None:
+        # ⚠ **This used to pin a DEFECT and now pins its FIX** (`CI-078`, landed). castiron read
+        # the alphabetical body and reported `search_products` as `(p_limit, p_terms)` -- the
+        # reverse of how it is declared -- even though the same document carries the true order in
+        # the GET operation the parser ALREADY opened (it takes VARIADIC from there). A positional
+        # RPC call generated from that (CI-012) would type-check, run, and return the wrong answer.
         #
-        # When `CI-078` lands this goes RED, and that is GOOD NEWS: change the expectation to
-        # ['p_terms', 'p_limit'], re-baseline the RPC-bearing goldens, and say so in the PR.
+        # The residual is NOT here: a GET operation exists only for a STABLE/IMMUTABLE function,
+        # so this recovery covers the read-only half outright. What is only PARTLY recoverable is
+        # a VOLATILE function -- see `test_a_volatile_function_recovers_only_its_required_prefix`.
         rows = parse_openapi_document(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
-        assert [parameter[0] for parameter in function(rows, 'search_products')[7]] == ['p_limit', 'p_terms']
+        assert [parameter[0] for parameter in function(rows, 'search_products')[7]] == ['p_terms', 'p_limit']
+        assert function(rows, 'search_products')[8] is ParameterOrder.DECLARED
 
-    def test_a_volatile_functions_declaration_order_is_absent_from_the_document(self) -> None:
-        # The other half of CI-078, and why it splits: `create_order` is VOLATILE, so PostgREST
-        # emits no GET operation for it and the declaration order is not merely discarded --
-        # it is structurally unrecoverable from this source. (The testbed declares it
-        # `(p_customer_id, p_status, p_lines)`; the document cannot show that, which is the
-        # point, so nothing here asserts it.)
-        item = self._rpc_items(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))['create_order']
-        assert 'get' not in item, 'create_order stopped being VOLATILE; the CI-078 split changes shape'
+    def test_every_get_bearing_capture_is_built_in_its_get_order(self) -> None:
+        # The sweep, not one example (CI-072): for EVERY captured RPC that has a GET, castiron's
+        # parameter list is the GET's names filtered to the body's names, and the row declares
+        # DECLARED. One function agreeing could be a coincidence; twelve cannot.
+        checked: list[str] = []
+        for path in self.CAPTURES:
+            document = self._document(path)
+            rows = parse_openapi_document(document, schema='public')
+            for name, item in self._rpc_items(document).items():
+                if 'get' not in item:
+                    continue
+                body_names = set(self._body_properties(item))
+                expected = [n for n in self._get_parameter_names(item) if n in body_names]
+                assert [parameter[0] for parameter in function(rows, name)[7]] == expected, name
+                assert function(rows, name)[8] is ParameterOrder.DECLARED, name
+                checked.append(name)
+
+        # Non-vacuous by count, re-measured on this branch rather than inherited: 11 GET-bearing
+        # functions in `testbed-public` (8 before the CI-139 probes) + 1 in `testbed-inventory`.
+        assert len(checked) == 12, f'expected 12 GET-bearing captured RPCs, swept {sorted(checked)}'
+
+    def test_the_required_array_agrees_with_the_get_order_wherever_both_are_informative(self) -> None:
+        # 🔴 **THE FALSIFIER for the `required`-is-declaration-order premise.** castiron recovers a
+        # VOLATILE function's order from `required` alone, and no VOLATILE function in the corpus
+        # can check that claim (none has >1 required argument). What CAN check it is a function
+        # that carries BOTH encodings: where a GET exists and `required` has >=2 entries, the
+        # required names must appear in the GET array in the same relative order. If they ever
+        # disagree, `_declaration_order`'s rule 3 is unsound -- stop and re-derive it, do not
+        # adjust this test.
+        informative: list[str] = []
+        for path in self.CAPTURES:
+            for name, item in self._rpc_items(self._document(path)).items():
+                required = _post_body_required(item)
+                if 'get' not in item or len(required) < 2:
+                    continue
+                get_order = self._get_parameter_names(item)
+                assert [n for n in get_order if n in set(required)] == list(required), (
+                    f'{name}: `required` is {required} but the GET array orders those names as '
+                    f'{[n for n in get_order if n in set(required)]}. The two ordered encodings '
+                    f'disagree, so `required` is NOT declaration order and CI-078 rule 3 is wrong.'
+                )
+                informative.append(name)
+
+        # ⚠ Non-vacuity is the whole point: before the CI-139 recapture EVERY captured function had
+        # `len(required) <= 1`, so this loop ran zero times and would have certified the premise by
+        # checking nothing (the CI-083/CI-091 shape). These two probes are what make it real.
+        assert sorted(informative) == ['probe_mixed', 'probe_two_required'], sorted(informative)
+
+    def test_the_required_arguments_are_always_the_leading_run_of_the_get_order(self) -> None:
+        # The structural half of the same premise, and what licenses "correct prefix + unknown
+        # tail" instead of "scattered subset": Postgres forbids a defaulted parameter before a
+        # non-defaulted one, so the non-defaulted set is necessarily a PREFIX. PostgREST reflects
+        # that. A failure here means the source's model changed, not that the test is wrong.
+        #
+        # ⚠ GREEN before CI-078 as well as after -- it is a claim about the committed input
+        # documents, not about castiron. It earns its place as a tripwire on the evidence.
+        checked = 0
+        for path in self.CAPTURES:
+            for name, item in self._rpc_items(self._document(path)).items():
+                if 'get' not in item:
+                    continue
+                required = _post_body_required(item)
+                get_order = self._get_parameter_names(item)
+                assert get_order[: len(required)] == required, (
+                    f'{name}: `required` is {required}, which is not the leading run of the GET '
+                    f'order {get_order}. A defaulted argument now precedes a non-defaulted one.'
+                )
+                checked += 1
+        assert checked == 12, f'expected 12 GET-bearing captured RPCs, swept {checked}'
+
+    def test_a_volatile_function_recovers_only_its_required_prefix(self) -> None:
+        # The residual CI-078 leaves behind, asserted rather than described. `create_order` is
+        # VOLATILE, so PostgREST emits no GET operation and the ONLY order signal is the POST
+        # body's `required` array -- which here has one entry out of three. So position 0 is
+        # recovered and the other two are not, and the row says exactly that.
+        #
+        # This test's ancestor was called `..._declaration_order_is_absent_from_the_document`.
+        # That title was false: the order is PARTLY present, in `required`. Its premise assertion
+        # (no `get`) is still exactly right and is kept.
+        document = self._document(CORPUS_INPUTS / 'testbed-public.openapi.json')
+        item = self._rpc_items(document)['create_order']
+        assert 'get' not in item, 'create_order stopped being VOLATILE; the CI-078 residual changes shape'
 
         body = self._body_properties(item)
         assert body == ['p_customer_id', 'p_lines', 'p_status']
         assert body == sorted(body)
+        assert _post_body_required(item) == ['p_customer_id']
 
-        rows = parse_openapi_document(self._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
+        rows = parse_openapi_document(document)
+        # ⚠ Byte-identical to the alphabetical order it replaced -- a one-element prefix adds
+        # nothing here -- and the testbed declares it `(p_customer_id, p_status, p_lines)`, so the
+        # last two are still SWAPPED. That is why `CI-078` stays in KNOWN_DEFECTS.
         assert [parameter[0] for parameter in function(rows, 'create_order')[7]] == body
+        assert function(rows, 'create_order')[8] is ParameterOrder.DECLARED_PREFIX
+
+    def test_a_get_that_is_not_a_permutation_of_the_body_falls_back_to_required(self) -> None:
+        # D7, on a SYNTHETIC document on purpose: this is a test about castiron's fallback for a
+        # shape no capture exhibits, not about what PostgREST emits. A GET naming an argument the
+        # body lacks must not raise and must not partially reorder -- it drops to the `required`
+        # rule, which still yields a correct prefix.
+        document = {
+            'swagger': '2.0',
+            'definitions': {'t': {'properties': {'a': {'format': 'text'}}}},
+            'paths': {
+                '/rpc/f': {
+                    'get': {'parameters': [{'name': 'p_ghost', 'in': 'query', 'type': 'string', 'format': 'text'}]},
+                    'post': {
+                        'parameters': [
+                            {
+                                'name': 'args',
+                                'in': 'body',
+                                'schema': {
+                                    'required': ['p_zulu'],
+                                    'properties': {
+                                        'p_alpha': {'format': 'text'},
+                                        'p_zulu': {'format': 'text'},
+                                    },
+                                },
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+        rows = parse_openapi_document(document)
+        assert [parameter[0] for parameter in function(rows, 'f')[7]] == ['p_zulu', 'p_alpha']
+        assert function(rows, 'f')[8] is ParameterOrder.DECLARED_PREFIX
+
+    def test_an_unusable_entry_in_the_get_array_does_not_defeat_the_recovery(self) -> None:
+        # A GET `parameters` array carrying something that is not a named object -- the same
+        # tolerance `_parse_query_parameters` and `_variadic_parameter_names` already have. The
+        # junk is skipped and the remaining names are still a permutation of the body, so this
+        # stays DECLARED rather than degrading to the `required` rule. Synthetic: no capture
+        # contains this, and asserting it against one would be asserting a coincidence.
+        document = {
+            'swagger': '2.0',
+            'definitions': {'t': {'properties': {'a': {'format': 'text'}}}},
+            'paths': {
+                '/rpc/f': {
+                    'get': {
+                        'parameters': [
+                            {'name': 'p_zulu', 'in': 'query', 'type': 'string', 'format': 'text'},
+                            'not-an-object',
+                            {'in': 'query', 'type': 'string'},  # no `name`
+                            {'name': 'p_alpha', 'in': 'query', 'type': 'string', 'format': 'text'},
+                        ]
+                    },
+                    'post': {
+                        'parameters': [
+                            {
+                                'name': 'args',
+                                'in': 'body',
+                                'schema': {
+                                    'required': ['p_zulu'],
+                                    'properties': {
+                                        'p_alpha': {'format': 'text'},
+                                        'p_zulu': {'format': 'text'},
+                                    },
+                                },
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+        rows = parse_openapi_document(document)
+        assert [parameter[0] for parameter in function(rows, 'f')[7]] == ['p_zulu', 'p_alpha']
+        assert function(rows, 'f')[8] is ParameterOrder.DECLARED
+
+    def test_a_volatile_function_with_every_argument_required_recovers_its_whole_order(self) -> None:
+        # The case rule 3 exists for, and the one CI-012 benefits from most: a VOLATILE mutation
+        # with no defaults has its COMPLETE declaration order in `required`, so it is DECLARED --
+        # not DECLARED_PREFIX -- even with no GET operation anywhere in the document.
+        #
+        # Synthetic for the same reason as the D7 case above: the testbed has no VOLATILE function
+        # with >=2 required arguments (`CI-140`). The *premise* this leans on -- that `required` is
+        # declaration order -- is checked against real captured bytes by
+        # `test_the_required_array_agrees_with_the_get_order_wherever_both_are_informative`.
+        document = {
+            'swagger': '2.0',
+            'definitions': {'t': {'properties': {'a': {'format': 'text'}}}},
+            'paths': {
+                '/rpc/place_order': {
+                    'post': {
+                        'parameters': [
+                            {
+                                'name': 'args',
+                                'in': 'body',
+                                'schema': {
+                                    # Anti-alphabetical on purpose: a sorted expectation would pass
+                                    # even if castiron ignored `required` entirely.
+                                    'required': ['p_user', 'p_product', 'p_qty'],
+                                    'properties': {
+                                        'p_product': {'format': 'text'},
+                                        'p_qty': {'format': 'int4'},
+                                        'p_user': {'format': 'text'},
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        rows = parse_openapi_document(document)
+        assert [parameter[0] for parameter in function(rows, 'place_order')[7]] == ['p_user', 'p_product', 'p_qty']
+        assert function(rows, 'place_order')[8] is ParameterOrder.DECLARED
+        assert all(parameter[3] is False for parameter in function(rows, 'place_order')[7]), 'none is defaulted'
+
+    def test_a_volatile_function_with_every_argument_defaulted_establishes_nothing(self) -> None:
+        # ⚠ **The ONLY place `ParameterOrder.UNKNOWN` is reachable**, and it is reachable only from
+        # a synthetic document. Measured on this branch: no committed input produces this shape --
+        # it needs >=2 arguments, ALL defaulted, and NO GET, i.e. a VOLATILE all-optional function.
+        # `probe_two_optional` is all-optional but STABLE (so it has a GET and lands DECLARED);
+        # `create_order` is VOLATILE but has one required argument. `CI-140` tracks seeding a real
+        # one; until then this member has no live witness and this comment says so rather than
+        # letting a reader assume the corpus covers it.
+        #
+        # UNKNOWN is NOT a claim the order is wrong -- the body order is kept verbatim, and these
+        # two arguments may well be declared alphabetically. It is a refusal to claim.
+        document = {
+            'swagger': '2.0',
+            'definitions': {'t': {'properties': {'a': {'format': 'text'}}}},
+            'paths': {
+                '/rpc/f': {
+                    'post': {
+                        'parameters': [
+                            {
+                                'name': 'args',
+                                'in': 'body',
+                                'schema': {
+                                    'required': [],
+                                    'properties': {
+                                        'p_alpha': {'format': 'text'},
+                                        'p_zebra': {'format': 'text'},
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        rows = parse_openapi_document(document)
+        assert [parameter[0] for parameter in function(rows, 'f')[7]] == ['p_alpha', 'p_zebra']
+        assert function(rows, 'f')[8] is ParameterOrder.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -1139,6 +1387,11 @@ class TestTheArgumentOrderProbes:
     ``CI-078`` turns on, now asserted from committed bytes rather than from a note. Every
     expectation below is visible in ``tests/unit/corpus/inputs/testbed-public.openapi.json``; no
     test here needs a live server, and none of them appeals to the seed's SQL as evidence.
+
+    ⚠ ``CI-078`` has **LANDED**: castiron now builds its parameter list in the recovered order,
+    so the last test in this class asserts the ``declared`` column where it once asserted
+    ``alphabetical``. The document-level tests above it did not move a byte -- they were always
+    claims about PostgREST's output, and PostgREST's output did not change.
     """
 
     #: ``(function, GET query order, POST ``properties`` order, POST ``required`` array)``.
@@ -1214,19 +1467,23 @@ class TestTheArgumentOrderProbes:
         assert query != sorted(query)
 
     @pytest.mark.parametrize(('name', 'declared', 'alphabetical', 'required'), PROBES, ids=PROBE_IDS)
-    def test_castiron_records_the_alphabetical_body_order_for_every_probe(
+    def test_castiron_records_the_declaration_order_for_every_probe(
         self, name: str, declared: list[str], alphabetical: list[str], required: list[str]
     ) -> None:
-        # ⚠ **This pins a DEFECT** -- the same one `search_products` pins above, now with the
-        # order that is provably wrong rather than merely different: castiron reads the POST body
-        # and reports `probe_mixed` as (p_alpha, p_beta, p_zulu) while the SAME document says it
-        # is declared (p_zulu, p_alpha, p_beta). Both arrays are in hand; castiron keeps the
-        # wrong one.
+        # ⚠ **This used to pin a DEFECT and now pins its FIX.** Before `CI-078` castiron read the
+        # POST body and reported `probe_mixed` as (p_alpha, p_beta, p_zulu) while the SAME document
+        # said it is declared (p_zulu, p_alpha, p_beta) -- both arrays in hand, and castiron kept
+        # the wrong one. It now keeps the right one, and the expectation is the `declared` column.
         #
-        # When `CI-078` lands this goes RED, and that is GOOD NEWS: change the expectation to the
-        # `declared` column, re-baseline the RPC-bearing goldens, and say so in the PR.
+        # The `alphabetical` column is still asserted, as the thing castiron is NOT doing: an
+        # equality against `declared` alone would pass just as happily if the probes were renamed
+        # into alphabetical order and the recovery were deleted.
         rows = parse_openapi_document(_READER._document(CORPUS_INPUTS / 'testbed-public.openapi.json'))
-        assert [parameter[0] for parameter in function(rows, name)[7]] == alphabetical
+        assert [parameter[0] for parameter in function(rows, name)[7]] == declared
+        assert declared != alphabetical, f'{name} no longer discriminates: its two orders agree'
+        # All three probes are STABLE, so the GET operation establishes the order in FULL -- even
+        # `probe_two_optional`, whose `required` array is empty and recovers nothing on its own.
+        assert function(rows, name)[8] is ParameterOrder.DECLARED
 
 
 # ---------------------------------------------------------------------------
@@ -1241,10 +1498,11 @@ class TestDeterminism:
 
     def test_parsing_a_key_reordered_copy_is_identical(self, document: dict[str, Any]) -> None:
         # PostgREST builds ``definitions`` and ``paths`` from a Haskell hash map, so their
-        # document order is NOT contractual -- castiron sorts both. ``properties`` order is
-        # preserved as given: real for a table's columns (pg ordinal), but for a function's
-        # parameters it is only ALPHABETICAL, never argument position (CI-078 -- see
-        # TestRpcParameterOrderInTheRealCaptures, which proves it from a capture).
+        # document order is NOT contractual -- castiron sorts both. A table's ``properties`` order
+        # is preserved as given, because it is real (pg ordinal). A function's is NOT preserved:
+        # it is only ALPHABETICAL, never argument position, so `CI-078` reorders it out of the
+        # document's two ORDERED encodings (the GET array and the POST body's `required`). Both of
+        # those are read positionally from lists, so this determinism claim covers them too.
         reordered = reorder_keys(document)
         assert list(reordered['definitions']) != list(document['definitions'])
         assert list(reordered['paths']) != list(document['paths'])

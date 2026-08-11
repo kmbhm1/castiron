@@ -5,4 +5,4 @@ get typed models — and a typed client — with a ``check`` mode that fails CI 
 your code drifts from the schema.
 """
 
-__version__ = '0.4.0'
+__version__ = '0.5.0'

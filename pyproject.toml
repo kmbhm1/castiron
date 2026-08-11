@@ -5,7 +5,7 @@
 # blocklist key. A hyphenated dist over an unhyphenated import is thoroughly idiomatic
 # (python-dateutil/dateutil, scikit-learn/sklearn). See NAME-D1.
 name = "cast-iron"
-version = "0.4.0"
+version = "0.5.0"
 description = "A schema→typed-code compiler for Python — typed models and a typed client from your schema, with drift-check in CI."
 authors = [{ name = "Kevin Boehm", email = "kmbhm1@gmail.com" }]
 license = "MIT"

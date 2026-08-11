@@ -166,7 +166,7 @@ jobs:
       # a comparison two SHAs cannot express.
       - name: Upload artifacts to the GitHub Release
         if: ${{ steps.release.outputs.released == 'true' }}
-        uses: python-semantic-release/publish-action@v9
+        uses: python-semantic-release/publish-action@v10
         with:
           github_token: ${{ steps.app-token.outputs.token || github.token }}
           tag: ${{ steps.release.outputs.tag }}

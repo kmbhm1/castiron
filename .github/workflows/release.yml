@@ -130,7 +130,7 @@ jobs:
       # it. The exemption and this reasoning are recorded in `.github/zizmor.yml`.
       - name: Python Semantic Release (version + changelog + tag)
         id: release
-        uses: python-semantic-release/python-semantic-release@v9
+        uses: python-semantic-release/python-semantic-release@v10
         with:
           github_token: ${{ steps.app-token.outputs.token || github.token }}
 

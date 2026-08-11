@@ -1,0 +1,46 @@
+# Dependabot — the other half of hash-pinning (CI-143), and not separable from it.
+#
+# Every `uses:` under `.github/workflows/` now names a commit SHA instead of a floating tag, with
+# two deliberate exceptions recorded in `.github/zizmor.yml`. A SHA cannot move under this repo,
+# which is the point — and it also cannot move TOWARDS a security fix, which is why the pin and
+# this file are one decision rather than two. Hash-pinning without a bot trades "an action could
+# change under us" for "an action is frozen at a version with a known CVE", and the second is the
+# worse failure precisely because nothing announces it.
+#
+# ⚠ `github-actions` ONLY, and the omission is deliberate rather than an oversight. Python
+# dependencies already receive Dependabot SECURITY updates: those are a repository setting, need no
+# entry here, and are what opened PR #26 (`build(deps): bump gitpython from 3.1.57 to 3.1.58`)
+# against a repo that had no `dependabot.yml` at all — this file is new. Adding a `uv` ecosystem
+# would additionally switch on routine VERSION updates, i.e. a standing stream of PRs, which is a
+# separate decision from this row and a one-stanza change whenever the captain wants it.
+#
+# `directory: "/"` is the repository root, which for `github-actions` is where Dependabot expects
+# to be pointed: it scans `.github/workflows/` from there.
+#
+# `cooldown.default-days` is what zizmor's `dependabot-cooldown` audit asks for, and it is the one
+# knob here that is about the SAME threat as the pinning itself. A pin plus a bot that proposes a
+# version the hour it is published re-opens exactly the window the pin closed: the compromised
+# releases this ecosystem has actually seen (`tj-actions/changed-files`, the npm `event-stream`
+# lineage) were caught within days, by which time an eager bot would already have opened the PR
+# that carries them. Seven days is the audit's floor, not a guess of mine; it delays only routine
+# VERSION updates, since Dependabot applies security updates regardless of a cooldown.
+#
+# `commit-message.prefix` is SET rather than inferred, and that is load-bearing here. Dependabot
+# guesses a repository's convention from its history and the guess is not a contract; the PR title
+# is what becomes the squash subject that python-semantic-release parses, so a guess that came back
+# as a bare `Bump …` would be a subject this project's commit convention rejects. `ci` is a type
+# the parser knows (`[tool.semantic_release.commit_parser_options].allowed_tags`), it cuts no
+# release (`default_bump_level = 0`, and it is on neither `minor_tags` nor `patch_tags`), and it is
+# excluded from the changelog body (`[tool.semantic_release.changelog].exclude_commit_patterns`) —
+# which is what a workflow-pin bump should be on all three counts.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+      include: scope

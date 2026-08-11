@@ -107,6 +107,13 @@ stopped meaning anything.
   ``v0.16.0``. It is asserted because of *when* it would break: on the alias's removal, at
   pre-push, on whichever PR next moves ``rev`` -- the same deferred, misattributed failure as
   CI-105, in the same stanza.
+
+* **CI-144** -- ``actionlint`` and ``zizmor`` are scoped to ``^\\.github/workflows/``, so as hooks
+  they run only on a commit that edits one: every other commit leaves the workflows -- and the
+  action pins CI-143 put in them -- audited by nobody. They now run in CI as well, where those
+  files are present on every run, and ``TestEveryWorkflowLinterInThePreCommitConfigAlsoRunsInCi``
+  asserts the two lists stay the same list. It also forbids CI from reaching either tool any way
+  but through pre-commit, which is CI-105's lesson applied before the drift rather than after it.
 """
 
 import ast
@@ -176,6 +183,47 @@ RUFF_FORMAT_HOOK_ID = 'ruff-format'
 #: second mypy with a second dependency set, which is what diverged from ``make typecheck`` in
 #: two independent ways at once (version *and* missing project dependencies).
 MYPY_MIRROR_REPO = 'https://github.com/pre-commit/mirrors-mypy'
+
+#: The pre-commit repos whose hooks lint ``.github/`` configuration (CI-144) -- the workflows for
+#: actionlint, and the workflows plus ``dependabot.yml`` and any ``action.yml`` for zizmor. Each
+#: carries an upstream ``files:`` filter, so locally they fire only on a commit that touches one of
+#: those files -- measured, not inferred: committing an unrelated file reports
+#: ``Lint GitHub Actions workflow files...(no files to check)Skipped``. That is correct for an
+#: incremental hook and wrong as the *only* enforcement, because what they check is a property of
+#: those files rather than of the diff: a workflow pinned to a compromised action is not audited by
+#: a PR that edits Python. CI sees the files on every run, which is why they also run there.
+#:
+#: Named as REPOS rather than as hook ids, so the ids come out of ``.pre-commit-config.yaml``
+#: instead of being restated here: a stanza that grows a second hook is then covered without anyone
+#: remembering to extend a list, and a repo that is renamed or dropped empties its id list and
+#: trips the anti-vacuity assertion rather than passing silently on nothing.
+WORKFLOW_LINT_HOOK_REPOS = (
+    'https://github.com/rhysd/actionlint',
+    'https://github.com/zizmorcore/zizmor-pre-commit',
+)
+
+#: The two linters' own executables. Asserted **never** to appear in command position in CI, which
+#: is what makes the guard above mean "CI runs THESE hooks" rather than "CI runs something with the
+#: same name": a ``uvx zizmor`` step would satisfy neither the pinned ``rev`` nor the ``args:`` that
+#: carry ``--config .github/zizmor.yml``, and a second declaration of a tool's version is the exact
+#: shape CI-105 cost two red pushes on (see ``TestTheRuffHookAndTheRuffGateAreTheSameRuff``).
+#: Spelled as the binaries rather than derived from the hook ids they currently coincide with --
+#: deriving them would make this assertion silently narrow if an id and a program name diverged.
+WORKFLOW_LINT_PROGRAMS = frozenset({'actionlint', 'zizmor'})
+
+#: How CI must reach them: ``pre-commit run <hook-id>``, at most one id per invocation (upstream's
+#: CLI takes a single positional), which is why the workflow carries one step per linter.
+PRE_COMMIT_PROGRAM = 'pre-commit'
+PRE_COMMIT_RUN = 'run'
+
+#: ``pre-commit run`` flags whose value is the NEXT token, skipped when locating the hook id for
+#: the same reason ``UV_RUN_VALUE_FLAGS`` exists: unskipped, ``--hook-stage pre-push`` would report
+#: ``pre-push`` as a hook id. ``--files`` is listed although it takes *many* values, so a step that
+#: used it would lose its hook id and redden this guard -- the fail-closed direction, and a prompt
+#: to teach the parser rather than a hole that passes.
+PRE_COMMIT_VALUE_FLAGS = frozenset(
+    {'-c', '--config', '--color', '--hook-stage', '--from-ref', '--source', '--to-ref', '--origin', '--files'}
+)
 
 #: The Make target the pre-push mypy hook must invoke. Not compared as a literal string: the
 #: assertion is that whatever target the hook runs is one ``make validate`` *also* runs, which is
@@ -1202,6 +1250,89 @@ def steps_using(steps: list[dict[str, str]], action: str) -> list[dict[str, str]
         The matching steps, in file order.
     """
     return [step for step in steps if step.get('uses', '').startswith(f'{action}@')]
+
+
+def workflow_pre_commit_hook_ids(text: str) -> set[str]:
+    """Return every pre-commit hook id a workflow runs through ``pre-commit run``.
+
+    Read from the *command*, never from a step's ``name`` -- a step called "Audit workflows
+    (zizmor)" that runs nothing would otherwise satisfy the guard that CI audits the workflows,
+    which is the failure this whole family exists to make impossible.
+
+    ``shell_invocations`` peels the ``uv run`` wrapper, so the invocation is compared as
+    ``pre-commit run ...`` rather than as ``uv ...``.
+
+    Args:
+        text: The whole workflow file.
+
+    Returns:
+        The hook ids, e.g. ``{'actionlint', 'zizmor'}``. Empty when no step runs pre-commit.
+    """
+    hook_ids: set[str] = set()
+    for step in steps_running_a_command(workflow_steps(text)):
+        for line in step['run'].splitlines():
+            for invocation in shell_invocations(line):
+                if invocation[:2] != [PRE_COMMIT_PROGRAM, PRE_COMMIT_RUN]:
+                    continue
+                hook_ids.update(positional_arguments(invocation[2:], PRE_COMMIT_VALUE_FLAGS))
+    return hook_ids
+
+
+def positional_arguments(tokens: list[str], value_flags: frozenset[str]) -> list[str]:
+    """Return the non-flag arguments of one argv tail.
+
+    Args:
+        tokens: The tokens after the sub-command, e.g. ``['--all-files', 'zizmor']``.
+        value_flags: Flags whose value is the next token, and which therefore consume it.
+
+    Returns:
+        The positional arguments, in order. A joined ``--flag=value`` is consumed as a flag.
+    """
+    positionals: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+            continue
+        if token.startswith('-'):
+            skip = token in value_flags
+            continue
+        positionals.append(token)
+    return positionals
+
+
+def workflow_tools_outside_pre_commit(text: str, tools: frozenset[str]) -> set[str]:
+    """Return every named tool a workflow reaches other than through ``pre-commit run``.
+
+    Deliberately NOT a check of command position (CI-144). ``uvx zizmor``, ``pipx run actionlint``
+    and ``./actionlint`` all put a *wrapper* or a path in command position, so a guard that read
+    only ``invocation[0]`` would answer "no direct invocation" for the three spellings a second
+    copy is most likely to arrive in. Every token of a non-pre-commit invocation is considered
+    instead, reduced to its basename and stripped of any ``@version`` suffix.
+
+    ``uses:`` is scanned as well, because the same second copy can arrive as an action
+    (``zizmorcore/zizmor-action``, ``raven-actions/actionlint``) rather than as a command.
+
+    A ``pre-commit run`` invocation is skipped whole: that is the sanctioned path, and the hook id
+    it names is precisely the token this function otherwise reports.
+
+    Args:
+        text: The whole workflow file.
+        tools: The tool names to look for, e.g. ``{'actionlint', 'zizmor'}``.
+
+    Returns:
+        The subset of ``tools`` the workflow reaches some other way. Empty is the good answer.
+    """
+    found: set[str] = set()
+    for step in workflow_steps(text):
+        action = step.get('uses', '').partition('@')[0]
+        found |= {tool for tool in tools if tool in action}
+        for line in step.get('run', '').splitlines():
+            for invocation in shell_invocations(line):
+                if invocation[:2] == [PRE_COMMIT_PROGRAM, PRE_COMMIT_RUN]:
+                    continue
+                found |= tools & {token.rpartition('/')[2].partition('@')[0] for token in invocation}
+    return found
 
 
 def steps_running_a_command(steps: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -3383,3 +3514,120 @@ class TestEveryUnitTestIsSelectedByTheUnitTarget:
             'that runs no pytest at all, so reading the marker back out of the Makefile proves '
             'nothing.'
         )
+
+
+@pytest.mark.unit
+class TestEveryWorkflowLinterInThePreCommitConfigAlsoRunsInCi:
+    """CI-144 -- the two workflow linters, asserted to run where the files they lint always exist.
+
+    Same family as CI-107 and CI-108 above: not a check that is wrong, a check that quietly does
+    not run. Both hooks carry an upstream ``files:`` filter -- ``^\\.github/workflows/`` for
+    actionlint, and the workflows plus ``dependabot.yml`` plus any ``action.yml`` for zizmor -- so
+    as pre-commit hooks they fire only on a commit that edits one of those. Measured: a commit of an
+    unrelated file prints ``(no files to check)Skipped`` for both. Every other commit leaves the
+    workflows audited by nobody, including the commits that matter most here: ``release.yml`` holds
+    ``id-token: write`` for PyPI Trusted Publishing, and the action pins those workflows carry are a
+    supply-chain surface that goes stale on its own, without a diff.
+
+    ⚠ The assertions are about the RELATION between two files, not about either one's contents.
+    Neither "the hooks exist" nor "CI has two steps" is worth asserting alone -- the first is
+    already enforced by pre-commit and the second by CI going red. What nothing enforces is that
+    the two stay the same set, which is why a hook added to that config tomorrow must show up here.
+
+    They go red on: a workflow-lint hook declared in ``.pre-commit-config.yaml`` that no CI step
+    runs; a renamed or deleted stanza (the id list empties, and the anti-vacuity assertion fires
+    rather than a loop passing over nothing); and a CI step that invokes either linter directly
+    instead of through pre-commit, which would re-open the CI-105 gap -- a second declaration of
+    the version and the arguments, free to drift from the hook config.
+    """
+
+    def test_ci_runs_every_workflow_lint_hook_the_config_declares(self) -> None:
+        config = PRE_COMMIT_CONFIG.read_text(encoding='utf-8')
+        run_in_ci = workflow_pre_commit_hook_ids(CI_WORKFLOW.read_text(encoding='utf-8'))
+        # Anti-vacuity (CI-083): with no pre-commit invocation parsed at all, every set difference
+        # below would be reported against the full declared list -- but a parser that silently
+        # returned nothing would look identical to a workflow that ran nothing, and the message
+        # would send a reader to the wrong file.
+        assert run_in_ci, (
+            f'{CI_NAME} runs no `pre-commit run` at all. Either the workflow-lint job was removed '
+            f'(then remove these guards with it and record why), or its steps are spelled in a '
+            f'form workflow_pre_commit_hook_ids cannot read.'
+        )
+        for repo in WORKFLOW_LINT_HOOK_REPOS:
+            declared = hosted_hook_ids(config, repo)
+            assert declared, (
+                f'{PRE_COMMIT_NAME} declares no hooks under {repo}. This guard reads the hook ids '
+                f'from that stanza, so an empty list would make it pass while asserting nothing; '
+                f'update WORKFLOW_LINT_HOOK_REPOS if the linter genuinely moved or was dropped.'
+            )
+            missing = set(declared) - run_in_ci
+            assert not missing, (
+                f'{PRE_COMMIT_NAME} declares {sorted(missing)} under {repo}, but {CI_NAME} never '
+                f'runs it. Those hooks are scoped to `.github/workflows/`, so pre-commit skips '
+                f'them on every commit that does not touch one -- CI is where they are guaranteed '
+                f'to see the files. Add a step: `uv run pre-commit run --all-files <hook-id>`.'
+            )
+
+    def test_ci_reaches_them_through_pre_commit_rather_than_a_second_copy(self) -> None:
+        direct = workflow_tools_outside_pre_commit(CI_WORKFLOW.read_text(encoding='utf-8'), WORKFLOW_LINT_PROGRAMS)
+        assert not direct, (
+            f'{CI_NAME} invokes {sorted(direct)} directly. Run it as '
+            f'`uv run pre-commit run --all-files <hook-id>` instead: a direct call is a SECOND '
+            f"declaration of that tool's version and arguments (zizmor's `--config "
+            f'.github/zizmor.yml` among them), free to drift from {PRE_COMMIT_NAME}. That is the '
+            f'CI-105 shape -- a gate covering something different from the check beside it -- '
+            f'which cost this repo two red pushes on the ruff axis.'
+        )
+
+    def test_these_guards_can_still_see_the_shapes_they_forbid(self) -> None:
+        # A step NAMED after a linter, running nothing, is the cheapest way to fake this guard.
+        named_only = """
+jobs:
+  workflows:
+    steps:
+      - name: Audit workflows (zizmor)
+        run: echo done
+"""
+        assert workflow_pre_commit_hook_ids(named_only) == set()
+
+        # A value-taking flag's value is not a hook id, and `uv run` is peeled off the program.
+        staged = """
+jobs:
+  workflows:
+    steps:
+      - run: uv run pre-commit run --all-files --hook-stage pre-push zizmor
+"""
+        assert workflow_pre_commit_hook_ids(staged) == {'zizmor'}
+
+        # A block scalar holding one invocation per line is read as two, not as one.
+        both = """
+jobs:
+  workflows:
+    steps:
+      - run: |
+          uv run pre-commit run --all-files actionlint
+          uv run pre-commit run --all-files zizmor
+"""
+        assert workflow_pre_commit_hook_ids(both) == {'actionlint', 'zizmor'}
+
+        # And dropping one of them is visible -- the shape the first assertion has to catch.
+        assert workflow_pre_commit_hook_ids(
+            both.replace('          uv run pre-commit run --all-files zizmor\n', '')
+        ) == {'actionlint'}
+
+        # A second copy is seen in each spelling it could realistically arrive in -- including the
+        # three that leave a wrapper, not the tool, in command position.
+        for command in ('uv run zizmor .', 'uvx zizmor .github/workflows', 'uvx zizmor@1.30 .', './zizmor .'):
+            step = f'jobs:\n  j:\n    steps:\n      - run: {command}\n'
+            assert workflow_tools_outside_pre_commit(step, WORKFLOW_LINT_PROGRAMS) == {'zizmor'}, command
+        action = 'jobs:\n  j:\n    steps:\n      - uses: zizmorcore/zizmor-action@v1\n'
+        assert workflow_tools_outside_pre_commit(action, WORKFLOW_LINT_PROGRAMS) == {'zizmor'}
+
+        # While the sanctioned spelling is not -- there the tool name IS the hook id, and the
+        # config path in zizmor's own args must not be read as a second copy either.
+        sanctioned = (
+            'jobs:\n  j:\n    steps:\n'
+            '      - run: uv run pre-commit run --all-files --config .github/zizmor.yml zizmor\n'
+        )
+        assert workflow_tools_outside_pre_commit(sanctioned, WORKFLOW_LINT_PROGRAMS) == set()
+        assert workflow_tools_outside_pre_commit(both, WORKFLOW_LINT_PROGRAMS) == set()

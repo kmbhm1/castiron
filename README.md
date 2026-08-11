@@ -69,10 +69,12 @@ class Orders(OrdersBaseSchema):
     order_items: list[OrderItems] | None = Field(default=None)
 ```
 
-Output is deterministic — the same schema and options produce the same bytes, every time — and
-lint-clean as emitted, under ruff's `F`, `UP` and `I` rules at ruff's own defaults. See
+Every file opens with a two-line header recording the castiron version that wrote it — no
+timestamp, no source URL. Output is deterministic: the same schema, the same options and the
+same castiron version produce the same bytes, every time, and it is lint-clean as emitted under
+ruff's `F`, `UP` and `I` rules at ruff's own defaults. See
 **[The generated code](https://kmbhm1.github.io/castiron/reference/generated-code/)** for that
-promise, its limits, and how enum member names are derived.
+promise, its limits, the header's exact format, and how enum member names are derived.
 
 Put your settings in `pyproject.toml` and the flags go away (the API key is deliberately
 **rejected** there — that file gets committed):

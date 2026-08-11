@@ -104,7 +104,9 @@ silences the summary and leaves errors intact.
 
 ## What you get
 
-One file, `schema.py`, organised into bands of classes:
+One file, `schema.py`. It opens with two comment lines recording the castiron version that
+wrote it ([the provenance header](../reference/generated-code.md#the-provenance-header)), and
+the rest is organised into bands of classes:
 
 ```python
 class UsersBaseSchema(CustomModel):
@@ -211,10 +213,13 @@ root or three directories down. The API key is deliberately **rejected** in a co
 
 ## Determinism, and why it matters
 
-The same schema and the same options produce the same bytes, every time — no timestamps,
-no generated-on banner, no source URL in the file, and no post-hoc `ruff`/`black` pass
-whose version could change the output. That is what makes generated models safe to commit
-and diff, and it is the foundation the planned `castiron check` drift-guard will stand on.
+The same schema, the same options and the same castiron version produce the same bytes,
+every time — no timestamps, no source URL in the file, and no post-hoc `ruff`/`black` pass
+whose version could change the output. The file's first two lines record which castiron
+wrote it ([the provenance header](../reference/generated-code.md#the-provenance-header)), and
+that version is the only input that varies. That is what makes generated models safe to commit
+and diff, and it is the foundation the planned `castiron check` drift-guard will stand on —
+the recorded version is what will let it tell a castiron upgrade apart from a schema change.
 
 Running no formatter afterwards does not mean the output is untidy: it is written clean **as
 emitted**, and castiron promises that it passes ruff's `F`, `UP` and `I` rules at ruff's own

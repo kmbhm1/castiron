@@ -161,8 +161,9 @@ class ConstraintInfo:
     ``orders_pkey`` is byte-identical to the name Postgres gives a genuinely default-named
     constraint, so no downstream heuristic can tell them apart. Two consumers are specified
     to read it -- ``castiron check`` (CI-021) compares constraint names only when **both**
-    sides report ``False``, and the SQLAlchemy/DDL emitters (CI-030/CI-031) omit ``name=``
-    entirely when it is ``True``, letting Postgres apply its own default. Both remove a
+    sides report ``False``, and the SQLAlchemy emitter (CI-032), plus any DDL emitter that
+    follows it, omits ``name=`` entirely when it is ``True``, letting Postgres apply its own
+    default. Both remove a
     false drift positive by construction rather than by convention.
     """
 
@@ -374,7 +375,7 @@ class FunctionInfo:
     ==========================  =========================================  ==================
     ``name`` / ``schema``       full (path key + the caller's schema)       full
     ``parameters[].name``       full (body-schema ``properties``)           full
-    ``parameters[].raw_type``   full, with ``int32``/``int64`` flattening   exact
+    ``parameters[].raw_type``   full; integer widths collapse >= 14.8      exact
     ``parameters[].has_default``full (``name not in schema.required``)      full
     ``parameters[].mode``       ``IN``; ``VARIADIC`` from the GET operation full ``proargmodes``
     ``parameters[].enum_info``  only if the enum is on a scalar column too  full
@@ -405,6 +406,16 @@ class FunctionInfo:
     observed version on :attr:`Schema.postgrest_version`. ``parameter_order`` is *not* affected:
     ``makeProcGetParams`` is byte-identical across those releases, so a sub-floor GET array is
     still declaration order.
+
+    ⚠ **A second, unrelated version floor sits on ``parameters[].raw_type``: 14.8.** PostgREST
+    started spelling an integer ``format`` the Swagger-legal way -- ``int32``/``int64`` -- only in
+    **14.8** (PR #4641, "Fix invalid OpenAPI 2.0 format for integer types"); below it the field
+    carries the pg type name, so ``smallint`` and ``integer`` are **distinct** there and collapse
+    only above it. The two floors are different upstream changes pointing in opposite directions,
+    so **neither is a general "minimum PostgREST"** and castiron gates each fact separately. This
+    one needs no gate at all: both spellings resolve identically through
+    ``castiron.sources.openapi.parse.OPENAPI_FORMAT_ALIASES``, so it is a fidelity limit above
+    14.8, never a behaviour difference.
 
     Documented invariant (not runtime-validated -- these are plain mutable dataclasses per
     decision D1): when ``volatility`` is known, ``is_read_only`` equals

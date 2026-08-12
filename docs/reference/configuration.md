@@ -79,8 +79,15 @@ Three consequences worth knowing:
   pair, so `--crud-models` on the command line beats `crud-models = false` in the file
   just as `--no-crud-models` beats `crud-models = true`. That is why there is no
   `--no-config` escape hatch — you never need one.
-- **Lists replace, never merge.** `emit = ["pydantic", "sqlalchemy"]` in the file plus
-  `--emit pydantic` on the command line yields exactly `pydantic`.
+- **Lists replace, never merge.** Given a file with `emit = ["pydantic", "sqlalchemy"]`,
+  `--emit pydantic` on the command line yields exactly `pydantic` — the flag *replaces* the
+  list rather than adding to it. ⚠ That example is **illustrative, not runnable today**:
+  `pydantic` is the only registered emitter, and a config naming any other is rejected before
+  the override is even considered, so this particular file fails with
+  `[tool.castiron] 'emit' names no registered emitter: 'sqlalchemy'` whatever you pass on the
+  command line. That is deliberate — a typo in a committed `pyproject.toml` should be
+  diagnosed against the file, not silently overridden. The SQLAlchemy emitter is on the
+  roadmap; until it lands, read the rule and not the emitter names.
 - **Only three settings have environment variables** (`--config`, `--from`, `--key`).
   Everything else is a flag or a config key, because everything else belongs somewhere
   reviewable. See [Environment variables](environment-variables.md).

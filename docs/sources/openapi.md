@@ -3,9 +3,11 @@
 > The OpenAPI source needs no database credentials and sees everything your API key can
 > see — column types, nullability, primary keys, single-column foreign keys, enums, and
 > RPC argument names, types and (in almost every case) declaration order. It cannot see unique
-> or check constraints, identity/generated columns, exact integer widths below `bigint`, or
-> function return types — and for a `VOLATILE` function with defaulted arguments it recovers
-> only part of the argument order, telling you which part. **Function volatility depends on your
+> or check constraints, identity/generated columns, exact integer widths below `bigint`
+> (on PostgREST ≥ 14.8 — an older server keeps them,
+> [why](#integer-widths-depend-on-your-postgrest-version)), or function return types — and
+> for a `VOLATILE` function with defaulted arguments it recovers only part of the argument
+> order, telling you which part. **Function volatility depends on your
 > server: below PostgREST 13.0.5 the document does not encode it at all**, and castiron reports
 > it as unknown rather than guessing ([why](#volatility-depends-on-your-postgrest-version)).
 > Point castiron at the database itself when you need those.
@@ -22,7 +24,7 @@ flowchart LR
     PR --> DOC["OpenAPI document<br/>filtered by your API role"]
     DOC --> IR["castiron Schema IR"]
     IR --> M["typed models"]
-    PR -.->|not encoded| LOST["UNIQUE / CHECK / EXCLUDE<br/>identity and nextval defaults<br/>smallint vs integer<br/>numeric precision, domains<br/>function return types"]
+    PR -.->|not encoded| LOST["UNIQUE / CHECK / EXCLUDE<br/>identity and nextval defaults<br/>smallint vs integer (PostgREST ≥ 14.8)<br/>numeric precision, domains<br/>function return types"]
 ```
 
 castiron reads one document: the **OpenAPI (Swagger 2.0) description PostgREST publishes
@@ -61,7 +63,7 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Table/view names, columns | ✅ full | ✅ | `definitions` |
 | Column nullability | ✅ full for tables; ⚠ **every view column is reported nullable** | ✅ | `required` lists exactly the NOT NULL columns; PostgREST reports view columns nullable |
 | Table vs view | ⚠ **inferred from one signal** — no view marker is emitted, so a non-empty `required` list means `BASE TABLE` and anything else means `VIEW`; see [below](#table-or-view-is-inferred-from-one-signal) | ✅ `relkind` | the document carries no marker |
-| Column type | ⚠ **`smallint` and `integer` both arrive as `int32`**; `bigint` survives as `int64`; every other type keeps its Postgres name | ✅ exact | PostgREST's `toSwaggerFormat` |
+| Column type | ⚠ **on PostgREST ≥ 14.8, `smallint` and `integer` both arrive as `int32`** and `bigint` as `int64`; **below 14.8** `format` carries the Postgres type name and all three widths stay distinct. Every other type keeps its Postgres name on either server. See [below](#integer-widths-depend-on-your-postgrest-version) | ✅ exact | PostgREST's `toSwaggerFormat`, which only spells integers `int32`/`int64` from **14.8** |
 | Numeric precision/scale, `varchar(n)` typmod | ❌ lost (`maxLength` survives, but see [below](#string-lengths-survive-but-do-not-become-constraints)) | ✅ | `format_type(atttypid, NULL)` erases them |
 | Domain types | ❌ collapse to their base type | ✅ | resolved before the document is built |
 | Column default | ⚠ **only when it survives a JSON decode** — string-ish defaults (`now()`, `gen_random_uuid()`, `'text'`) come through; **`nextval(...)` is silently dropped** | ✅ | PostgREST re-quotes string-ish defaults as JSON; for other types the raw default text must itself be valid JSON |
@@ -101,7 +103,7 @@ Legend: **✅ full** — the fact is exact. **⚠ partial** — something surviv
 | Name, schema | ✅ full | ✅ | the `/rpc/<name>` path key |
 | Argument names, has-default | ✅ full | ✅ | the POST body schema's `properties` and `required` |
 | Argument **order** | ✅ **full** for a `STABLE`/`IMMUTABLE` function, and for a `VOLATILE` one whose arguments are all required; ⚠ **partial** for a `VOLATILE` function with defaulted arguments — the required prefix is right and the defaulted tail is name-sorted. `FunctionInfo.parameter_order` says which you got. Below PostgREST 13.0.5 a GET exists for **every** function, so order is recovered in **full** for `VOLATILE` ones too. See [below](#argument-order-is-only-partly-encoded) | ✅ | the POST body's `properties` is a sorted map, but the GET `parameters` and the body's `required` are **ordered arrays** |
-| Argument types | ⚠ **as degraded as a column type, plus one loss beyond it** — `smallint` and `integer` both arrive as `int32`, and `char(2)` arrives as `character` with **no `maxLength`**, which the same column would carry | ✅ exact | `toSwaggerFormat` again; `maxLength` is emitted for columns only |
+| Argument types | ⚠ **as degraded as a column type, plus one loss beyond it** — the same version-scoped integer collapse (`smallint` and `integer` both `int32` on PostgREST ≥ 14.8, distinct below it), and `char(2)` arrives as `character` with **no `maxLength`**, which the same column would carry | ✅ exact | `toSwaggerFormat` again; `maxLength` is emitted for columns only |
 | An argument's **enum values** | ❌ **never carried on the argument** — it links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise the argument keeps a bare type name and no values | ✅ | the parameter declares `format` but no `enum` list, and its type name is unqualified |
 | **Return type** | ❌ **never available** | ✅ | responses carry only `"OK"` |
 | **Set-returning** | ❌ **never available** | ✅ `proretset` | not encoded |
@@ -470,12 +472,43 @@ mutation is a `GET` request for an `INSERT`.
 **The remedy** is to upgrade PostgREST to 13.0.5 or later. (A live-database source reads
 `pg_proc.provolatile` and never has this problem — it is on the roadmap.)
 
-### Integer widths
+### Integer widths depend on your PostgREST version
 
-`smallint` and `integer` are the same token (`int32`) in the document. For the Pydantic
-emitter this is currently invisible — both resolve to `int` — but it is real, and it will
-matter to an emitter that cares about storage, such as a future SQLAlchemy emitter
-choosing between `SmallInteger` and `Integer`. `bigint` is distinguishable (`int64`).
+This is the second version-scoped limit on this page, and it runs the **opposite** way from the
+one above: here the *older* server tells you more.
+
+From **PostgREST 14.8** an integer's `format` is Swagger's own `int32`/`int64`, so `smallint` and
+`integer` are the same token in the document and only `bigint` stays distinct. Below 14.8 the
+field carries the Postgres type name and all three are distinguishable:
+
+| Column declared | PostgREST ≥ 14.8 | PostgREST < 14.8 |
+| --- | --- | --- |
+| `smallint` | `"format": "int32"` | `"format": "smallint"` |
+| `integer` | `"format": "int32"` | `"format": "integer"` |
+| `bigint` | `"format": "int64"` | `"format": "bigint"` |
+
+The change is [PR #4641](https://github.com/PostgREST/postgrest/pull/4641) (2026-04-03), *"Fix
+invalid OpenAPI 2.0 format for integer types"* — OpenAPI 2.0 defines `int32`/`int64` as *the*
+formats for `type: integer`, and a raw Postgres type name there is not legal. Diffing a full
+v14.14 document against a v12.2.3 one for the same schema, key order included, gives **49
+differing values**: 43 column properties and 6 function parameters, and nothing else.
+
+**castiron reads both spellings correctly, with no special case.** `int32`/`int64` are aliased to
+`integer`/`bigint`, and every type map already keys `smallint`, `integer` and `bigint` directly —
+as does the surrogate-primary-key inference, which tests membership of `{smallint, integer,
+bigint}`. Your generated models do not depend on which server answered.
+
+What does depend on it is what castiron *can know*. On ≥ 14.8 the width below `bigint` is
+genuinely gone. For the Pydantic emitter that is invisible — both resolve to `int` — but it is
+real, and it will matter to an emitter that cares about storage, such as a future SQLAlchemy
+emitter choosing between `SmallInteger` and `Integer`.
+
+!!! warning "14.8 is not 13.0.5 — there is no single 'minimum PostgREST'"
+    The [volatility floor](#volatility-depends-on-your-postgrest-version) is **13.0.5**; this one
+    is **14.8**. They are unrelated upstream changes pointing in opposite directions, so no one
+    version is best at everything: below 13.0.5 you get exact integer widths and no volatility;
+    from 13.0.5 to 14.7 you get both; from 14.8 you get volatility and the widths collapse.
+    castiron scopes each fact to its own version and asks you to do the same.
 
 ### Unknown types never fail
 
@@ -491,7 +524,9 @@ Reach for a live-database source when any of these are load-bearing for you:
 
 - UNIQUE, CHECK or EXCLUDE constraints (and the validation you would derive from them)
 - identity/generated columns as fact rather than inference
-- exact integer widths, numeric precision/scale, `varchar(n)`, domain types
+- exact integer widths (only lost on PostgREST ≥ 14.8 —
+  [why](#integer-widths-depend-on-your-postgrest-version)), numeric precision/scale,
+  `varchar(n)`, domain types
 - composite foreign keys, composite primary-key order, cross-schema relationships
 - function return types, set-returning functions, overloads, or the declared order of a
   function's arguments

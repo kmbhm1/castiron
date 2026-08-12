@@ -1,8 +1,8 @@
 """The emitter abstraction: the ``Emitter`` base, ``EmittedFile``, and render helpers.
 
-Every emitter (Pydantic here; SQLAlchemy in CI-012; msgspec/TypedDict/attrs and TS/Zod
-later) implements :meth:`Emitter.emit`, turning a :class:`castiron.ir.Schema` into a list
-of in-memory :class:`EmittedFile` values. There is **no** file I/O and **no**
+Every emitter (Pydantic here; the typed Supabase client in CI-012; SQLAlchemy in CI-032;
+msgspec/TypedDict/attrs and TS/Zod later) implements :meth:`Emitter.emit`, turning a
+:class:`castiron.ir.Schema` into a list of in-memory :class:`EmittedFile` values. There is **no** file I/O and **no**
 nondeterminism (no timestamped filenames -- supabase-pydantic's ``AbstractFileWriter.save``
 is intentionally not ported): writing to disk is CI-006's job, and byte-stable output is
 load-bearing for the ``check`` drift-guard (Hard Rule #9).
@@ -59,8 +59,8 @@ class Emitter(ABC):
 #: not as a green test on three legs and a red one on the fourth.
 #:
 #: 🔴 **Adding an emitter? Extend this table.** This module is shared with every emitter (CI-012
-#: SQLAlchemy, CI-030 the typed client, ...), and this list covers only what the **Pydantic**
-#: emitter can currently reach. A new emitter's ``import uuid`` or
+#: the typed Supabase client, CI-032 SQLAlchemy, ...), and this list covers only what the
+#: **Pydantic** emitter can currently reach. A new emitter's ``import uuid`` or
 #: ``from collections.abc import Sequence`` would land in the third-party block and **silently
 #: re-open I001** for its users. It is deliberately not pre-widened: an entry no importer reaches
 #: is unfalsifiable, and speculative entries are how a table stops meaning anything.

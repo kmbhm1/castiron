@@ -34,8 +34,22 @@ The fidelity floor (what this source structurally cannot see)
 Each line is asserted by a test in ``tests/unit/sources/openapi/`` so it cannot silently
 move:
 
-- ``smallint`` and ``integer`` both arrive as ``int32`` and are **indistinguishable**;
-  ``bigint`` survives as ``int64``. Everything else keeps its real pg type name.
+- **Integer widths collapse only on PostgREST >= 14.8**, where ``smallint`` and ``integer`` both
+  arrive as ``int32`` and are **indistinguishable** and ``bigint`` arrives as ``int64``. **Below
+  14.8** ``format`` carries the pg type name for integers too (``smallint``/``integer``/``bigint``)
+  and the three widths stay distinct, so the *older* server is **more** informative here -- the
+  opposite direction from the volatility drift below. ``toSwaggerFormat`` gained the Swagger-legal
+  spelling in **14.8** (PR #4641, 2026-04-03, "Fix invalid OpenAPI 2.0 format for integer types",
+  because OpenAPI 2.0 defines ``int32``/``int64`` as *the* formats for ``type: integer``); a full
+  ``v14.14`` vs ``v12.2.3`` document diff for one schema differs in 49 values -- 43 column
+  properties and 6 function parameters, and nothing else.
+  ⚠ **The floor here is 14.8 and the volatility floor below is 13.0.5 -- two unrelated upstream
+  changes.** Neither is a general "minimum PostgREST", and this row deliberately adds no version
+  gate: nothing *behaves* differently either side of 14.8, because
+  :data:`OPENAPI_FORMAT_ALIASES` maps ``int32``/``int64`` into the same pg vocabulary the type
+  maps and :data:`INTEGER_FAMILY` already key ``smallint``/``integer``/``bigint`` on, so a
+  sub-14.8 document resolves correctly with no special case. Only what castiron *can know*
+  differs. Everything else keeps its real pg type name on either server.
 - ``nextval(...)`` defaults are dropped upstream (PostgREST feeds the default text to
   ``JSON.decode``, which fails), so an integer surrogate primary key looks NOT NULL with no
   default and no identity marker. See ``infer_generated_primary_keys``.
@@ -105,8 +119,10 @@ logger = logging.getLogger(__name__)
 JsonObject = Mapping[str, Any]
 
 #: Swagger's own numeric formats → the Postgres vocabulary every castiron type map speaks.
-#: These two are the *only* tokens ``toSwaggerFormat`` rewrites; everything else is already
-#: the raw pg type name, so there is no second type map (decision CI5-D5).
+#: These two are the *only* tokens ``toSwaggerFormat`` rewrites, and it only spells integers this
+#: way from PostgREST **14.8** (PR #4641); everything else is already the raw pg type name -- as
+#: are integers themselves below 14.8, which is why a sub-14.8 document needs no second alias
+#: table either. So there is no second type map (decision CI5-D5).
 OPENAPI_FORMAT_ALIASES: dict[str, str] = {
     'int32': 'integer',
     'int64': 'bigint',
@@ -240,7 +256,9 @@ def normalize_format(format_token: str) -> str:
     """Translate a Swagger ``format`` token into the Postgres type vocabulary.
 
     Only ``int32``/``int64`` are Swagger's own vocabulary; every other token PostgREST
-    emits is already the raw pg type name and passes through unchanged.
+    emits is already the raw pg type name and passes through unchanged. A PostgREST below
+    **14.8** spells integers with the pg name too (``smallint``/``integer``/``bigint``), so
+    on such a server every token passes through and this function is a no-op.
 
     Args:
         format_token: The raw ``format`` value (or an array-element token).

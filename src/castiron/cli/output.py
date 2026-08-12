@@ -166,3 +166,34 @@ def _write(target: Path, content: str) -> None:
         # not a castiron bug (exit 70, "please report it"). CI6-D9.
         raise OutputError(f'Could not write {target}: {exc}') from exc
     logger.debug(f'Wrote {target}')
+
+
+def display_path(path: Path) -> str:
+    """Render a resolved output path the shortest honest way.
+
+    A config-file ``output`` is anchored to the config file's directory (CI6-D5a), so it
+    arrives absolute. Printing it relative to the cwd keeps the common case reading
+    ``wrote out/schema.py``, while a run from a subdirectory — where the file genuinely
+    lands somewhere else — still shows the full path rather than a misleading short one.
+
+    It lives here rather than in :mod:`castiron.cli.gen` because ``castiron check`` names the
+    same resolved paths in its drift report and must name them identically: a drift report that
+    spelled a path differently from the ``gen`` line that wrote it would read like two files.
+
+    Args:
+        path: The resolved target path.
+
+    Returns:
+        The path relative to the cwd when it is under it, else the path unchanged.
+    """
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
+def format_size(size: int) -> str:
+    """Render a byte count the way the summary shows it (``947 B`` / ``14.2 kB``)."""
+    if size < 1000:
+        return f'{size} B'
+    return f'{size / 1000:.1f} kB'

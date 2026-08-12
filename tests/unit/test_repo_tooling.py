@@ -114,13 +114,43 @@ stopped meaning anything.
   files are present on every run, and ``TestEveryWorkflowLinterInThePreCommitConfigAlsoRunsInCi``
   asserts the two lists stay the same list. It also forbids CI from reaching either tool any way
   but through pre-commit, which is CI-105's lesson applied before the drift rather than after it.
+
+**CI-102** is this module turned on itself: five ways the guards above were weaker than they read.
+Two of them are the defect this file exists to catch, committed by the file itself.
+
+* The readers were **single-physical-line**, and ``Makefile:88-93`` wraps the ``test-matrix`` legs
+  across a shell continuation -- so ``--cov-fail-under=90`` sat on a line whose first token is not
+  ``pytest`` and **no guard here saw the matrix coverage floor at all**. Measured: deleting the
+  floor from both legs -- undoing ``CI-089``/``CI-088`` entirely -- left all 103 assertions green.
+  The same defect ran backwards on the workflow side, where re-formatting CI's ``run:`` into a
+  ``run: |`` block reported a **correct** workflow as missing ``--cov``. ``join_continuations`` is
+  now shared by both readers, and ``TestTheCoverageFloorIsOnEveryLegOfTheGate`` asserts the floor
+  that nothing had ever asserted.
+
+* ``WHOLE_SUITE_TARGETS`` was a hard-coded list of three names, so the guard written against
+  ``CI-086`` **reproduced CI-086's own defect** -- it held by enumeration rather than by
+  construction, while the CI half of the same class already did discovery ("every pytest
+  invocation in ``ci.yml``"). Measured: appending a ``smoke:`` target that runs the whole suite
+  with no marker left all seven of those guards green. Targets are now **discovered**, with
+  ``test-unit`` / ``test-integration`` as named exceptions that must themselves be real.
+
+* Comment handling was **asymmetric**: the workflow reader skipped ``#`` lines and the Makefile
+  reader did not, so a tab-indented comment mentioning pytest -- in a file this comment-dense --
+  reddened a guard on prose. Both sides now go through the same two functions.
+
+* This is also the first family here to need a ``.git`` directory, which the hatchling sdist does
+  not ship; see ``TestGitignoreDoesNotShadowADirectory`` for what that costs and what now runs in
+  its place.
 """
 
 import ast
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -257,9 +287,36 @@ LOAD_BEARING_FLAGS = {
     '--cov-fail-under': '90',
 }
 
-#: Make targets that run the WHOLE suite, and must therefore exclude the live-source half.
-#: ``test-unit`` and ``test-integration`` are deliberately absent -- each selects its own marker.
-WHOLE_SUITE_TARGETS = ('test', 'coverage', 'test-matrix')
+#: The coverage half of the invariant above, DERIVED rather than restated (CI-102). It is
+#: asserted separately because its scope is different: every whole-suite target must carry the
+#: marker, but ``coverage`` deliberately omits the floor (it renders HTML rather than gating), so
+#: the floor is asserted over the two GATE targets instead. Deriving it means the ``90`` in
+#: Hard Rule #8 has exactly one spelling in this module.
+COVERAGE_FLOOR_FLAGS = {flag: value for flag, value in LOAD_BEARING_FLAGS.items() if flag.startswith('--cov')}
+
+#: A Make rule line: a target name at column 0, followed by ``:``. ``(?!=)`` rejects a ``FOO :=``
+#: variable assignment, and requiring an alphanumeric first character rejects ``.PHONY`` and its
+#: siblings -- neither is a target with a recipe. Recipe lines are tab-indented and so cannot match.
+MAKE_RULE = re.compile(r'^(?P<target>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*:(?!=)')
+
+#: Make targets that deliberately select ONE half of the suite, and are therefore exempt from the
+#: whole-suite marker assertion. The ONLY hard-coded target names in that guard, and they are
+#: exceptions rather than scope -- see ``TestTheOfflineSuiteIsOfflineByConstruction`` for why that
+#: distinction is the whole of CI-102's second finding. Each is asserted to be a real pytest-running
+#: target, so a rename empties the exemption loudly instead of silently widening it.
+MARKER_SCOPED_TARGETS = ('test-unit', 'test-integration')
+
+#: A FLOOR for that discovery, never its scope. Enumeration used as a lower bound can only
+#: fail closed -- it catches a reader that has gone blind -- whereas enumeration used as the scope
+#: is precisely the CI-086 defect the guard was written against. A target added tomorrow is covered
+#: without appearing here; a target that stops being found trips this.
+DISCOVERY_FLOOR = frozenset({'test', 'coverage', 'test-matrix'})
+
+#: How a workflow would reach the suite indirectly. Named because the failure message for "CI runs
+#: no pytest" has to be able to tell "the step was renamed" from "the step now says `make test`" --
+#: the alternative PR #14's audit deliberately rejected, and the one a reader is most likely to
+#: have just introduced (CI-102, F8).
+MAKE_PROGRAM = 'make'
 
 #: The two gate targets whose every step must be offline (CI-136). Both, not just ``validate``:
 #: they are meant to differ along ONE axis (how many interpreters), so a step that could reach the
@@ -484,34 +541,6 @@ def command_tokens(line: str) -> list[str]:
         return []
 
 
-def invokes_pytest(line: str) -> bool:
-    """Report whether a line *runs* pytest, as opposed to merely mentioning it.
-
-    Token-level on purpose. ``test-matrix``'s recipe contains
-    ``printf '\\n=== pytest on py%s ===\\n'`` and CI's step is named ``Test (pytest, ...)``;
-    a substring check calls both of those invocations and fails on a banner.
-
-    Args:
-        line: One line of a Makefile recipe or a workflow ``run:``.
-
-    Returns:
-        True if ``pytest`` appears as its own token.
-    """
-    return 'pytest' in command_tokens(line)
-
-
-def parse_pytest_flags(command: str) -> dict[str, str]:
-    """Split one shell command into its flags, mapping flag name to value.
-
-    Args:
-        command: One physical command line, with any trailing line-continuation backslash.
-
-    Returns:
-        The flags found, e.g. ``{'-m': 'not integration', '--cov': 'src/castiron'}``.
-    """
-    return flags_from_tokens(command_tokens(command))
-
-
 def flags_from_tokens(tokens: list[str]) -> dict[str, str]:
     """Map flag name to value for one already-tokenized argv.
 
@@ -546,8 +575,8 @@ def flags_from_tokens(tokens: list[str]) -> dict[str, str]:
     return flags
 
 
-def workflow_pytest_commands(text: str) -> list[str]:
-    """Return every pytest invocation in a workflow document.
+def workflow_run_commands(text: str) -> list[str]:
+    """Return every logical shell command a workflow's ``run:`` steps execute.
 
     Only ``run:`` values are considered -- a ``run:`` key with the command inline, or the body of
     a ``run: |`` block scalar. **A step's ``name:`` is never a command**, which matters more than
@@ -555,6 +584,12 @@ def workflow_pytest_commands(text: str) -> list[str]:
     happens to fuse the word, and ``- name: Run pytest`` is an entirely ordinary rename. That
     would otherwise be read as an invocation with no flags, and every assertion below would
     report a missing marker on a command that does not exist.
+
+    Comment lines are dropped and backslash continuations are joined (CI-102), which is what makes
+    this the mirror image of ``joined_recipe`` on the Makefile side rather than a second, subtly
+    different reader. Both halves of that mattered: the Makefile reader skipped no comments, and
+    NEITHER joined continuations -- so re-formatting the CI step below into a ``run: |`` block
+    whose command wraps reported a **correct** workflow as missing ``--cov``, measured.
 
     Parsed textually rather than with PyYAML, matching the reasoning already recorded in
     ``test_goldens.py``: pyyaml is only a *transitive* dependency here (pre-commit pulls it in),
@@ -565,31 +600,32 @@ def workflow_pytest_commands(text: str) -> list[str]:
         text: The whole workflow file.
 
     Returns:
-        The pytest invocations, stripped, in file order.
+        The commands, stripped, in file order.
     """
-    commands = []
+    commands: list[str] = []
+    block: list[str] = []
     block_indent: int | None = None
     for raw_line in text.splitlines():
         stripped = raw_line.strip()
-        indent = len(raw_line) - len(raw_line.rstrip('\n').lstrip())
+        indent = len(raw_line) - len(raw_line.lstrip())
         if block_indent is not None:
             if not stripped or stripped.startswith('#'):
                 continue
             if indent > block_indent:
-                if invokes_pytest(stripped):
-                    commands.append(stripped)
+                block.append(stripped)
                 continue
-            block_indent = None  # the block ended; this line is re-read as ordinary YAML below
+            commands.extend(join_continuations(block))
+            block, block_indent = [], None  # the block ended; re-read this line as ordinary YAML
         if not stripped or stripped.startswith('#'):
             continue
         key, separator, remainder = stripped.partition('run:')
         if not separator or key.strip().strip('-').strip():
             continue
-        if remainder.strip() in ('|', '>', '|-', '>-', '|+', '>+'):
+        if remainder.strip() in BLOCK_SCALAR_HEADERS:
             block_indent = indent
             continue
-        if invokes_pytest(remainder):
-            commands.append(remainder.strip())
+        commands.append(remainder.strip())
+    commands.extend(join_continuations(block))
     return commands
 
 
@@ -801,6 +837,39 @@ def transitive_prerequisites(text: str, target: str) -> list[str]:
     return ordered
 
 
+def join_continuations(lines: Iterable[str]) -> list[str]:
+    """Join backslash-continued physical lines into whole logical commands.
+
+    Shared by both readers on purpose (CI-102), because the defect it fixes was symmetric. Read
+    line by line, ``Makefile``'s ``test-matrix`` recipe ends a ``pytest`` invocation mid-flight and
+    *starts* the next line with ``--cov=src/castiron``: every guard here saw the legs' ``-m``
+    marker and NONE saw their ``--cov-fail-under=90``, so deleting the coverage floor from both
+    legs -- undoing ``CI-089``/``CI-088`` entirely -- was measured to leave the whole module green.
+    Running backwards it is worse than a hole: a ``run: |`` block in a workflow whose command wraps
+    is a **correct** step that a line-at-a-time reader reports as missing its flags, and a guard
+    that cries wolf gets edited until it stops.
+
+    Args:
+        lines: Physical lines, already stripped of indentation and of comments.
+
+    Returns:
+        The logical command lines, in order. A trailing continuation with nothing after it is
+        emitted rather than dropped, so a truncated recipe reaches an assertion instead of
+        disappearing from the parse.
+    """
+    joined: list[str] = []
+    pending = ''
+    for line in lines:
+        if line.endswith('\\'):
+            pending += line[:-1].rstrip() + ' '
+            continue
+        joined.append((pending + line).strip())
+        pending = ''
+    if pending:
+        joined.append(pending.strip())
+    return joined
+
+
 def joined_recipe(text: str, target: str) -> list[str]:
     """Return one target's recipe with backslash-continued lines joined into whole commands.
 
@@ -818,17 +887,7 @@ def joined_recipe(text: str, target: str) -> list[str]:
     Returns:
         The logical command lines, in recipe order. Empty for a target with no recipe.
     """
-    joined: list[str] = []
-    pending = ''
-    for line in make_recipe(text, target):
-        if line.endswith('\\'):
-            pending += line[:-1].rstrip() + ' '
-            continue
-        joined.append((pending + line).strip())
-        pending = ''
-    if pending:
-        joined.append(pending.strip())
-    return joined
+    return join_continuations(make_recipe(text, target))
 
 
 def shell_tokens(command: str) -> list[str]:
@@ -923,6 +982,155 @@ def shell_invocations(command: str) -> list[list[str]]:
     return [unwrap_uv_run(invocation) for invocation in invocations]
 
 
+def pytest_invocations(commands: Iterable[str]) -> list[list[str]]:
+    """Return the argv of every pytest run among some already-logical command lines.
+
+    Per invocation rather than per line, because one line here is often several commands:
+    ``test-matrix``'s recipe is a ``for`` loop around an ``if``/``else`` holding two separate
+    ``pytest`` calls, and a whole-line flag scan would let one leg's ``-m "not integration"`` stand
+    in for the other's -- the exact hole ``CI-089`` closed in the Makefile itself.
+
+    Command position, not substring. ``test-matrix`` prints ``printf '\\n=== pytest on py%s ===\\n'``
+    and CI names a step ``Test (pytest, offline suite, 90% floor)``; a substring check calls both of
+    those an invocation and then reports a missing marker on a command that does not exist.
+    ``shell_invocations`` peels the ``uv run`` wrapper first, so ``uv run pytest`` reads as pytest.
+
+    ⚠ A future ``python -m pytest`` would report as ``python`` and be counted as no pytest at all.
+    That is the FAIL-CLOSED direction and it is deliberate: every caller guards its result with an
+    anti-vacuity assertion (``CI-083``), so a reader that has gone blind is a red test naming the
+    file, not a green one covering nothing. The fix would be to teach this function, never to
+    loosen the guards.
+
+    Args:
+        commands: Logical command lines, continuations already joined.
+
+    Returns:
+        One argv per pytest invocation, in the order a shell would reach them.
+    """
+    return [
+        invocation
+        for command in commands
+        for invocation in shell_invocations(command)
+        if invocation and invocation[0] == GATE_PYTEST
+    ]
+
+
+def workflow_pytest_commands(text: str) -> list[list[str]]:
+    """Return the argv of every pytest invocation in a workflow document.
+
+    Args:
+        text: The whole workflow file.
+
+    Returns:
+        One argv per pytest invocation, in file order.
+    """
+    return pytest_invocations(workflow_run_commands(text))
+
+
+def make_targets(text: str) -> list[str]:
+    """Return every target the ``Makefile`` declares, in file order.
+
+    Args:
+        text: The whole ``Makefile``.
+
+    Returns:
+        The target names. ``.PHONY`` and variable assignments are not targets and are excluded by
+        ``MAKE_RULE``; a target declared twice appears once.
+    """
+    found: list[str] = []
+    for line in text.splitlines():
+        match = MAKE_RULE.match(line)
+        if match and match.group('target') not in found:
+            found.append(match.group('target'))
+    return found
+
+
+def make_targets_running_pytest(text: str) -> list[str]:
+    """Return every Make target whose recipe runs pytest -- by DISCOVERY, not by a list.
+
+    The point of CI-102's second finding. The guard this feeds was written against ``CI-086``, and
+    it reproduced ``CI-086``'s own defect: it held by enumerating three target names while the CI
+    half of the same class already discovered ("every pytest invocation in ``ci.yml``"). Measured,
+    appending a ``smoke:`` target that ran the whole suite with no marker left all seven of those
+    assertions green -- a whitelist cannot report what nobody remembered to add to it.
+
+    Args:
+        text: The whole ``Makefile``.
+
+    Returns:
+        The target names, in file order. A pure aggregate like ``validate`` has no recipe of its
+        own and so is absent -- what it *reaches* is the subject of ``gate_invocations``.
+    """
+    return [target for target in make_targets(text) if pytest_invocations(joined_recipe(text, target))]
+
+
+def workflow_make_delegations(workflow: str, makefile: str) -> list[str]:
+    """Return the pytest-running Make targets a workflow reaches through ``make``.
+
+    Exists for a failure MESSAGE rather than for an assertion (CI-102, F8). ``ci.yml`` open-codes
+    its pytest step deliberately -- PR #14's audit rejected ``run: make test``, because a workflow
+    should state the contract it enforces and ``make test`` carries developer-iteration flags
+    (``-vv``) that must not reach CI by inheritance. So switching to ``make test`` is a real
+    regression, and it happens to be the single most likely reason a reader is looking at "CI
+    invokes no pytest" at all. Detecting it lets the message name what happened instead of
+    guessing "did the step move or get renamed?", which points at the wrong file.
+
+    Args:
+        workflow: The whole workflow file.
+        makefile: The whole ``Makefile``.
+
+    Returns:
+        The target names the workflow delegates to, in file order. Empty is the good answer.
+    """
+    runners = set(make_targets_running_pytest(makefile))
+    delegated: list[str] = []
+    for command in workflow_run_commands(workflow):
+        for invocation in shell_invocations(command):
+            if invocation and invocation[0] == MAKE_PROGRAM:
+                delegated.extend(token for token in invocation[1:] if token in runners)
+    return delegated
+
+
+def missing_git_reason() -> str | None:
+    """Return why git cannot be run at all, or None when it can.
+
+    Returns:
+        A reason naming the problem, or None.
+    """
+    return None if shutil.which('git') else 'the `git` executable is not on PATH'
+
+
+def outside_git_checkout_reason(path: Path) -> str | None:
+    """Return why ``path`` cannot answer a ``git check-ignore`` question, or None when it can.
+
+    ``GIT_CEILING_DIRECTORIES`` is set to ``path`` itself so the upward search cannot escape it.
+    Without that this function answers about whatever repository happens to CONTAIN ``path``,
+    which would make the control in ``TestGitignoreDoesNotShadowADirectory`` depend on where the
+    machine puts its temporary directories.
+
+    Args:
+        path: The directory the question would be asked in.
+
+    Returns:
+        A reason naming the problem, or None when ``path`` is a git work tree.
+    """
+    reason = missing_git_reason()
+    if reason:
+        return reason
+    if not path.is_dir():
+        return f'{path} does not exist'
+    result = subprocess.run(
+        ['git', 'rev-parse', '--git-dir'],
+        cwd=path,
+        env={**os.environ, 'GIT_CEILING_DIRECTORIES': str(path)},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return f'{path} is not a git work tree ({result.stderr.strip()})'
+    return None
+
+
 def locked_version(text: str, package: str) -> str | None:
     """Return the version ``uv.lock`` resolves for one package.
 
@@ -967,7 +1175,7 @@ def build_command_steps(command: str) -> list[str]:
 def first_step_starting_with(steps: list[str], *prefix: str) -> int | None:
     """Return the index of the first step whose leading tokens are ``prefix``.
 
-    Token-level for the reason ``invokes_pytest`` is: a substring test for ``uv`` matches the word
+    Token-level for the reason ``pytest_invocations`` is: a substring test for ``uv`` matches the word
     inside ``uv.lock``, inside a path, and inside prose, and this module's whole subject is
     configuration that lies quietly.
 
@@ -1262,6 +1470,11 @@ def workflow_pre_commit_hook_ids(text: str) -> set[str]:
     ``shell_invocations`` peels the ``uv run`` wrapper, so the invocation is compared as
     ``pre-commit run ...`` rather than as ``uv ...``.
 
+    Continuations are joined first (CI-102). This reader had the same single-physical-line defect
+    the pytest readers did, and here it fails closed rather than open -- a wrapped
+    ``pre-commit run \\`` + ``--all-files zizmor`` loses its hook id and reports CI as not running
+    the hook at all. Closed is the better direction and still the wrong verdict.
+
     Args:
         text: The whole workflow file.
 
@@ -1270,7 +1483,7 @@ def workflow_pre_commit_hook_ids(text: str) -> set[str]:
     """
     hook_ids: set[str] = set()
     for step in steps_running_a_command(workflow_steps(text)):
-        for line in step['run'].splitlines():
+        for line in join_continuations(step['run'].splitlines()):
             for invocation in shell_invocations(line):
                 if invocation[:2] != [PRE_COMMIT_PROGRAM, PRE_COMMIT_RUN]:
                     continue
@@ -1327,7 +1540,7 @@ def workflow_tools_outside_pre_commit(text: str, tools: frozenset[str]) -> set[s
     for step in workflow_steps(text):
         action = step.get('uses', '').partition('@')[0]
         found |= {tool for tool in tools if tool in action}
-        for line in step.get('run', '').splitlines():
+        for line in join_continuations(step.get('run', '').splitlines()):
             for invocation in shell_invocations(line):
                 if invocation[:2] == [PRE_COMMIT_PROGRAM, PRE_COMMIT_RUN]:
                     continue
@@ -1417,43 +1630,56 @@ def excluded_commit_types(patterns: list[str]) -> set[str]:
     return types
 
 
-def ci_pytest_commands() -> list[str]:
-    """Return every pytest invocation in the repository's CI workflow.
+def makefile_text() -> str:
+    """Return the repository's ``Makefile``, whole.
 
     Returns:
-        The invocations found in ``.github/workflows/ci.yml``.
+        The contents of ``Makefile``.
     """
-    return workflow_pytest_commands(CI_WORKFLOW.read_text(encoding='utf-8'))
+    return MAKEFILE.read_text(encoding='utf-8')
 
 
-def make_pytest_commands(target: str) -> list[str]:
-    """Return every pytest invocation in one Make target's recipe.
+def ci_workflow_text() -> str:
+    """Return the repository's CI workflow, whole.
+
+    Returns:
+        The contents of ``.github/workflows/ci.yml``.
+    """
+    return CI_WORKFLOW.read_text(encoding='utf-8')
+
+
+def ci_pytest_commands() -> list[list[str]]:
+    """Return the argv of every pytest invocation in the repository's CI workflow.
+
+    Returns:
+        One argv per invocation found in ``.github/workflows/ci.yml``.
+    """
+    return workflow_pytest_commands(ci_workflow_text())
+
+
+def make_pytest_commands(text: str, target: str) -> list[list[str]]:
+    """Return the argv of every pytest invocation in one Make target's recipe.
+
+    Takes the ``Makefile`` text rather than reading it (CI-102) so the reader can be exercised on
+    a synthetic Makefile. Every parser in this module that could only be pointed at the real file
+    was, in practice, tested only through the file it guards -- which is how a reader acquires a
+    blind spot nobody can write a control for.
 
     Args:
+        text: The whole ``Makefile``.
         target: The target name, e.g. ``'test'``.
 
     Returns:
-        The recipe's pytest lines, stripped. Empty if the target does not run pytest.
+        One argv per pytest invocation, in recipe order. Empty if the target does not run pytest.
     """
-    lines = MAKEFILE.read_text(encoding='utf-8').splitlines()
-    commands = []
-    inside = False
-    for line in lines:
-        if re.match(rf'^{re.escape(target)}:', line):
-            inside = True
-            continue
-        if inside:
-            if not line.startswith('\t'):
-                break
-            if invokes_pytest(line):
-                commands.append(line.strip())
-    return commands
+    return pytest_invocations(joined_recipe(text, target))
 
 
-def selected_marker(target: str) -> str | None:
+def selected_marker(text: str, target: str) -> str | None:
     """Return the marker expression one Make target selects with ``-m``.
 
     Args:
+        text: The whole ``Makefile``.
         target: The target name, e.g. ``'test-unit'``.
 
     Returns:
@@ -1461,10 +1687,43 @@ def selected_marker(target: str) -> str | None:
         pytest or passes no ``-m`` -- both of which mean the target no longer selects by marker,
         which the caller asserts on rather than papering over with a default.
     """
-    commands = make_pytest_commands(target)
+    commands = make_pytest_commands(text, target)
     if not commands:
         return None
-    return parse_pytest_flags(commands[0]).get('-m')
+    return flags_from_tokens(commands[0]).get('-m')
+
+
+def gate_invocations(target: str) -> list[tuple[str, list[str]]]:
+    """Return ``(prerequisite, argv)`` for every program one gate target's prerequisites run.
+
+    Module-level rather than a method (CI-102) because two guard classes now ask this question:
+    ``TestEveryStepOfThePrePushGateIsOffline`` asks whether each program can open a socket, and
+    ``TestTheCoverageFloorIsOnEveryLegOfTheGate`` asks whether each pytest carries the floor. Two
+    copies of the walk would be two chances for one of them to stop following the tree.
+
+    Args:
+        target: A gate target, i.e. ``validate`` or ``validate-fast``.
+
+    Returns:
+        One ``(prerequisite, argv)`` pair per program, in prerequisite order.
+    """
+    text = makefile_text()
+    prerequisites = transitive_prerequisites(text, target)
+    # Anti-vacuity (CI-083), twice over: no prerequisites, or a prerequisite whose recipe
+    # parses to nothing, would make every loop below pass having inspected zero programs.
+    assert prerequisites, f'the `{target}` target of {MAKE_NAME} has no prerequisites -- was it renamed or removed?'
+    found: list[tuple[str, list[str]]] = []
+    for name in prerequisites:
+        invocations = [invocation for command in joined_recipe(text, name) for invocation in shell_invocations(command)]
+        assert invocations, (
+            f'the `{name}` prerequisite of `make {target}` parses to no program at all. Either '
+            f'its recipe is empty -- in which case `make {target}` depends on a target that '
+            f'does nothing and passes, the hollow-target trap `TestTheDeadCodeCheckIsPartOf'
+            f'ThePrePushGate` already guards vulture against -- or `shell_invocations` can no '
+            f'longer read its shape, and every assertion in this class has stopped covering it.'
+        )
+        found.extend((name, invocation) for invocation in invocations)
+    return found
 
 
 def unmarked_test_objects(source: str, marker: str) -> list[tuple[str, int]]:
@@ -1524,10 +1783,39 @@ class TestGitignoreDoesNotShadowADirectory:
     ``.gitignore`` contains a bare ``MANIFEST`` reports ``manifest/f.txt`` as **not ignored**
     under ``core.ignorecase=false``. Left to the ambient setting, the trap could be re-added and
     all four CI legs would stay green while every macOS developer silently lost files.
+
+    ⚠ **This family needs a git checkout, and one supported environment does not have one**
+    (CI-102's fourth finding). hatchling's sdist ships ``tests/``, ``Makefile``, ``.github/`` and
+    ``.gitignore`` -- verified by unpacking one -- but never ``.git/``, so ``pytest`` from an
+    unpacked sdist produced **2 hard failures** where the suite had previously run clean. The
+    failures were honest and actionable, but they were failures in a valid environment, and a red
+    test that means "you are not in a checkout" teaches a reader that red is negotiable.
+
+    The ruling was **not** to swap a failure for a skip and lose the coverage. There are two
+    different questions here, and only one of them needs the repository:
+
+    * *Would these paths vanish on THIS machine?* -- the whole-machine question, which folds in
+      ``.git/info/exclude`` (where this repo's harness is excluded) and any nested ``.gitignore``.
+      Only a real checkout can answer it, so it is skipped -- narrowly, on
+      ``outside_git_checkout_reason``, never on a bare non-zero exit -- outside one.
+    * *Does the TRACKED ``.gitignore`` shadow them?* -- the CI-093 bug as it actually shipped, in
+      the one file the sdist does carry. ``test_the_shipped_gitignore_shadows_nothing`` answers it
+      in a scratch repository and therefore runs everywhere, including from an unpacked sdist.
+
+    So the sdist keeps the assertion that its own contents can support, the checkout keeps both,
+    and the positive control below -- the thing that could rot silently -- never skips at all,
+    because it builds its own repository. Net: the guard got wider, not narrower.
     """
 
     @pytest.mark.parametrize('path', SHADOWED_PATHS)
     def test_no_ignore_rule_hides_a_manifest_directory(self, path: str) -> None:
+        reason = outside_git_checkout_reason(REPO_ROOT)
+        if reason:
+            pytest.skip(
+                f'this asks git what THIS repository ignores, and {reason}. Expected from an '
+                f'unpacked sdist, which ships tests/ and .gitignore but not .git/ -- '
+                f'test_the_shipped_gitignore_shadows_nothing covers the tracked file there.'
+            )
         result = subprocess.run(
             ['git', '-c', 'core.ignorecase=true', 'check-ignore', '-v', path],
             cwd=REPO_ROOT,
@@ -1536,6 +1824,7 @@ class TestGitignoreDoesNotShadowADirectory:
         )
         # 0 = ignored, 1 = not ignored, anything else = git itself failed. Distinguishing 128
         # from 1 matters: an error would otherwise read as "not ignored" and pass vacuously.
+        # The skip above handles only "no repository"; any OTHER git failure still fails here.
         assert result.returncode in (0, 1), (
             f'git check-ignore failed ({result.returncode}) instead of answering: '
             f'{result.stderr.strip()!r}. This test needs to run inside a git checkout.'
@@ -1551,6 +1840,33 @@ class TestGitignoreDoesNotShadowADirectory:
             f'existed for. Restore it only alongside a build backend that can.'
         )
 
+    @pytest.mark.parametrize('path', SHADOWED_PATHS)
+    def test_the_shipped_gitignore_shadows_nothing(self, tmp_path: Path, path: str) -> None:
+        """The same question about the TRACKED file alone, so it survives outside a checkout.
+
+        Narrower than the test above on purpose, and the difference is worth stating: a rule added
+        to ``.git/info/exclude`` would shadow a path on one developer's machine and be invisible
+        here. That is why this does not replace the checkout test -- it is the half that an sdist
+        can still answer, and the half the CI-093 bug actually lived in.
+        """
+        reason = missing_git_reason()
+        if reason:
+            pytest.skip(f'this reconstructs a repository to ask git a question, and {reason}.')
+        subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, capture_output=True)
+        (tmp_path / '.gitignore').write_text((REPO_ROOT / '.gitignore').read_text(encoding='utf-8'), encoding='utf-8')
+        result = subprocess.run(
+            ['git', '-c', 'core.ignorecase=true', 'check-ignore', '-v', path],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1, (
+            f'the tracked .gitignore ignores {path} under case-insensitive matching (git said '
+            f'{result.returncode}). The rule doing it:\n  {result.stdout.strip()}\n'
+            f'That is CI-093: on macOS the path vanishes from `git add -A` and from `git status` '
+            f'with no error, while Linux CI tracks it normally.'
+        )
+
     def test_the_guard_above_can_still_see_a_shadowing_rule(self, tmp_path: Path) -> None:
         """Positive control: prove the detector still detects, in a repo that IS trapped.
 
@@ -1564,7 +1880,14 @@ class TestGitignoreDoesNotShadowADirectory:
         Verified on a real case-sensitive volume, not only by simulation: with the flag forced on,
         git casefolds the ignore matcher even where the filesystem does not, so this control holds
         on Linux CI exactly as it does on macOS.
+
+        It builds its own repository, so unlike the two guards above it needs no checkout and does
+        NOT skip from an unpacked sdist. That asymmetry is deliberate (CI-102): the assertion that
+        can rot silently is the one that must never be conditional.
         """
+        reason = missing_git_reason()
+        if reason:
+            pytest.skip(f'this control builds a repository to reproduce the trap, and {reason}.')
         subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, capture_output=True)
         (tmp_path / '.gitignore').write_text('MANIFEST\n', encoding='utf-8')
         result = subprocess.run(
@@ -1582,14 +1905,57 @@ class TestGitignoreDoesNotShadowADirectory:
             f'detection method that works before trusting that guard again.'
         )
 
+    def test_the_skip_condition_tells_a_checkout_from_a_bare_directory(self, tmp_path: Path) -> None:
+        """A skip is only safe while it can tell the two apart -- so that is asserted, not assumed.
+
+        The failure this forbids is the expensive one: a condition that answered "not a checkout"
+        everywhere would skip the CI-093 guard on all four CI legs and report nothing but a green
+        run. ``GIT_CEILING_DIRECTORIES`` is what makes the negative half deterministic -- without
+        it, a temporary directory that happens to sit under some repository answers "checkout".
+        """
+        reason = missing_git_reason()
+        if reason:
+            pytest.skip(f'this control asks git about two directories, and {reason}.')
+        assert outside_git_checkout_reason(tmp_path) is not None, (
+            f'{tmp_path} is not a git work tree, but the skip condition says it is. Every guard '
+            f'in this class would then run outside a checkout and fail with git`s exit 128 -- the '
+            f'CI-102 finding, unfixed.'
+        )
+        checkout = tmp_path / 'checkout'
+        checkout.mkdir()
+        subprocess.run(['git', 'init', '-q', str(checkout)], check=True, capture_output=True)
+        assert outside_git_checkout_reason(checkout) is None, (
+            f'{checkout} is a git work tree this test just created, and the skip condition does '
+            f'not recognise it. It would then fire everywhere -- skipping the CI-093 guard on all '
+            f'four CI legs and reporting nothing but a green run, which is worse than the failure '
+            f'it replaced because it is silent.'
+        )
+        assert outside_git_checkout_reason(tmp_path / 'nope') is not None, (
+            'a path that does not exist must yield a reason rather than raising out of the helper.'
+        )
+        # And the same discrimination against the environment this actually runs in -- guarded by
+        # the environment rather than asserted of it, because an unpacked sdist has no `.git` and
+        # asserting REPO_ROOT is a checkout would re-create the very failure CI-102 removed.
+        if (REPO_ROOT / '.git').exists():
+            assert outside_git_checkout_reason(REPO_ROOT) is None, (
+                f'{REPO_ROOT} carries a .git entry, so it IS a checkout, but the skip condition '
+                f'says otherwise -- the guards above are skipping right here and asserting nothing.'
+            )
+
 
 @pytest.mark.unit
 class TestTheWorkflowParserReadsCommandsNotLabels:
     """The parser is the load-bearing half of every CI assertion below, so it is tested directly.
 
-    Each case here is a regression the reviewer measured against the previous implementation,
-    which partitioned on ``run:`` and fell back to the whole line: a step *named* ``Run pytest``
-    was read as an invocation, and the resulting failure named a command that does not exist.
+    Each case here is a regression measured against a previous implementation. The first family
+    came from the PR #14 reviewer: a parser that partitioned on ``run:`` and fell back to the whole
+    line read a step *named* ``Run pytest`` as an invocation, and the resulting failure named a
+    command that does not exist.
+
+    The second family is CI-102's first finding, from the other direction -- the reader was
+    single-physical-line, so a ``run: |`` block whose command wrapped across a backslash was
+    reported as an invocation MISSING its flags. That is the dangerous direction for a guard: not a
+    hole, a false alarm on correct configuration, which gets the guard edited until it stops.
     """
 
     def test_a_step_named_after_pytest_is_not_an_invocation(self) -> None:
@@ -1602,7 +1968,7 @@ class TestTheWorkflowParserReadsCommandsNotLabels:
                 '        run: uv run pytest -m "not integration"',
             ]
         )
-        assert workflow_pytest_commands(document) == ['uv run pytest -m "not integration"']
+        assert workflow_pytest_commands(document) == [['pytest', '-m', 'not integration']]
 
     @pytest.mark.parametrize('label', ('- name: Run pytest', '- name: pytest', '- name: Test (pytest, 90% floor)'))
     def test_no_step_label_is_ever_read_as_a_command(self, label: str) -> None:
@@ -1619,7 +1985,68 @@ class TestTheWorkflowParserReadsCommandsNotLabels:
                 '        run: echo done',
             ]
         )
-        assert workflow_pytest_commands(document) == ['uv run pytest -m "not integration" --cov-fail-under=90']
+        assert workflow_pytest_commands(document) == [['pytest', '-m', 'not integration', '--cov-fail-under=90']]
+
+    def test_a_wrapped_block_scalar_command_keeps_its_flags(self) -> None:
+        """CI-102, F5 in reverse: this exact reformat was measured to redden two correct guards.
+
+        The step below is byte-for-byte equivalent to the one ``ci.yml`` runs today; only its
+        typography differs. A reader that stops at the backslash reports ``--cov`` as absent and
+        sends someone to fix a workflow that is already right.
+        """
+        document = '\n'.join(
+            [
+                '      - name: Test (pytest, offline suite, 90% floor)',
+                '        run: |',
+                '          uv run pytest -m "not integration" \\',
+                '            --cov=src/castiron --cov-report=term-missing --cov-fail-under=90',
+            ]
+        )
+        assert workflow_pytest_commands(document) == [
+            [
+                'pytest',
+                '-m',
+                'not integration',
+                '--cov=src/castiron',
+                '--cov-report=term-missing',
+                '--cov-fail-under=90',
+            ]
+        ]
+
+    def test_a_comment_inside_a_block_scalar_is_not_a_command(self) -> None:
+        document = '\n'.join(
+            [
+                '      - name: Test',
+                '        run: |',
+                '          # remember to run pytest -x locally when this fails',
+                '          uv run pytest -m "not integration"',
+            ]
+        )
+        assert workflow_pytest_commands(document) == [['pytest', '-m', 'not integration']]
+
+    def test_a_block_scalar_at_end_of_file_is_still_read(self) -> None:
+        # The block is flushed after the loop as well as when a dedent ends it; without that, the
+        # LAST step in a workflow -- which is where the test step tends to live -- would vanish.
+        document = '      - name: Test\n        run: |\n          uv run pytest -m "not integration"\n'
+        assert workflow_pytest_commands(document) == [['pytest', '-m', 'not integration']]
+
+    def test_two_commands_on_one_block_are_two_invocations(self) -> None:
+        document = '      - run: |\n        uv run pytest -m unit && uv run pytest -m "not integration"\n'
+        assert workflow_pytest_commands(document) == [['pytest', '-m', 'unit'], ['pytest', '-m', 'not integration']]
+
+    def test_a_make_delegation_is_visible_to_the_failure_message(self) -> None:
+        # F8: `run: make test` is the alternative PR #14 rejected, and the likeliest reason a
+        # reader is looking at "CI invokes no pytest". The message names it because this can see it.
+        makefile = 'test: ## Run all tests\n\t@uv run pytest -m "not integration"\n'
+        workflow = '      - name: Test\n        run: make test\n'
+        assert workflow_pytest_commands(workflow) == []
+        assert workflow_make_delegations(workflow, makefile) == ['test']
+
+    def test_a_make_target_that_runs_no_pytest_is_not_a_delegation(self) -> None:
+        # Otherwise every `run: make build` in any workflow would be reported as the missing
+        # test step, and the message would misdirect in the other direction.
+        makefile = 'build: ## Build\n\t@uv build\n'
+        assert workflow_make_delegations('      - run: make build\n', makefile) == []
 
     def test_the_real_workflow_has_exactly_one_invocation(self) -> None:
         # Anti-vacuity for every test in the next class: they iterate this list, so an empty or
@@ -1637,17 +2064,46 @@ class TestTheOfflineSuiteIsOfflineByConstruction:
     that must not reach CI by inheritance -- so the drift is caught here instead. Note this
     catches drift in **either** direction, including a Makefile-side regression that delegating
     to ``make test`` could not catch at all.
+
+    ⚠ The Makefile half of this used to hold by ENUMERATION: a three-name ``WHOLE_SUITE_TARGETS``
+    tuple, against a CI half that already discovered every pytest invocation in ``ci.yml``. That
+    is ``CI-086``'s own defect, committed by the guard written against it -- offline by absence of
+    something rather than by construction -- and it was not theoretical: appending a ``smoke:``
+    target that ran the whole suite with no marker was measured to leave all seven assertions in
+    this class green. Targets are now **discovered** (``make_targets_running_pytest``), and the
+    only names written down are ``MARKER_SCOPED_TARGETS`` -- exceptions, each of which must itself
+    be a real pytest-running target -- and ``DISCOVERY_FLOOR``, which is a lower bound on the
+    reader and can therefore only fail closed.
     """
 
     def test_ci_runs_the_offline_suite_with_the_floor(self) -> None:
         commands = ci_pytest_commands()
-        # Anti-vacuity (CI-083): an empty list would pass every assertion below it.
-        assert commands, f'{CI_NAME} no longer invokes pytest at all -- did the test step move or get renamed?'
+        # Anti-vacuity (CI-083): an empty list would pass every assertion below it. The message is
+        # built from what the workflow actually does, because "did the test step move or get
+        # renamed?" pointed at the wrong thing in the likeliest case -- CI-102, F8.
+        delegated = workflow_make_delegations(ci_workflow_text(), makefile_text())
+        cause = (
+            f'It now reaches the suite through `make {delegated[0]}` instead. That is the '
+            f'alternative PR #14 deliberately rejected: this workflow should state the contract it '
+            f'enforces, and `make {delegated[0]}` carries developer-iteration flags (-vv) that '
+            f'must not reach CI by inheritance. Delegating also makes this guard vacuous in the '
+            f'one direction it cannot recover -- it compares CI against {MAKE_NAME}, and a '
+            f'{MAKE_NAME} compared against itself agrees always. Restore the open-coded step.'
+            if delegated
+            else (
+                'No `run:` step delegates to a pytest-running Make target either, so the step was '
+                'renamed, moved, commented out, or is now spelled in a way `pytest_invocations` '
+                'does not read as a pytest run (`python -m pytest` reads as `python`, by design -- '
+                'see that function).'
+            )
+        )
+        assert commands, f'{CI_NAME} invokes pytest nowhere. {cause}'
         for command in commands:
-            flags = parse_pytest_flags(command)
+            flags = flags_from_tokens(command)
             for flag, expected in LOAD_BEARING_FLAGS.items():
                 assert flags.get(flag) == expected, (
-                    f'{CI_NAME} runs pytest without `{flag} {expected}`, found {flags.get(flag)!r}. '
+                    f'{CI_NAME} runs pytest without `{flag} {expected}`, found {flags.get(flag)!r}:\n'
+                    f'  {" ".join(command)}\n'
                     f'`-m "not integration"` is what keeps CI offline BY CONSTRUCTION rather than by '
                     f'`CASTIRON_TEST_POSTGREST_URL` happening to be unset in the runner; `--cov` and '
                     f'`--cov-fail-under` are the 90% floor (Hard Rule #8). Restore it in {CI_NAME}, '
@@ -1656,13 +2112,13 @@ class TestTheOfflineSuiteIsOfflineByConstruction:
 
     def test_ci_and_make_test_agree_on_the_load_bearing_flags(self) -> None:
         ci_commands = ci_pytest_commands()
-        make_commands = make_pytest_commands('test')
+        make_commands = make_pytest_commands(makefile_text(), 'test')
         assert ci_commands and make_commands, (
             f'expected a pytest invocation in both {CI_NAME} and the `test` target of {MAKE_NAME}; '
             f'found {len(ci_commands)} and {len(make_commands)}'
         )
-        ci_flags = parse_pytest_flags(ci_commands[0])
-        make_flags = parse_pytest_flags(make_commands[0])
+        ci_flags = flags_from_tokens(ci_commands[0])
+        make_flags = flags_from_tokens(make_commands[0])
         for flag in LOAD_BEARING_FLAGS:
             assert ci_flags.get(flag) == make_flags.get(flag), (
                 f'{CI_NAME} and the `test` target of {MAKE_NAME} disagree on `{flag}`: '
@@ -1672,20 +2128,213 @@ class TestTheOfflineSuiteIsOfflineByConstruction:
                 f'the rest of each command line is free to differ (CI has no `-vv`, by design).'
             )
 
-    @pytest.mark.parametrize('target', WHOLE_SUITE_TARGETS)
-    def test_every_whole_suite_make_target_excludes_the_live_source_suite(self, target: str) -> None:
-        commands = make_pytest_commands(target)
-        assert commands, f'the `{target}` target of {MAKE_NAME} no longer invokes pytest -- was it renamed?'
-        for command in commands:
-            assert parse_pytest_flags(command).get('-m') == 'not integration', (
-                f'the `{target}` target of {MAKE_NAME} runs the whole suite without '
-                f'`-m "not integration"`:\n  {command}\n'
-                f'A developer with CASTIRON_TEST_POSTGREST_URL exported would then get a '
-                f'`make validate` that opens sockets, falsifying the offline guarantee this file, '
-                f'CONTRIBUTING.md, tests/integration/README.md and tests/integration/conftest.py '
-                f'all sell. Targets that deliberately select one half of the suite '
-                f'(`test-unit`, `test-integration`) are not listed in WHOLE_SUITE_TARGETS.'
-            )
+    def test_every_make_target_that_runs_the_whole_suite_excludes_the_live_source_suite(self) -> None:
+        text = makefile_text()
+        discovered = make_targets_running_pytest(text)
+        # Anti-vacuity (CI-083). DISCOVERY_FLOOR is a lower bound on the READER, never the scope
+        # of the guard: it goes red when the parse stops finding targets it has always found, and
+        # it is silent about a target added tomorrow -- which the loop below covers regardless.
+        assert DISCOVERY_FLOOR <= set(discovered), (
+            f'`make_targets_running_pytest` found {discovered}, which is missing '
+            f'{sorted(DISCOVERY_FLOOR - set(discovered))}. Those targets do run pytest, so the '
+            f'reader has gone blind and this guard is now covering less than it reports. Fix the '
+            f'reader; do not shrink DISCOVERY_FLOOR to match it.'
+        )
+        for target in discovered:
+            if target in MARKER_SCOPED_TARGETS:
+                continue
+            for command in make_pytest_commands(text, target):
+                assert flags_from_tokens(command).get('-m') == LOAD_BEARING_FLAGS['-m'], (
+                    f'the `{target}` target of {MAKE_NAME} runs the whole suite without '
+                    f'`-m "{LOAD_BEARING_FLAGS["-m"]}"`:\n  {" ".join(command)}\n'
+                    f'A developer with CASTIRON_TEST_POSTGREST_URL exported would then get a '
+                    f'`make validate` that opens sockets, falsifying the offline guarantee this file, '
+                    f'CONTRIBUTING.md, tests/integration/README.md and tests/integration/conftest.py '
+                    f'all sell. A target that deliberately selects ONE half of the suite belongs in '
+                    f'MARKER_SCOPED_TARGETS -- and that is a decision, which is the whole point of '
+                    f'discovering targets rather than listing them.'
+                )
+
+    def test_every_marker_scoped_exception_is_a_real_pytest_target(self) -> None:
+        """A stale exemption is invisible: it excuses a target that no longer exists, silently.
+
+        The failure it prevents is a rename. If ``test-unit`` became ``unit``, the exemption would
+        go on excusing a name nothing matches while the real target fell into the whole-suite loop
+        above and failed there instead -- a red test pointing at the wrong line. Asserting the
+        exemptions are live turns that into a message about the exemption.
+        """
+        discovered = set(make_targets_running_pytest(makefile_text()))
+        stale = [target for target in MARKER_SCOPED_TARGETS if target not in discovered]
+        assert not stale, (
+            f'MARKER_SCOPED_TARGETS excuses {stale} from the whole-suite marker assertion, but no '
+            f'such target of {MAKE_NAME} runs pytest. An exemption for a target that does not '
+            f'exist is not enforcement of anything -- it is a name that will silently excuse '
+            f'whatever is created with it next. Rename it here, or delete it.'
+        )
+
+    def test_the_discovery_can_still_see_a_target_the_old_whitelist_missed(self) -> None:
+        """Positive control (CI-072) for CI-102's second finding, using the exact repro.
+
+        ``WHOLE_SUITE_TARGETS = ('test', 'coverage', 'test-matrix')`` was measured against a real
+        ``smoke:`` target appended to the real ``Makefile``: all seven guards in this class stayed
+        green, because a whitelist cannot report a name nobody added to it. The synthetic Makefile
+        below is that regression, and it is asserted to be *found* -- otherwise the loop above has
+        merely swapped one enumeration for another.
+        """
+        makefile = '\n'.join(
+            [
+                'test: ## Run all tests',
+                '\t@uv run pytest -m "not integration" --cov=src/castiron --cov-fail-under=90',
+                '',
+                'test-unit: ## Run only unit tests',
+                '\t@uv run pytest -m unit tests/unit/',
+                '',
+                'smoke: ## Quick whole-suite smoke run',
+                '\t@uv run pytest -q --cov=src/castiron',
+                '',
+                'build: ## Build sdist + wheel',
+                '\t@uv build',
+                '',
+            ]
+        )
+        assert make_targets_running_pytest(makefile) == ['test', 'test-unit', 'smoke'], (
+            f'discovery returned {make_targets_running_pytest(makefile)}. `smoke` is the CI-102 '
+            f'regression reproduced verbatim; if it is absent this guard has gone back to holding '
+            f'by enumeration, and `build` being present would mean the reader calls any recipe a '
+            f'pytest run.'
+        )
+        unmarked = [
+            target
+            for target in make_targets_running_pytest(makefile)
+            if target not in MARKER_SCOPED_TARGETS
+            for command in make_pytest_commands(makefile, target)
+            if flags_from_tokens(command).get('-m') != LOAD_BEARING_FLAGS['-m']
+        ]
+        assert unmarked == ['smoke'], (
+            f'the whole-suite assertion would report {unmarked} on the trapped Makefile. It must '
+            f'report exactly `smoke`: `test` carries the marker, and `test-unit` is exempt by '
+            f'MARKER_SCOPED_TARGETS rather than by having gone unnoticed.'
+        )
+
+    def test_a_recipe_comment_that_mentions_pytest_is_not_an_invocation(self) -> None:
+        """CI-102's third finding: the two readers handled comments differently, and it showed.
+
+        ``workflow_run_commands`` skipped ``#`` lines; the Makefile reader did not. This Makefile
+        is comment-dense by design -- the ``test-matrix`` target alone carries twenty lines of
+        rationale -- and a tab-indented comment inside a recipe was measured to turn two guards in
+        this class red on prose, reporting that ``make test`` runs the whole suite without the
+        marker when the recipe is exactly correct. A guard that cries wolf gets edited until it
+        stops, which is the more expensive failure.
+        """
+        makefile = '\n'.join(
+            [
+                'test: ## Run all tests',
+                '\t# when debugging one file, run pytest -x on it directly instead',
+                '\t@uv run pytest -m "not integration" --cov=src/castiron',
+                '',
+            ]
+        )
+        assert make_pytest_commands(makefile, 'test') == [['pytest', '-m', 'not integration', '--cov=src/castiron']], (
+            f'a recipe comment mentioning pytest was read as an invocation: {make_pytest_commands(makefile, "test")}'
+        )
+
+
+@pytest.mark.unit
+class TestTheCoverageFloorIsOnEveryLegOfTheGate:
+    """CI-102's first finding: ``CI-089``/``CI-088`` had no guard at all, and nobody could tell.
+
+    ``Makefile`` argues at length that ``--cov-fail-under`` on every matrix leg is the only thing
+    that can tell "everything passed" from "almost nothing ran" -- ``CI-083``'s partial-deselection
+    hole, where ``184 passed, 1236 deselected`` exits 0 and *reads* like success. The flag sits on
+    a shell **continuation line** of the ``test-matrix`` recipe, and every reader in this module
+    was single-physical-line, so the guards saw the legs' ``-m`` marker and none of them ever saw
+    the floor. Measured: deleting ``--cov-fail-under=90`` from both legs -- undoing ``CI-089``
+    entirely, and returning three of the four gate legs to being blind to partial deselection --
+    left all 103 assertions in this file green.
+
+    Which makes this the module's own thesis turned on itself. The file exists because "remember to
+    update the config" is not a mechanism; the argument for the floor being on every leg was
+    written into the ``Makefile`` as a comment, and a comment is not a mechanism either.
+
+    Asserted over the GATE targets rather than over every whole-suite target, because that is the
+    real scope: ``coverage`` renders an HTML report and deliberately carries no floor. And walked
+    through ``gate_invocations`` -- transitively, per invocation -- so it is a claim about what
+    ``make validate`` executes rather than about a target name.
+    """
+
+    @pytest.mark.parametrize('target', GATE_TARGETS)
+    def test_every_pytest_the_gate_runs_carries_the_coverage_floor(self, target: str) -> None:
+        assert COVERAGE_FLOOR_FLAGS, (
+            'COVERAGE_FLOOR_FLAGS is empty, so the loop below asserts nothing. It is derived from '
+            'LOAD_BEARING_FLAGS by a `--cov` prefix; if those flags were renamed, rename this.'
+        )
+        pytests = [pair for pair in gate_invocations(target) if pair[1][0] == GATE_PYTEST]
+        assert pytests, (
+            f'`make {target}` runs no pytest at all, so this assertion is vacuous. Did the test leg leave the gate?'
+        )
+        for prerequisite, invocation in pytests:
+            flags = flags_from_tokens(invocation)
+            for flag, expected in COVERAGE_FLOOR_FLAGS.items():
+                assert flags.get(flag) == expected, (
+                    f'`make {target}` runs pytest without `{flag}={expected}` through its '
+                    f'`{prerequisite}` prerequisite, found {flags.get(flag)!r}:\n'
+                    f'  {" ".join(invocation)}\n'
+                    f'The 90% floor is Hard Rule #8, and on the matrix it is also the only thing '
+                    f'that can tell "everything passed" from "almost nothing ran": partial '
+                    f'deselection leaves too few tests to trip pytest`s exit 5, so the leg reports '
+                    f'"184 passed, 1236 deselected" and exits 0 (CI-083, measured). CI already runs '
+                    f'the floor on all four legs -- dropping it here makes the gate weaker than the '
+                    f'CI after it, which is CI-081.'
+                )
+
+    def test_the_matrix_target_is_still_two_legs_to_this_walk(self) -> None:
+        """Anti-vacuity with teeth: the guard above must be seen to inspect BOTH matrix legs.
+
+        ``CI-089``'s whole subject is that the floor was on the final 3.12 leg only, so a walk that
+        reached one leg would pass on exactly the configuration the row exists to forbid.
+        """
+        legs = [pair for pair in gate_invocations(VALIDATE_TARGET) if pair[1][0] == GATE_PYTEST]
+        assert len(legs) == 2, (
+            f'`make {VALIDATE_TARGET}` parses to {len(legs)} pytest invocation(s), not the two legs '
+            f'of the `test-matrix` if/else. With one, the floor could be missing from the other leg '
+            f'and this guard would report nothing -- which is `CI-089` exactly.'
+        )
+        assert {leg[0] for leg in legs} == {'test-matrix'}, (
+            f'the pytest legs came from {sorted({leg[0] for leg in legs})}, not from `test-matrix`.'
+        )
+
+    def test_this_guard_can_still_see_a_leg_that_lost_the_floor(self) -> None:
+        """Positive control (CI-072), reproducing the pre-CI-089 Makefile exactly.
+
+        Two legs, the floor on the 3.12 one only, split across a continuation -- the shape that
+        was measured to leave this whole module green. The control asserts both that the reader
+        JOINS the continuation (otherwise it sees no floor anywhere and would ``fail`` for the
+        wrong reason) and that the unfloored leg is the one reported.
+        """
+        makefile = '\n'.join(
+            [
+                'test-matrix: ## Run the suite on every CI interpreter',
+                '\t@set -e; for V in 3.10 3.12; do \\',
+                '\t\tif [ "$$V" = "3.12" ]; then \\',
+                '\t\t\tuv run --python "$$V" pytest -q -m "not integration" \\',
+                '\t\t\t\t--cov=src/castiron --cov-fail-under=90; \\',
+                '\t\telse \\',
+                '\t\t\tuv run --python "$$V" pytest -q -m "not integration" \\',
+                '\t\t\t\t--cov=src/castiron; \\',
+                '\t\tfi; \\',
+                '\tdone',
+                '',
+            ]
+        )
+        legs = make_pytest_commands(makefile, 'test-matrix')
+        assert len(legs) == 2, f'the control parsed {len(legs)} leg(s), not two: {legs}'
+        floored = [flags_from_tokens(leg).get('--cov-fail-under') for leg in legs]
+        assert floored == ['90', None], (
+            f'the control read the floors as {floored}, expected the 3.12 leg to carry `90` and '
+            f'the other to carry none. `[90, 90]` would mean the reader is inventing the flag; '
+            f'`[None, None]` would mean it still cannot follow a continuation, and this guard '
+            f'would then be red on the CORRECT Makefile rather than on the broken one.'
+        )
 
 
 @pytest.mark.unit
@@ -1781,32 +2430,10 @@ class TestEveryStepOfThePrePushGateIsOffline:
     which is what makes adding one a decision rather than an accident.
     """
 
-    def gate_invocations(self, target: str) -> list[tuple[str, list[str]]]:
-        """Return ``(prerequisite, argv)`` for every program one gate target's prerequisites run."""
-        text = MAKEFILE.read_text(encoding='utf-8')
-        prerequisites = transitive_prerequisites(text, target)
-        # Anti-vacuity (CI-083), twice over: no prerequisites, or a prerequisite whose recipe
-        # parses to nothing, would make every loop below pass having inspected zero programs.
-        assert prerequisites, f'the `{target}` target of {MAKE_NAME} has no prerequisites -- was it renamed or removed?'
-        found: list[tuple[str, list[str]]] = []
-        for name in prerequisites:
-            invocations = [
-                invocation for command in joined_recipe(text, name) for invocation in shell_invocations(command)
-            ]
-            assert invocations, (
-                f'the `{name}` prerequisite of `make {target}` parses to no program at all. Either '
-                f'its recipe is empty -- in which case `make {target}` depends on a target that '
-                f'does nothing and passes, the hollow-target trap `TestTheDeadCodeCheckIsPartOf'
-                f'ThePrePushGate` already guards vulture against -- or `shell_invocations` can no '
-                f'longer read its shape, and every assertion in this class has stopped covering it.'
-            )
-            found.extend((name, invocation) for invocation in invocations)
-        return found
-
     @pytest.mark.parametrize('target', GATE_TARGETS)
     def test_every_program_the_gate_runs_is_offline_by_construction(self, target: str) -> None:
         allowed = OFFLINE_GATE_TOOLS | INERT_SHELL_BUILTINS | {GATE_PYTEST}
-        for prerequisite, invocation in self.gate_invocations(target):
+        for prerequisite, invocation in gate_invocations(target):
             assert invocation[0] in allowed, (
                 f'`make {target}` reaches `{invocation[0]}` through its `{prerequisite}` '
                 f'prerequisite:\n  {" ".join(invocation)}\n'
@@ -1822,7 +2449,7 @@ class TestEveryStepOfThePrePushGateIsOffline:
 
     @pytest.mark.parametrize('target', GATE_TARGETS)
     def test_every_pytest_the_gate_runs_excludes_the_live_source_suite(self, target: str) -> None:
-        pytests = [pair for pair in self.gate_invocations(target) if pair[1][0] == GATE_PYTEST]
+        pytests = [pair for pair in gate_invocations(target) if pair[1][0] == GATE_PYTEST]
         assert pytests, (
             f'`make {target}` runs no pytest at all, so this assertion is vacuous. Did the test leg leave the gate?'
         )
@@ -1846,7 +2473,7 @@ class TestEveryStepOfThePrePushGateIsOffline:
         prerequisite to invoke that name passes silently, and the guard reports nothing at the one
         moment it was written for.
         """
-        run = {invocation[0] for _, invocation in self.gate_invocations(VALIDATE_TARGET)}
+        run = {invocation[0] for _, invocation in gate_invocations(VALIDATE_TARGET)}
         assert OFFLINE_GATE_TOOLS <= run, (
             f'OFFLINE_GATE_TOOLS allows {sorted(OFFLINE_GATE_TOOLS - run)}, which `make '
             f'{VALIDATE_TARGET}` does not run. Delete the entry, or -- if the tool was just removed '
@@ -3377,7 +4004,7 @@ class TestTheDeadCodeCheckIsPartOfThePrePushGate:
         ``validate: lint vulture ...`` stays green if ``vulture``'s recipe is emptied, commented
         out, or quietly re-pointed at some other tool -- Make would run a target that does
         nothing and report success. So the recipe is read, and ``vulture`` asserted as its own
-        shell token (the ``invokes_pytest`` lesson: a substring check is satisfied by the help
+        shell token (the ``pytest_invocations`` lesson: a substring check is satisfied by the help
         text and by the target's own name).
         """
         recipe = make_recipe(MAKEFILE.read_text(encoding='utf-8'), VULTURE_TARGET)
@@ -3450,7 +4077,7 @@ class TestEveryUnitTestIsSelectedByTheUnitTarget:
     """
 
     def test_the_unit_target_still_selects_by_marker(self) -> None:
-        marker = selected_marker(UNIT_TARGET)
+        marker = selected_marker(makefile_text(), UNIT_TARGET)
         assert marker is not None, (
             f'the `{UNIT_TARGET}` target of {MAKE_NAME} no longer runs pytest with `-m`, so '
             f'"the marker" has no definition and the scan below would assert nothing. If the '
@@ -3466,7 +4093,7 @@ class TestEveryUnitTestIsSelectedByTheUnitTarget:
         )
 
     def test_no_test_under_tests_unit_escapes_that_marker(self) -> None:
-        marker = selected_marker(UNIT_TARGET)
+        marker = selected_marker(makefile_text(), UNIT_TARGET)
         assert marker is not None
         modules = sorted(UNIT_TEST_DIR.rglob('test_*.py'))
         assert len(modules) > 1, (
@@ -3509,7 +4136,8 @@ class TestEveryUnitTestIsSelectedByTheUnitTarget:
             'decorator at all would satisfy the scan.'
         )
         # And the marker itself must come from the Makefile, not from this file's imagination.
-        assert selected_marker('coverage') is not None and selected_marker('help') is None, (
+        text = makefile_text()
+        assert selected_marker(text, 'coverage') is not None and selected_marker(text, 'help') is None, (
             'selected_marker no longer distinguishes a target that selects by marker from one '
             'that runs no pytest at all, so reading the marker back out of the Makefile proves '
             'nothing.'
@@ -3609,6 +4237,19 @@ jobs:
           uv run pre-commit run --all-files zizmor
 """
         assert workflow_pre_commit_hook_ids(both) == {'actionlint', 'zizmor'}
+
+        # A wrapped invocation keeps its hook id (CI-102). This reader carried the same
+        # single-physical-line defect as the pytest readers, and here it fails CLOSED: the id lands
+        # on the continuation, so a correct workflow reads as running no hook at all.
+        wrapped = """
+jobs:
+  workflows:
+    steps:
+      - run: |
+          uv run pre-commit run --all-files \\
+            --config .pre-commit-config.yaml zizmor
+"""
+        assert workflow_pre_commit_hook_ids(wrapped) == {'zizmor'}
 
         # And dropping one of them is visible -- the shape the first assertion has to catch.
         assert workflow_pre_commit_hook_ids(

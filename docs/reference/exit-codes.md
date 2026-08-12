@@ -5,10 +5,10 @@ can tell "your input was wrong" from "castiron has a bug" without parsing text.
 
 | Code | Meaning | Typical causes |
 | --- | --- | --- |
-| `0` | Success | Files written, or `--dry-run` completed |
+| `0` | Success | Files written, `--dry-run` completed, or `castiron check` found no drift |
 | `1` | An actionable failure — something you can fix | Unreachable source, a `--from` URL castiron cannot parse, bad key, unreadable OpenAPI document, a schema with no visible tables, a bad `[tool.castiron]` table, a target that exists under `--no-overwrite`, an unwritable output path |
 | `2` | Usage error | Unknown option, unknown `--emit` value, `--filename` with two emitters, a `--config` file that does not exist, a `--from` that is missing or is neither a URL nor an existing file, a `--from` URL carrying credentials in its userinfo, a `--key` containing a control character |
-| `3` | **Reserved** — not returned today | Reserved for drift detected by the future `castiron check`; declared now so the code never has to be renumbered |
+| `3` | **Drift** — the committed generated code is not what the schema produces | `castiron check` found a file that differs, or a file it would write that is not there. `gen` never returns it |
 | `70` | Internal error — a castiron bug | An unexpected exception. `70` is `EX_SOFTWARE` from BSD `sysexits` |
 
 ## What each one means for you
@@ -79,10 +79,41 @@ Control characters *around* the key are trimmed rather than refused, so a key fi
 CRLF endings needs no fixing at all. Only an interior one — where the value is not the key
 you think it is — stops the run.
 
-**`3` — you will not see this yet.** `gen` never returns it. It is reserved for the
-planned `castiron check` drift-guard so that scripts written against `check` in future
-will not have to change when it lands, and so that `3` can never come to mean something
-else in the meantime.
+**`3` — your committed generated code has drifted.** Only `castiron check` returns it;
+`gen` never does, so a script can tell "regeneration failed" from "regeneration is needed"
+without parsing text. The fix is always the same command:
+
+```
+castiron: drift detected in 1 of 1 generated file(s).
+
+  file:     src/myapp/schema.py
+  size:     36120 chars on disk -> 36244 chars from the schema
+  sha256:   1f2a9c0b4d5e6f70 on disk -> 9c04ab12cd34ef56 from the schema
+  lines:    +4 / -1
+  showing 1 of 1 hunk(s):
+    --- on disk
+    +++ produced from the schema
+    @@ -812,6 +812,7 @@
+    ...
+
+castiron: run `castiron gen` to regenerate.
+```
+
+A **missing** file is exit `3` too, not exit `1`, and the rule behind that is worth stating
+because it decides every other case: *every outcome in which the comparison ran and the answer
+is "not identical" is `3`; `1` is for "castiron could not perform the comparison at all."* A
+file that is not there is an answer — the committed state does not match the schema — and your
+next action is the same as for any other drift. A permission error is not an answer.
+
+The accepted cost is that a typo'd `--output` also exits `3`, so the message names the
+**resolved** path and the flag it came from:
+
+```
+  src/myapp/schema.py does not exist.
+  castiron would write it here (resolved from --output src/myapp).
+  Run `castiron gen` to create it, or check that --output points where your generated
+  files actually live.
+```
 
 **`70` — please report it.** castiron distinguishes its own bugs from your input so a bug
 report is actionable. The traceback is hidden by default and the message says exactly how
@@ -105,11 +136,12 @@ castiron: internal error (RuntimeError: kaboom). This is a bug in castiron, plea
 #!/usr/bin/env bash
 set -uo pipefail
 
-castiron gen --from "$SOURCE" --emit pydantic --output src/myapp/models
+castiron check --from "$SOURCE" --emit pydantic --output src/myapp/models
 case $? in
-  0)  echo "models regenerated" ;;
-  1)  echo "castiron could not read the schema or write the output"; exit 1 ;;
+  0)  echo "generated code is up to date" ;;
+  1)  echo "castiron could not read the schema or the committed files"; exit 1 ;;
   2)  echo "bad castiron invocation — check the flags"; exit 1 ;;
+  3)  echo "drift: run castiron gen and commit the result"; exit 1 ;;
   70) echo "castiron bug — rerun with --debug and open an issue"; exit 1 ;;
 esac
 ```
@@ -122,4 +154,4 @@ exits before it can read `$?`.
 castiron's predecessor, [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic),
 logged connection failures and returned — exiting **`0`** on failure, so a broken CI job
 looked green and stale models shipped. castiron will not do that. Every path out of `gen`
-ends at one of the codes above.
+and `check` ends at one of the codes above.

@@ -47,8 +47,10 @@ EXIT_ERROR = 1
 #: A usage error. click raises these itself; the constant exists so the table is complete.
 EXIT_USAGE = 2
 
-#: **RESERVED for ``castiron check`` drift (CI-021).** ``gen`` never returns it. Declared
-#: now so CI-021 does not have to renumber a code users may already have scripted against.
+#: ``castiron check`` found drift: the comparison **ran** and the answer is "not identical" --
+#: a differing file, or one castiron would write that is not there. ``gen`` never returns it.
+#: Declared one row ahead of the command that returns it, so CI-021 never had to renumber a code
+#: users may already have scripted against.
 EXIT_DRIFT = 3
 
 #: An unexpected exception — a castiron bug (``EX_SOFTWARE`` from BSD ``sysexits``).

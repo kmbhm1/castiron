@@ -218,8 +218,8 @@ every time — no timestamps, no source URL in the file, and no post-hoc `ruff`/
 whose version could change the output. The file's first two lines record which castiron
 wrote it ([the provenance header](../reference/generated-code.md#the-provenance-header)), and
 that version is the only input that varies. That is what makes generated models safe to commit
-and diff, and it is the foundation the planned `castiron check` drift-guard will stand on —
-the recorded version is what will let it tell a castiron upgrade apart from a schema change.
+and diff, and it is the foundation [`castiron check`](../reference/cli.md#castiron-check) stands
+on — the recorded version is what lets it tell a castiron upgrade apart from a schema change.
 
 Running no formatter afterwards does not mean the output is untidy: it is written clean **as
 emitted**, and castiron promises that it passes ruff's `F`, `UP` and `I` rules at ruff's own

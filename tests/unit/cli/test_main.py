@@ -48,9 +48,11 @@ def test_the_console_entrypoint_target_still_resolves() -> None:
 
 
 @pytest.mark.unit
-def test_help_advertises_gen_and_nothing_else() -> None:
+def test_help_advertises_gen_and_check_and_nothing_else() -> None:
     result = CliRunner().invoke(cli, ['--help'])
-    assert 'gen' in result.output
-    # CI6-D12: `check` is reserved, not advertised. A subcommand that says "not implemented"
-    # is a promise broken in the user's face.
-    assert 'check' not in result.output
+    # CI6-D12 said `check` must not be advertised while it was reserved -- "a subcommand that says
+    # 'not implemented' is a promise broken in the user's face". CI-021b made it real, so the
+    # decision's SPIRIT is what survives: `--help` advertises exactly the commands that work.
+    assert set(cli.commands) == {'gen', 'check'}
+    for name in ('gen', 'check'):
+        assert name in result.output

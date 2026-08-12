@@ -205,12 +205,13 @@ files = ["src"]
 [tool.vulture]
 ignore_names = [
     # cli/errors.py -- the documented exit-code table. `EXIT_INTERNAL` is used in src/ and so is
-    # absent here; these four are the contract users script against. `EXIT_DRIFT` is explicitly
-    # reserved for `castiron check` (CI-021) and is unused BY DESIGN until that row lands.
+    # absent here; these three are the contract users script against but nothing in src/ returns.
+    # (`EXIT_DRIFT` sat here too, "unused BY DESIGN until CI-021 lands". That row landed:
+    # cli/check.py exits with it, so the entry became stale -- and a stale allowance silently hides
+    # a future symbol that happens to share the name.)
     "EXIT_OK",
     "EXIT_ERROR",
     "EXIT_USAGE",
-    "EXIT_DRIFT",
     # cli/output.py -- `WriteResult.written` is set from `not dry_run` and read by callers of the
     # public result shape, not by castiron itself.
     "written",
@@ -237,12 +238,6 @@ ignore_names = [
     # `logging.Formatter`. Never referenced again inside castiron, and never dead.
     "msg",
     "args",
-    # emitters/base.py -- the inverse of `render_header`, published ahead of its caller. It is the
-    # documented way to read a generated module's provenance back, and `castiron check` (CI-021b)
-    # is the caller: shipping the parser WITH the header is what stops 1b from reinventing the
-    # grammar against files 1a has already written into users' repositories. The round trip is
-    # tested exhaustively in tests/unit/emitters/test_base.py::TestProvenanceHeader.
-    "parse_header_version",
 ]
 
 # ----------------------------------------------------------------------------

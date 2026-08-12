@@ -4,7 +4,7 @@
 
 Point castiron at a schema source — a Supabase URL, your SQL migrations, or a live
 database — and get typed models (and, soon, a typed client for tables, views, and RPCs).
-A `check` mode will fail CI when your application code drifts from the schema.
+A `check` mode fails CI when your committed generated code drifts from the schema.
 
 ```bash
 castiron gen --from https://abcdefgh.supabase.co --emit pydantic
@@ -21,9 +21,9 @@ No database connection. No driver. No connection string.
 
 !!! warning "Pre-alpha"
     castiron is on PyPI and installable, but it is young and moving fast — APIs may
-    change between releases. What is documented here is what ships today: the `gen`
-    command, the OpenAPI/PostgREST source, and the Pydantic emitter. It is the successor
-    to [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic).
+    change between releases. What is documented here is what ships today: the `gen` and
+    `check` commands, the OpenAPI/PostgREST source, and the Pydantic emitter. It is the
+    successor to [`supabase-pydantic`](https://github.com/kmbhm1/supabase-pydantic).
 
 ## Architecture
 
@@ -39,7 +39,7 @@ flowchart LR
     IR["Schema IR<br/>one typed, formal model"] --> E1["Pydantic v2"]
     IR --> E2["SQLAlchemy<br/>(planned)"]
     IR --> E3["Typed Supabase client<br/>(planned)"]
-    IR --> CHK["check<br/>drift guard in CI<br/>(planned)"]
+    IR --> CHK["check<br/>drift guard in CI"]
 ```
 
 ## What works today
@@ -52,7 +52,7 @@ flowchart LR
 | Byte-stable, deterministic output, [lint-clean as emitted](reference/generated-code.md) | shipped |
 | SQL-migration and live-database sources | planned |
 | SQLAlchemy emitter, typed Supabase client | planned |
-| `castiron check` — the drift guard | planned ([exit code `3` is reserved](reference/exit-codes.md)) |
+| `castiron check` — the drift guard, [exit `3` on drift](reference/exit-codes.md) | shipped |
 
 ## Honest by design
 

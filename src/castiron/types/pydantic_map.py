@@ -1,7 +1,7 @@
 """The Postgres-vocabulary -> Pydantic v2 type map (the type moat).
 
 A faithful port of supabase-pydantic's ``PYDANTIC_TYPE_MAP`` (only the Pydantic map;
-the two SQLAlchemy maps land with the SQLAlchemy emitter in CI-012). Each entry's
+the two SQLAlchemy maps land with the SQLAlchemy emitter in CI-032). Each entry's
 newline-joined import blob is split into a tuple of single import lines so an emitter
 can collect one flat, deduplicated import set. *Rendering* that set is the emitter's
 job and is no longer a plain sort -- ``emitters.base.render_import_block`` groups it into

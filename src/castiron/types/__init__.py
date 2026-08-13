@@ -2,7 +2,7 @@
 
 An emitter resolves a column's ``raw_type`` (and ``array_element_type`` / ``enum_info``)
 into a target Python type + the imports it needs, via :func:`resolve_column_type` and a
-target :data:`TypeMap`. The Pydantic map lives here; CI-012 adds a SQLAlchemy map that
+target :data:`TypeMap`. The Pydantic map lives here; CI-032 adds a SQLAlchemy map that
 reuses the same resolver. This package stays free of ``pydantic``/``inflection`` imports.
 """
 

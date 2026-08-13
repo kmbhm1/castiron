@@ -2,7 +2,7 @@
 
 It lives in :mod:`castiron.emitters` rather than in the CLI because CI-021's ``check``
 mode and any programmatic caller need the same lookup. Registering a new emitter
-(CI-012's SQLAlchemy, CI-030/031's client) is a single :data:`EMITTERS` entry — no CLI
+(CI-012's typed Supabase client, CI-032's SQLAlchemy) is a single :data:`EMITTERS` entry — no CLI
 edit — and ``click.Choice(sorted(EMITTERS))`` derives ``--emit``'s validation, its help
 text and its error message from that one dict.
 """

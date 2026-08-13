@@ -474,6 +474,14 @@ class TestRedactSecretParameters:
         text = f'https://x.supabase.co/rest/v1/table?{name}=eq.5'
         assert redact(text) == text
 
+    @pytest.mark.parametrize('name', ['monkey', 'keyword', 'keys', 'tokens', 'turnkey', 'select', 'order', 'limit'])
+    def test_a_doubled_lead_does_not_widen_the_credential_word_list(self, name: str) -> None:
+        # ⚠ CI-150 splits a name on `?` before testing it, and this is the guard that the split
+        # only changes where a candidate name BEGINS -- never what counts as a credential word.
+        # `a?monkey` is `a` and `monkey`, and `monkey` is no more a credential than it was.
+        text = f'https://x.supabase.co/rest/v1/table?a?{name}=eq.5'
+        assert redact(text) == text
+
     @pytest.mark.parametrize(('encoding', 'text'), encodings(SERVICE_ROLE_URL))
     def test_it_survives_every_encoding_the_value_can_arrive_in(self, encoding: str, text: str) -> None:
         assert SERVICE_ROLE_KEY in text  # not vacuous
@@ -920,6 +928,13 @@ class TestRedactStaysLinear:
                 'a ?-dense run',
                 lambda n: '?' * (n // 2) + 'a' * (n // 2) + ' ?jwt=hunter2pass',
             ),
+            # ⚠ CI-150's two shapes. The fix stops skipping the value of a parameter it did NOT
+            # mask, so every `?` inside such a value is now offered to the scan -- and a value
+            # SWALLOW CHAIN is exactly where a naive re-scan would go quadratic. Computing the
+            # value's end on the non-credential branch "for symmetry" makes the first of these
+            # Theta(k * n). Measured through `redact` at these sizes: 7.6x and 8.1x.
+            ('a value-swallow chain', lambda n: '?a=1' * (n // 4) + '?jwt=hunter2pass'),
+            ('a ?-dense value', lambda n: '?x=' + '?a' * (n // 4) + '=hunter2pass'),
         ],
     )
     def test_the_cost_does_not_grow_quadratically(self, name: str, build: Callable[[int], str]) -> None:
@@ -1044,6 +1059,127 @@ class TestRedactQueryParamAwkwardShapes:
     )
     def test_the_shape_is_masked_exactly_as_it_was(self, text: str, expected: str) -> None:
         assert redact(text) == expected
+
+
+#: The leaks CI-150 closes: `(text, expected)`. Every one printed its credential **in full** in
+#: `0.5.0`, on a path a one-character typo in `--from` reaches (`cli/pipeline.py:202` echoes the
+#: value back in the "neither a URL nor an existing file" `UsageError`).
+UNDER_MASKED_SHAPES: tuple[tuple[str, str], ...] = (
+    # (a) `?` inside a NAME. The old single-pattern name class admitted `?`, so `a?token` was one name
+    # and `token` had no `_SECRET_PARAM_NAME` delimiter in front of it -- `?` is not `^`, not
+    # `[-_.]`, and not the camelCase hump.
+    ('?a?token=hunter2pass', '?a?token=***'),
+    ('?x?apikey=hunter2pass', '?x?apikey=***'),
+    ('x?y?jwt=hunter2pass', 'x?y?jwt=***'),
+    # ⚠ Listed by neither the WORKPLAN row nor CI-144's table: the TRAILING lookahead
+    # `(?=$|[-_.]|[A-Z])` fails on `?` too. It is the shape that discriminates a segment split
+    # from a fix that only looks at what precedes the word.
+    ('?token?x=hunter2pass', '?token?x=***'),
+    # The split happens AFTER `unquote`, so an encoded `?` is caught as well.
+    ('?a%3Ftoken=hunter2pass', '?a%3Ftoken=***'),
+    # (b) `?` inside a VALUE. `?` terminates nothing, so the value of `a` was
+    # `1?token=hunter2pass` -- the whole credential -- and `re.sub` matches do not overlap, so the
+    # second parameter was never even offered to the mask function.
+    ('?a=1?token=hunter2pass', '?a=1?token=***'),
+    (
+        'https://x.supabase.co/rest/v1/?select=*?apikey=hunter2pass',
+        'https://x.supabase.co/rest/v1/?select=*?apikey=***',
+    ),
+    (
+        '?ghp_y-https://x.supabase.co/rest/v1/?jwt=hunter2pass',
+        '?ghp_y-https://x.supabase.co/rest/v1/?jwt=***',
+    ),
+)
+
+
+@pytest.mark.unit
+class TestRedactQueryParamUnderMasking:
+    """The credential leaks CI-150 closes -- `?` leads a parameter and terminates nothing.
+
+    ⚠ Every shape here printed a secret **in full** in the published `0.5.0`, and
+    `docs/reference/cli.md` promises the opposite ("Secrets are masked in every string the CLI
+    prints, at every verbosity"). Nothing in this table may go back to echoing its value.
+    """
+
+    @pytest.mark.parametrize(('text', 'expected'), UNDER_MASKED_SHAPES)
+    def test_the_credential_is_masked(self, text: str, expected: str) -> None:
+        assert redact(text) == expected
+        assert 'hunter2pass' not in redact(text)
+
+    @pytest.mark.parametrize(('text', 'expected'), UNDER_MASKED_SHAPES)
+    def test_it_is_masked_on_the_from_echo_too(self, text: str, expected: str) -> None:
+        # `redact_source` is the surface that echoes a bad `--from` back, and it is where a typo'd
+        # second `?` actually reaches a terminal. None of these shapes has an `@`, so
+        # `redact_source`'s extra userinfo rule is a no-op and the ordinary rules must carry it.
+        assert redact_source(text) == expected
+        assert 'hunter2pass' not in redact_source(text)
+
+    def test_the_name_is_split_after_decoding_not_before(self) -> None:
+        # Splitting the RAW name on `?` would leave `a%3Ftoken` whole and miss it; splitting the
+        # DECODED name finds `a` and `token`. The name is still echoed back exactly as written.
+        assert redact('?a%3Ftoken=hunter2pass') == '?a%3Ftoken=***'
+
+
+@pytest.mark.unit
+class TestRedactQueryParamHalfPrint:
+    """The leak CI-150 must NOT introduce: a masked value containing a `?` is masked WHOLE.
+
+    ⚠ The obvious fix for the value-swallow -- putting `?` in the value-terminator class -- closes
+    the leak and opens another, because it shortens the value on the branch that **masks** it too.
+    The fix that ships computes the value's end only when it is about to mask it, and resumes at
+    `stop + 1` otherwise, so there is no half-print anywhere. Each row below is a shape the naive
+    spelling breaks; `?` is a legal query character (RFC 3986) and a libpq password has no alphabet
+    restriction, so these are reachable, not theoretical.
+    """
+
+    @pytest.mark.parametrize(
+        ('text', 'expected', 'ruled_out'),
+        [
+            ('?token=ab?cd', '?token=***', 'the naive fix prints `?token=***?cd`'),
+            ('?apikey=a?b?c', '?apikey=***', 'the naive fix prints `?apikey=***?b?c`'),
+            ('?password=p?w', '?password=***', 'a hand-pasted libpq DSN: `?password=***?w`'),
+            ('?token=ab?c=d', '?token=***', 'a tempered-greedy value still prints `?token=***?c=d`'),
+            ('?apikey=a?jwt=b', '?apikey=***', 'resuming at `stop + 1` on the MASKED branch splits it in two'),
+            ('?apikey=YWJj?ZGVm', '?apikey=***', 'base64url has no `?`, but a PostgREST filter value may'),
+        ],
+    )
+    def test_a_masked_value_is_masked_whole(self, text: str, expected: str, ruled_out: str) -> None:
+        masked = redact(text)
+        assert masked == expected, ruled_out
+        # `***?` is the half-print's signature: every naive spelling truncates the value at its
+        # `?` and prints the remainder immediately after the mask. One `***`, nothing behind it.
+        assert f'{REDACTED}?' not in masked
+        assert masked.count(REDACTED) == 1
+
+
+@pytest.mark.unit
+class TestRedactUrlUserinfoSwallow:
+    """⚠ A leak that is STILL OPEN, pinned so the row that closes it can prove the fix.
+
+    `_URL_USERINFO`'s host class `[^/?#\\s]*` happily consumes the `scheme:` of a *following* URL,
+    and `re.sub` matches do not overlap, so the second URL's password prints. This is the hazard
+    `_URL_USERINFO`'s own docstring records ("over-masking in one place under-masks in another"),
+    now shown reachable without the letter-free-run trick that docstring describes.
+
+    **Deliberately NOT fixed by CI-150.** It is a different function, a different trigger character
+    (no `?` is involved at all) and a different fix, and it is filed as its own row, **CI-151**.
+    CI-144 §12 misclassified it as a sub-case of the `?` family; it is not one. When CI-151 lands,
+    these two assertions flip in that PR and the flip is the evidence.
+    """
+
+    @pytest.mark.parametrize(
+        'text',
+        [
+            'https://a@b,https://user:hunter2pass@h',
+            'postgresql://@x.https://user:hunter2pass@h',
+        ],
+    )
+    def test_the_second_urls_password_still_prints(self, text: str) -> None:
+        # ⚠ Asserting a leak. An unpinned leak is a leak nobody can prove was fixed -- and pinning
+        # it here is what stops CI-150 from being credited with closing it. CI-151 owns this.
+        masked = redact(text)
+        assert 'hunter2pass' in masked, 'CI-151 has landed -- flip this assertion in that PR'
+        assert masked.count(REDACTED) == 1
 
 
 @pytest.mark.unit

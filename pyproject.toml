@@ -55,7 +55,7 @@ dependencies = [
 # what makes it inert for a normal install).
 #
 # It has exactly ONE consumer: `[tool.semantic_release].build_command` below. That command runs
-# inside the PSR GitHub Action's own Docker image — `FROM python:3.13-bookworm`, verified at the
+# inside the PSR GitHub Action's own Docker image — `python:3.14-bookworm` under the `@v10` this
 # commit `@v9` resolves to (v9.21.2) — which has no `uv` and cannot see the host's, because
 # `astral-sh/setup-uv` installs onto the runner, not into the container. So the release build has
 # to install its own uv, and this is where that uv's version is declared.
@@ -273,7 +273,8 @@ name = "cz_conventional_commits"
 allow_zero_version = true
 major_on_zero = true
 # ⚠ This runs in the PSR action's Docker image, NOT on the runner — `runs: {using: docker, image:
-# Dockerfile}`, `FROM python:3.13-bookworm`. It has no `uv`, and the `uv` that
+# Dockerfile}`, `python:3.14-bookworm` at `@v10` (it was `python:3.13-bookworm` at `@v9` — see
+# the `--ignore-requires-python` note on `build_command`). It has no `uv`, and the `uv` that
 # `astral-sh/setup-uv` put on the runner is not mounted in. The former one-liner `uv build` was
 # therefore `uv: command not found`, and PSR aborts the release on a failed build. It also left
 # `uv.lock` — which pins `cast-iron` by version — stale inside the very commit that rewrites
@@ -318,10 +319,38 @@ major_on_zero = true
 # It cannot itself abort the build: `unset` returns 0 on an already-unset variable, and that exact
 # case (no `VIRTUAL_ENV`, no `.venv`) was executed under `set -e` -- it is the post-fix CI state,
 # now that release.yml no longer installs uv on the runner at all.
+# `--ignore-requires-python` is what CI-152 added, and it is load-bearing rather than defensive.
+# This `pip install` exists for ONE reason: to pull the `[build]` extra (uv) into the action's
+# image. castiron itself is never imported here — `uv lock` and `uv build` are the only consumers,
+# and neither needs the project importable. But pip enforces `[project].requires-python` against
+# the AMBIENT interpreter before it will install anything, including an editable install used
+# purely as a delivery vehicle for an extra.
+#
+# That coupling was inert while the image tracked a Python this project supports, and PSR v10
+# broke it: v9's image was `python:3.13-bookworm`, v10's is **Python 3.14** — outside
+# `requires-python = ">=3.10,<3.14"`. Measured in `python:3.14-bookworm`, the exact image, against
+# `origin/main`: without the flag pip exits 1 with `Package 'cast-iron' requires a different
+# Python: 3.14.7 not in '<3.14,>=3.10'`, `set -e` aborts the block, and PSR fails the release at
+# the build step. That is the live failure of 2026-08-13, reproduced byte-for-byte locally.
+#
+# ⚠ The flag changes NOTHING about what is published — it is scoped to this throwaway container
+# install. Verified on the wheel this command actually produced in that image: `Requires-Python:
+# <3.14,>=3.10`, and `uv~=0.11.32` still carries `; extra == "build"`. castiron's supported range
+# is unchanged and still exactly what CI tests (3.10–3.13).
+#
+# ⚠ Do NOT "fix" this by widening `requires-python` to admit 3.14 — that would publish a support
+# claim for an interpreter the CI matrix never runs, which is the failure this repo cares about
+# far more than a red release. And do NOT hardcode `pip install uv~=...` here: the pin lives in
+# the `[build]` extra as the single source of truth, and `tests/unit/test_repo_tooling.py` binds
+# the two ends of that coupling together.
+#
+# `uv` itself needs no such flag — it honours `requires-python` by FETCHING a compatible
+# interpreter rather than refusing. Measured in the same image: `uv lock` printed
+# `Downloaded cpython-3.12.13` and resolved 87 packages; `uv build` produced both artifacts.
 build_command = """
     set -e
     unset VIRTUAL_ENV
-    python -m pip install -e '.[build]'
+    python -m pip install --ignore-requires-python -e '.[build]'
     uv lock --upgrade-package cast-iron
     git add uv.lock
     uv build

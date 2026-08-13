@@ -2866,7 +2866,7 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
 
     That environment is not the runner. ``python-semantic-release/python-semantic-release`` is a
     **Docker** action (``runs: {using: docker, image: Dockerfile}``), and its image is
-    ``FROM python:3.13-bookworm`` with a pip venv at ``/psr/.venv``. It has no ``uv``, and the one
+    ``python:3.14-bookworm`` (v9 used 3.13) with a pip venv at ``/psr/.venv``. It has no ``uv``, and the one
     ``astral-sh/setup-uv`` installed in the workflow lives on the host and is not mounted in. So
     ``build_command = "uv build"`` -- which every other file in this repo would suggest is the
     obvious spelling -- was ``uv: command not found``, and PSR aborts the release on a failed
@@ -2896,7 +2896,7 @@ class TestTheReleaseBuildCommandCanRunWhereItRuns:
         )
         assert installs is not None, (
             f'{PYPROJECT_NAME}: `build_command` runs `uv` but never installs it. It executes '
-            f"inside the PSR action's own Docker image (python:3.13-bookworm), which has no uv "
+            f"inside the PSR action's own Docker image (python:3.14-bookworm), which has no uv "
             f"and cannot see the runner's -- so this is `uv: command not found`, and PSR aborts "
             f'the release on a failed build. Install it from the `{BUILD_EXTRA}` extra first.'
         )
@@ -3121,7 +3121,7 @@ class TestNothingLeaksARunnerVirtualEnvIntoTheReleaseContainer:
           Caused by: Broken symlink at `.venv/bin/python3`, was the underlying Python interpreter
                      removed?
 
-    The chain, reproduced end to end in the PSR action's own base image (``python:3.13-bookworm``)
+    The chain, reproduced end to end in the PSR action's own base image (``python:3.14-bookworm``)
     rather than argued:
 
     1. ``astral-sh/setup-uv@v5`` with a ``python-version`` input runs ``uv venv`` -- so the

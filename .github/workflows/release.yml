@@ -31,7 +31,7 @@
 #
 # Until then, run it by hand from the Actions tab to cut the first release.
 # ---------------------------------------------------------------------------
-name: release
+name: Release
 
 on:
   workflow_dispatch:

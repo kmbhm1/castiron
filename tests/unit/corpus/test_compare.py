@@ -7,14 +7,21 @@ because it is what pushes a reader toward `--write` instead of toward the cause.
 
 So the message is exercised here on synthetic inputs, where the expected output is known — rather
 than inferred from the one time a real golden happened to fail.
+
+⚠ **The generic renderers moved to ``src`` in CI-021b** and their tests moved with them, to
+``tests/unit/utils/test_textdiff.py``: ``castiron check`` shows a user the same diff this shows a
+developer, and one mechanism gets one test file. What is left here is the corpus's own half —
+the structural counters, and how ``assert_golden`` ASSEMBLES a failure message out of the shared
+renderers (which vocabulary, which regeneration command, which two-space indent).
 """
 
 from pathlib import Path
 
 import pytest
 
+from castiron.utils.textdiff import MAX_HUNKS
 from tests.unit.corpus.cases import REGENERATE_COMMAND
-from tests.unit.corpus.compare import MAX_HUNKS, _render_failure, _whitespace_only_report, assert_golden
+from tests.unit.corpus.compare import _render_failure, _whitespace_only_report, assert_golden
 from tests.unit.corpus.pipeline import Counters, count_structure
 
 
@@ -65,27 +72,30 @@ class TestStructuralCounters:
 
 
 @pytest.mark.unit
-class TestWhitespaceOnlyDifferencesAreVisible:
-    """The CI-063 lesson applied to a diff renderer."""
+class TestTheCorpusVocabularyIsKeptOnTopOfTheSharedRenderer:
+    """What ``compare.py`` still owns: the labels, and the corpus's two-space report indent.
 
-    def test_a_trailing_space_is_reported_as_repr_not_as_an_invisible_diff(self) -> None:
+    The rendering itself is proved in ``tests/unit/utils/test_textdiff.py``. These assert only
+    that the corpus still asks for its own words — a golden failure that said "on disk" would be
+    describing a file that is not what the reader is looking at.
+    """
+
+    def test_a_whitespace_only_difference_uses_the_committed_produced_vocabulary(self) -> None:
         report = _whitespace_only_report(['a: int\n', 'b: int\n'], ['a: int \n', 'b: int\n'])
         assert report, 'a trailing-space difference was not recognized as whitespace-only'
         rendered = '\n'.join(report)
+        assert 'committed ' in rendered
+        assert 'produced ' in rendered
+        assert 'WHITESPACE-ONLY' in rendered
         # Without repr() these two lines print identically and the reader concludes the tool lies.
         assert "'a: int \\n'" in rendered
-        assert "'a: int\\n'" in rendered
-        assert 'WHITESPACE-ONLY' in rendered
 
     def test_a_real_content_change_is_not_treated_as_whitespace_only(self) -> None:
         assert _whitespace_only_report(['a: int\n'], ['a: str\n']) == []
 
-    def test_it_caps_how_many_whitespace_differences_it_prints(self) -> None:
-        before = [f'line{index}\n' for index in range(10)]
-        after = [f'line{index} \n' for index in range(10)]
-        rendered = '\n'.join(_whitespace_only_report(before, after))
-        assert 'and more' in rendered
-        assert rendered.count('committed ') == MAX_HUNKS
+    def test_every_report_line_carries_the_corpus_indent(self) -> None:
+        report = _whitespace_only_report(['a: int\n'], ['a: int \n'])
+        assert report and all(line.startswith('  ') for line in report)
 
 
 @pytest.mark.unit

@@ -4,7 +4,7 @@
 
 Point castiron at a schema source — a Supabase URL, your SQL migrations, or a
 live database — and get typed models (and, soon, a typed client for tables,
-views, and RPCs). A `check` mode will fail CI when your application code drifts
+views, and RPCs). A `check` mode fails CI when your committed generated code drifts
 from the schema. **No database connection required** for the OpenAPI and
 migrations sources.
 
@@ -100,12 +100,12 @@ flowchart LR
     IR["Schema IR<br/>one typed, formal model"] --> E1["Pydantic v2"]
     IR --> E2["SQLAlchemy<br/>(planned)"]
     IR --> E3["Typed Supabase client<br/>(planned)"]
-    IR --> CHK["check<br/>drift guard in CI<br/>(planned)"]
+    IR --> CHK["check<br/>drift guard in CI"]
 ```
 
 Pluggable **sources** parse a schema into one formalized **Schema IR**; pluggable
-**emitters** turn the IR into typed code. **`check`** — planned, not yet a command —
-will re-emit in memory and fail if the committed output has drifted.
+**emitters** turn the IR into typed code. **`check`** re-emits in memory, compares against
+the files you committed, and exits `3` if they have drifted — writing nothing, ever.
 
 ## Honest about what it knows
 

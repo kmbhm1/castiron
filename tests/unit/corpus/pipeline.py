@@ -10,7 +10,6 @@ Every function is pure and offline: it reads committed files and calls castiron.
 opens a socket, and nothing here writes.
 """
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,7 @@ from castiron.emitters import EmitterConfig
 from castiron.emitters.pydantic import PydanticEmitter
 from castiron.ir import Schema
 from castiron.sources.openapi import build_schema_from_document
+from castiron.utils.textdiff import sha256_text
 from tests.unit.conftest import GOLDEN_TOOL_VERSION
 from tests.unit.corpus.cases import (
     GOLDEN_DIR,
@@ -104,18 +104,6 @@ def _is_field_line(line: str) -> bool:
     if not body or body.startswith(('#', '"', "'")):
         return False
     return ': ' in body
-
-
-def sha256_text(text: str) -> str:
-    """Return the sha256 of ``text`` encoded as UTF-8.
-
-    Args:
-        text: The text to digest.
-
-    Returns:
-        The lowercase hex digest.
-    """
-    return hashlib.sha256(text.encode(ENCODING)).hexdigest()
 
 
 def load_document(family: InputFamily) -> dict[str, Any]:

@@ -13,21 +13,18 @@ which is the CI-063 lesson ("test against the encodings input really arrives in"
 diff renderer.
 """
 
-import difflib
 from pathlib import Path
 
 import pytest
 
+from castiron.utils.textdiff import (
+    changed_line_counts,
+    sha256_text,
+    unified_hunks,
+    whitespace_only_lines,
+)
 from tests.unit.corpus.cases import REGENERATE_COMMAND
-from tests.unit.corpus.pipeline import count_structure, sha256_text
-
-#: How many unified-diff hunks to show before summarizing the rest. Three is enough to see the
-#: shape of a change; the count of what was suppressed is always printed, so a reader is never
-#: misled into thinking they have seen the whole diff.
-MAX_HUNKS = 3
-
-#: Context lines per hunk.
-DIFF_CONTEXT = 3
+from tests.unit.corpus.pipeline import count_structure
 
 
 def assert_golden(actual: str, golden: Path, *, case: str, what: str) -> None:
@@ -62,8 +59,7 @@ def _render_failure(actual: str, expected: str, golden: Path, case: str, what: s
     """Build the full mismatch report."""
     expected_lines = expected.splitlines(keepends=True)
     actual_lines = actual.splitlines(keepends=True)
-    changed_added = sum(1 for line in difflib.ndiff(expected_lines, actual_lines) if line.startswith('+ '))
-    changed_removed = sum(1 for line in difflib.ndiff(expected_lines, actual_lines) if line.startswith('- '))
+    changed_added, changed_removed = changed_line_counts(expected_lines, actual_lines)
 
     report = [
         f'{case}: the {what} does not match its committed golden.',
@@ -101,11 +97,12 @@ def _render_failure(actual: str, expected: str, golden: Path, case: str, what: s
 
 
 def _whitespace_only_report(expected_lines: list[str], actual_lines: list[str]) -> list[str]:
-    """Return a ``repr()``-based report when the two texts differ only in whitespace.
+    """Return the corpus-indented whitespace-only report, or ``[]``.
 
-    A whitespace-only diff is *invisible* in a normal unified diff: the two sides render as
-    identical-looking lines and the reader concludes the tool is broken. ``repr()`` is the only
-    honest rendering.
+    The rendering itself is :func:`castiron.utils.textdiff.whitespace_only_lines` -- promoted out of
+    this module by CI-021b so ``castiron check`` shows a user the same thing this shows a
+    developer, from one implementation rather than two. All that is left here is the corpus's
+    vocabulary (``committed`` / ``produced``) and its two-space report indent.
 
     Args:
         expected_lines: The committed golden's lines.
@@ -114,44 +111,31 @@ def _whitespace_only_report(expected_lines: list[str], actual_lines: list[str]) 
     Returns:
         The report lines, or ``[]`` when the difference is not whitespace-only.
     """
-    if [line.strip() for line in expected_lines] != [line.strip() for line in actual_lines]:
-        return []
-
-    report = ['  ⚠ WHITESPACE-ONLY difference -- shown as repr() because it is otherwise invisible:']
-    shown = 0
-    for index, (before, after) in enumerate(zip(expected_lines, actual_lines)):
-        if before == after:
-            continue
-        if shown >= MAX_HUNKS:
-            report.append(f'    ... and more (only the first {MAX_HUNKS} whitespace differences are shown)')
-            break
-        report.append(f'    line {index + 1}: committed {before!r}')
-        report.append(f'    line {index + 1}: produced  {after!r}')
-        shown += 1
-    return report
+    return _indent(
+        whitespace_only_lines(
+            expected_lines,
+            actual_lines,
+            expected_label='committed',
+            actual_label='produced',
+        )
+    )
 
 
 def _hunk_report(expected_lines: list[str], actual_lines: list[str]) -> list[str]:
-    """Return the first :data:`MAX_HUNKS` unified-diff hunks, counting any remainder."""
-    diff = list(
-        difflib.unified_diff(
+    """Return the corpus-indented unified-diff hunks (see :func:`castiron.utils.textdiff.unified_hunks`)."""
+    return _indent(
+        unified_hunks(
             expected_lines,
             actual_lines,
             fromfile='committed golden',
             tofile='produced by this branch',
-            n=DIFF_CONTEXT,
         )
     )
-    hunk_starts = [index for index, line in enumerate(diff) if line.startswith('@@')]
-    if not hunk_starts:  # pragma: no cover - unreachable while the texts differ
-        return ['  (no unified-diff hunks; the difference is in the trailing newline)']
 
-    cutoff = hunk_starts[MAX_HUNKS] if len(hunk_starts) > MAX_HUNKS else len(diff)
-    report = [f'  showing {min(len(hunk_starts), MAX_HUNKS)} of {len(hunk_starts)} hunk(s):']
-    report.extend('    ' + line.rstrip('\n') for line in diff[:cutoff])
-    if len(hunk_starts) > MAX_HUNKS:
-        report.append(f'    ... {len(hunk_starts) - MAX_HUNKS} further hunk(s) suppressed.')
-    return report
+
+def _indent(lines: list[str]) -> list[str]:
+    """Indent every report line by the two spaces the golden failure message uses."""
+    return [f'  {line}' for line in lines]
 
 
 def _rel(path: Path) -> str:

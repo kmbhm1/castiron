@@ -1,13 +1,14 @@
 """The ``castiron`` command group.
 
-One command today (``gen``); CI-021 adds ``check`` next to it. Nothing is advertised in
+Two commands: ``gen`` writes, ``check`` compares and writes nothing. Nothing is advertised in
 ``--help`` before it works — a subcommand that prints "not implemented" is a promise broken
-in the user's face.
+in the user's face, which is why ``check`` was absent here until CI-021b made it real.
 """
 
 import click
 
 from castiron import __version__
+from castiron.cli.check import check
 from castiron.cli.gen import gen
 
 
@@ -18,3 +19,4 @@ def cli() -> None:
 
 
 cli.add_command(gen)
+cli.add_command(check)

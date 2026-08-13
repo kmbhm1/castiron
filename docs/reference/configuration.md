@@ -174,9 +174,9 @@ castiron: wrote /home/you/proj/src/myapp/models/schema.py (8.5 kB)
 
 Two reasons this matters more than it looks. The config file exists so CI and local runs
 share one source of truth, which it cannot do if `output = "src/myapp/models"` means a
-different directory depending on where you happened to stand. And the planned `check`
-drift-guard must not give a directory-dependent verdict — a guard whose answer depends on
-where it runs is worse than no guard.
+different directory depending on where you happened to stand. And `castiron check` must
+not give a directory-dependent verdict — a guard whose answer depends on where it runs is
+worse than no guard.
 
 !!! note "Environment variables are not anchored"
     `CASTIRON_FROM=./openapi.json` is resolved against your current directory, like any
@@ -237,13 +237,17 @@ castiron will be rejected by an older one. Pre-1.0, silent wrongness is the wors
 [tool.castiron]
 from = "openapi.json"
 
-# Reserved for `castiron check`. Parsed, validated as a table, and ignored by `gen`.
+# Reserved for future `castiron check` settings. Parsed, validated as a table, and ignored.
 [tool.castiron.check]
 ```
 
-The table is accepted today and does nothing. It is reserved so that the drift-guard
-command can be added without breaking a config file you have already committed. Writing
-a scalar there is still an error — the shape is reserved, not the name:
+The table is accepted today and does nothing — **including now that `castiron check`
+exists**. `check` reads the same flat `[tool.castiron]` keys `gen` does, which is the whole
+reason the config file exists: you write `from`/`emit`/`output` once and both commands honour
+them. Keys `check` has no flag for (`overwrite`) are simply never looked up.
+
+The sub-table stays reserved for settings that would apply to `check` and to nothing else.
+Writing a scalar there is still an error — the shape is reserved, not the name:
 
 ```
 Error: badcheck.toml: [tool.castiron] 'check' must be a table, but it is an integer. It is reserved for `castiron check`.

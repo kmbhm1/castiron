@@ -22,6 +22,7 @@ import datetime as dt
 import sys
 from pathlib import Path
 
+from castiron.utils.textdiff import changed_line_counts, unified_hunks
 from tests.unit.corpus.cases import (
     CASES,
     FAMILIES,
@@ -116,25 +117,19 @@ def _report_change(path: Path, text: str) -> list[str]:
     Nothing that changed is ever summarized as "differs" — that word is what makes a reviewer
     reach for ``--write`` instead of reading.
     """
-    import difflib
-
     committed = path.read_text(encoding=ENCODING)
     before, after = committed.splitlines(keepends=True), text.splitlines(keepends=True)
-    added = sum(1 for line in difflib.ndiff(before, after) if line.startswith('+ '))
-    removed = sum(1 for line in difflib.ndiff(before, after) if line.startswith('- '))
+    added, removed = changed_line_counts(before, after)
 
     lines = [
         f'  CHANGED  {_rel(path)}',
         f'           lines +{added} / -{removed}; {count_structure(committed).delta(count_structure(text))}',
     ]
     lines.extend(_outline_delta(committed, text))
-
-    diff = list(difflib.unified_diff(before, after, fromfile='committed', tofile='produced', n=2))
-    hunk_starts = [index for index, line in enumerate(diff) if line.startswith('@@')]
-    cutoff = hunk_starts[3] if len(hunk_starts) > 3 else len(diff)
-    lines.extend('           ' + line.rstrip('\n') for line in diff[:cutoff])
-    if len(hunk_starts) > 3:
-        lines.append(f'           ... {len(hunk_starts) - 3} further hunk(s) suppressed.')
+    lines.extend(
+        f'           {line}'
+        for line in unified_hunks(before, after, fromfile='committed', tofile='produced', context=2)
+    )
     return lines
 
 

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from castiron.emitters import EmitterConfig
+from castiron.utils.textdiff import sha256_text
 from tests.unit.corpus.cases import (
     CASES,
     EXPECTED_CASE_COUNT,
@@ -33,7 +34,6 @@ from tests.unit.corpus.cases import (
     fingerprint_path,
 )
 from tests.unit.corpus.conftest import case_ids, iter_cases
-from tests.unit.corpus.pipeline import sha256_text
 
 
 @pytest.mark.unit

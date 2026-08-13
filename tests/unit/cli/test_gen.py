@@ -20,7 +20,8 @@ from click.testing import CliRunner, Result
 
 import castiron
 from castiron.cli import cli
-from castiron.cli.gen import format_size, source_origin
+from castiron.cli.output import format_size
+from castiron.cli.pipeline import source_origin
 from castiron.emitters.base import parse_header_version
 from castiron.ir import Schema
 from castiron.sources import SourceFetchError, SourceParseError, build_schema_from_document
@@ -150,7 +151,7 @@ class TestSourceDispatch:
             seen.update(kwargs)
             return build_schema_from_document(openapi_fixture_document)
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fake_load)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fake_load)
         result = run(
             runner,
             '--from',
@@ -183,7 +184,7 @@ class TestSourceDispatch:
         openapi_fixture_document: dict[str, Any],
     ) -> None:
         monkeypatch.setattr(
-            'castiron.cli.gen.load_openapi_schema',
+            'castiron.cli.pipeline.load_openapi_schema',
             lambda url, **kwargs: build_schema_from_document(openapi_fixture_document),
         )
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--output', 'out')
@@ -325,7 +326,7 @@ class TestFailureMapping:
         def fail(url: str, **kwargs: Any) -> Schema:
             raise error('the source said no')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co')
         assert result.exit_code == 1
         assert 'the source said no' in result.output
@@ -374,7 +375,7 @@ class TestFailureMapping:
         def boom(url: str, **kwargs: Any) -> Schema:
             raise RuntimeError('a castiron bug')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co')
         assert result.exit_code == 70
         assert 'internal error (RuntimeError' in result.output
@@ -389,7 +390,7 @@ class TestFailureMapping:
         def boom(url: str, **kwargs: Any) -> Schema:
             raise RuntimeError(f'a castiron bug on {url}?service_role_key={SECRET}')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug')
         assert result.exit_code == 70
         assert 'Traceback (most recent call last)' in result.stderr  # not vacuous
@@ -408,7 +409,7 @@ class TestFailureMapping:
             except SourceFetchError:
                 raise RuntimeError('inner blew up while handling the fetch failure')  # noqa: B904
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', '--key', SECRET)
         assert result.exit_code == 70
         assert 'During handling of the above exception' in result.stderr  # not vacuous
@@ -480,7 +481,7 @@ class TestSecrets:
         def fail(url: str, **kwargs: Any) -> Schema:
             raise SourceFetchError(f'{url} returned HTTP 401 while presenting {kwargs["key"]}')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
         result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
         assert result.exit_code == 1
         assert SECRET not in result.output
@@ -677,7 +678,7 @@ class TestSecrets:
         def boom(url: str, **kwargs: Any) -> Schema:
             raise RuntimeError(f'{url}?apikey={SECRET} broke while presenting {kwargs["key"]}')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', boom)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
         result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
         assert result.exit_code == 70
         assert 'internal error (RuntimeError' in result.output
@@ -696,7 +697,7 @@ class TestSecrets:
                 logging.getLogger('castiron.sources.openapi.fetch').exception('the source call failed')
             raise SourceFetchError('Could not reach the source')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
         result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
         assert result.exit_code == 1
         assert 'Traceback (most recent call last)' in result.stderr
@@ -772,7 +773,7 @@ class TestSecrets:
         def explode(url: str) -> str:
             raise SourceFetchError('nope')
 
-        monkeypatch.setattr('castiron.cli.gen.normalize_postgrest_url', explode)
+        monkeypatch.setattr('castiron.cli.pipeline.normalize_postgrest_url', explode)
         origin = source_origin(f'https://x.supabase.co/rest/v1/?apikey={SECRET}', SECRET)
         assert SECRET not in origin
         assert 'apikey=***' in origin
@@ -848,7 +849,7 @@ class TestSecrets:
         def fail(url: str, **kwargs: Any) -> Schema:
             raise SourceFetchError(f'Could not connect to postgresql://postgres:{SECRET}@db.x.supabase.co:5432/db')
 
-        monkeypatch.setattr('castiron.cli.gen.load_openapi_schema', fail)
+        monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
         result = run(runner, '--from', 'https://x.supabase.co')
         assert result.exit_code == 1
         assert SECRET not in result.output
@@ -1009,11 +1010,11 @@ class TestReporting:
 
     def test_double_verbose_adds_debug_provenance(self, runner: CliRunner, project: Path) -> None:
         result = run(runner, '--from', 'openapi.json', '--output', 'out', '-vv')
-        assert 'DEBUG castiron.cli.gen' in result.stderr
+        assert 'DEBUG castiron.cli.pipeline' in result.stderr
 
     def test_debug_implies_debug_logging(self, runner: CliRunner, project: Path) -> None:
         result = run(runner, '--from', 'openapi.json', '--output', 'out', '--debug')
-        assert 'DEBUG castiron.cli.gen' in result.stderr
+        assert 'DEBUG castiron.cli.pipeline' in result.stderr
 
     @pytest.mark.parametrize(('size', 'expected'), [(0, '0 B'), (999, '999 B'), (1000, '1.0 kB'), (14200, '14.2 kB')])
     def test_the_size_is_rendered_in_bytes_below_a_kilobyte(self, size: int, expected: str) -> None:

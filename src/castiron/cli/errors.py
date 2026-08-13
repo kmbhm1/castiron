@@ -78,9 +78,21 @@ _SECRET_WORD = (
 #: almost everywhere — hence the scoped ``(?i:...)`` on the word list alone.
 _SECRET_PARAM_NAME = re.compile(rf'(?:^|[-_.]|(?<=[a-z0-9])(?=[A-Z])){_SECRET_WORD}(?=$|[-_.]|[A-Z])')
 
-#: One ``?name=value`` / ``&name=value`` / ``#name=value`` pair. ``#`` is in the leading class
-#: because a Supabase auth redirect puts ``access_token`` in the URL *fragment*, not the query.
-_QUERY_PARAM = re.compile(r'([?&#])([^&\s=#]*)=([^&\s#]*)')
+#: One ``?name=value`` / ``&name=value`` / ``#name=value`` pair, split into the three scans
+#: :func:`_mask_secret_parameters` needs. ``#`` is a lead because a Supabase auth redirect puts
+#: ``access_token`` in the URL *fragment*, not the query.
+#:
+#: ⚠ These replace a single ``([?&#])([^&\s=#]*)=([^&\s#]*)`` (CI-144). ``?`` is a member of both
+#: the lead class and the old name class, so on a run containing k of them the greedy name walk ran
+#: once per ``?`` -- Θ(k · run), and **57.9 s on 160 000 characters**. The scan is not merely
+#: repeated, it is *wasted*: the name class excludes ``=``, so every character the engine gives back
+#: while backtracking is by construction not the ``=`` it is looking for. The pattern therefore
+#: matches at a lead ``i`` **iff the first character of ``[&\s=#]`` at or after i+1 is ``=``** -- a
+#: closed form with no search in it, which is what :func:`_mask_secret_parameters` evaluates once
+#: per lead instead.
+_PARAM_LEAD = re.compile(r'[?&#]')
+_PARAM_NAME_END = re.compile(r'[&\s=#]')
+_PARAM_VALUE_END = re.compile(r'[&\s#]')
 
 #: ``scheme://userinfo@host``. ``[^/?#\s]*`` is greedy on purpose: it backtracks to the **last**
 #: ``@`` before the path, which is how ``urllib.parse.SplitResult`` derives userinfo
@@ -320,20 +332,50 @@ def _mask_secret_parameters(text: str) -> str:
     The name is matched **decoded** (so ``?api%5Fkey=`` is caught) but rewritten exactly as it
     was found, so the message keeps the user's own spelling of their URL.
 
+    ⚠ **A hand-written scan, not a ``re.sub`` (CI-144), and the two are equivalent by
+    construction** -- see :data:`_PARAM_LEAD` for the proof and
+    ``tests/unit/cli/test_errors.py::TestRedactQueryParamStaysLinear`` for the measurement.
+    The scan carries the position of the next name terminator forward across leads, which is the
+    one thing ``re`` cannot do and the only reason the pattern was quadratic. Nothing here may be
+    changed back into a single pattern whose name class admits ``?``.
+
     Args:
         text: The message about to be shown to the user.
 
     Returns:
         ``text`` with each credential-bearing parameter's value replaced by :data:`REDACTED`.
     """
-
-    def mask(match: re.Match[str]) -> str:
-        lead, name = match.group(1), match.group(2)
+    # Every match contains a literal `=`, so a text without one cannot contain a match. Cheap,
+    # C-level, and the common case for a log line.
+    if '=' not in text:
+        return text
+    pieces: list[str] = []
+    pos = 0
+    while (lead := _PARAM_LEAD.search(text, pos)) is not None:
+        start = lead.start()
+        name_end = _PARAM_NAME_END.search(text, start + 1)
+        if name_end is None:
+            # No terminator after this lead means no `=` after it either: no match can follow.
+            break
+        stop = name_end.start()
+        if text[stop] != '=':
+            # No lead in (start, stop) can match either -- `&` and `#` would BE `stop`, and every
+            # `?` in between shares this same terminator. Skipping the whole run in one step is
+            # what turns Θ(k · run) into Θ(run); `stop > start`, so `pos` strictly advances.
+            pieces.append(text[pos:stop])
+            pos = stop
+            continue
+        name = text[start + 1 : stop]
+        value_end = _PARAM_VALUE_END.search(text, stop + 1)
+        end = len(text) if value_end is None else value_end.start()
+        pieces.append(text[pos:start])
         if _SECRET_PARAM_NAME.search(unquote(name)):
-            return f'{lead}{name}={REDACTED}'
-        return match.group(0)
-
-    return _QUERY_PARAM.sub(mask, text)
+            pieces.append(f'{text[start]}{name}={REDACTED}')
+        else:
+            pieces.append(text[start:end])
+        pos = end
+    pieces.append(text[pos:])
+    return ''.join(pieces)
 
 
 def _mask_spellings(text: str, spellings: Sequence[str]) -> str:

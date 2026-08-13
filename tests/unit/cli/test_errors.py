@@ -3,6 +3,7 @@
 import json
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -908,6 +909,17 @@ class TestRedactStaysLinear:
                 'a blob in the same message as a dsn',
                 lambda n: f'postgresql://u:hunter2pass@db.example.com/x {(BLOB * (n // len(BLOB) + 1))[:n]}',
             ),
+            # ⚠ CI-144. `?` was a member of BOTH the lead class and the old name class, so the
+            # greedy name walk ran once per `?` in a run -- 57.9 s at 160 000 characters. The `=`
+            # must sit OUTSIDE the `?`-dense run: `_mask_secret_parameters`'s cheap `'=' not in
+            # text` guard skips a text without one, and a run whose own terminator IS the `=`
+            # matched on the first try and was never slow. Measured through `redact` at these
+            # sizes: 64.2x on `main` @ aca5577 against a budget of 30 -- it failed, which is the
+            # point -- and 6.1x with the scanner.
+            (
+                'a ?-dense run',
+                lambda n: '?' * (n // 2) + 'a' * (n // 2) + ' ?jwt=hunter2pass',
+            ),
         ],
     )
     def test_the_cost_does_not_grow_quadratically(self, name: str, build: Callable[[int], str]) -> None:
@@ -921,6 +933,117 @@ class TestRedactStaysLinear:
         # it guards -- on `main` the large measurement is 0.2-4 s, thousands of times the floor.
         growth = cost(large) / max(cost(small), 1e-4)
         assert growth < self.GROWTH_BUDGET, f'{name} grew {growth:.0f}x for 8x the input'
+
+
+@pytest.mark.unit
+class TestRedactQueryParamStaysLinear:
+    """The parameter pass is a hand-written scan, and these are the structural reasons (CI-144)."""
+
+    @pytest.mark.parametrize(
+        'text',
+        [
+            '?' * 5_000,
+            '&?#' * 2_000,
+            '?' * 2_000 + '=',
+            '?a=' + '?' * 2_000,
+            '?a=1' * 1_000,
+        ],
+    )
+    def test_it_terminates_on_a_lead_dense_string(self, text: str) -> None:
+        # The scan advances by hand, so termination is an obligation rather than a gift from `re`.
+        # Every branch must move the cursor strictly forward; one that does not hangs here rather
+        # than anywhere a user could see.
+        assert isinstance(redact(text), str)
+
+    def test_the_scan_skips_a_whole_run_after_a_non_terminating_lead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ⚠ This is the assertion the quadratic is about, in the spirit of
+        # `test_the_mop_up_sees_every_host_in_one_call`. 200 leads share one terminator; the scan
+        # must consult it ONCE and jump the whole run, not once per lead. Restoring a per-lead
+        # walk turns this into ~200 and the growth budget above into a 60x failure.
+        calls: list[int] = []
+
+        class CountingSearch:
+            """A counting proxy for a compiled pattern -- `re.Pattern.search` is read-only."""
+
+            def __init__(self, pattern: re.Pattern[str]) -> None:
+                self._pattern = pattern
+
+            def search(self, text: str, pos: int = 0) -> re.Match[str] | None:
+                calls.append(pos)
+                return self._pattern.search(text, pos)
+
+        monkeypatch.setattr(errors, '_PARAM_NAME_END', CountingSearch(errors._PARAM_NAME_END))
+        redact('?' * 200 + 'a' * 200 + ' ?jwt=hunter2pass')
+        assert len(calls) <= 5, f'the scan consulted the terminator {len(calls)} times for 201 leads'
+
+    @pytest.mark.parametrize(
+        'text',
+        [
+            '?' * 100,
+            'https://user:hunter2pass@h/x?apikey',
+            'no parameters at all',
+            '',
+        ],
+    )
+    def test_the_equals_guard_is_a_fast_path_only(self, text: str) -> None:
+        # `'=' not in text` returns early. It is an optimization, not a rule: every match the scan
+        # can make contains a literal `=`, so deleting the guard changes no output. Recorded here
+        # as the one mutant that must NOT be killed -- if this ever stops holding, the guard has
+        # quietly become load-bearing and the proof of equivalence is gone with it.
+        assert '=' not in text  # not vacuous: the guard is the branch under test
+        assert errors._mask_secret_parameters(text) == text
+
+    def test_an_unmasked_value_is_echoed_byte_for_byte(self) -> None:
+        # Guards the `emitted`/`pos` bookkeeping: a text with no credential parameter in it must
+        # come back out of the scan unchanged, character for character.
+        text = 'https://x.supabase.co/rest/v1/table?select=*&order=id&limit=10#anchor=1'
+        assert errors._mask_secret_parameters(text) == text
+        assert redact(text) == text
+
+
+@pytest.mark.unit
+class TestRedactQueryParamAwkwardShapes:
+    """The equivalence checklist the scanner has to survive (CI-144 §10.3).
+
+    Exact expected output, in the discipline of `REDACTABLE_SHAPES`, so a future change to this
+    pass fails here rather than being silently re-baselined. The shapes that `main` *leaked* are
+    deliberately not in this table: they are pinned in their fixed form by
+    `TestRedactQueryParamUnderMasking`, and pinning a leak as expected behaviour in the same PR
+    that closes it would be a test asserting the bug.
+    """
+
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('?apikey=hunter2pass', '?apikey=***'),
+            ('abc?token=hunter2pass', 'abc?token=***'),
+            ('?x=1&token=hunter2pass', '?x=1&token=***'),
+            ('#access_token=hunter2pass', '#access_token=***'),
+            ('?apikey=YWJjZGVmZ2hpamtsbW5vcA==', '?apikey=***'),
+            # An empty value is still masked: the mask is positional, keyed on the name.
+            ('?apikey=', '?apikey=***'),
+            # An empty NAME is not a credential, so `?=` is echoed back untouched.
+            ('?=', '?='),
+            ('?select=*&order=id', '?select=*&order=id'),
+            ('?', '?'),
+            ('???', '???'),
+            ('no parameters at all', 'no parameters at all'),
+            # ⚠ The L5 shapes. A credential word BEFORE an inner `?` still owns the name, and any
+            # fix that lets the LAST `?` own it instead unmasks these -- which is masking less on a
+            # published security boundary. `_PARAM_NAME_END` must never gain a `?`.
+            ('?jwt.x?y=hunter2pass', '?jwt.x?y=***'),
+            ('?token.a?y=hunter2pass', '?token.a?y=***'),
+            # The value class must never gain a `?` either: it would shorten the value on the
+            # branch that MASKS it and print everything after the `?` (see
+            # `TestRedactQueryParamHalfPrint`).
+            ('?token=ab?cd', '?token=***'),
+            ('?service%5Frole%5Fkey=hunter2pass', '?service%5Frole%5Fkey=***'),
+            ('https://x.supabase.co/rest/v1/table?key=eq.5', 'https://x.supabase.co/rest/v1/table?key=***'),
+            ('https://x.supabase.co/rest/v1/table?monkey=eq.5', 'https://x.supabase.co/rest/v1/table?monkey=eq.5'),
+        ],
+    )
+    def test_the_shape_is_masked_exactly_as_it_was(self, text: str, expected: str) -> None:
+        assert redact(text) == expected
 
 
 @pytest.mark.unit

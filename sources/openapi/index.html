@@ -1,0 +1,2006 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A schema→typed-code compiler for Python.">
+      
+      
+      
+        <link rel="canonical" href="https://kmbhm1.github.io/castiron/sources/openapi/">
+      
+      
+        <link rel="prev" href="../../getting-started/quickstart/">
+      
+      
+        <link rel="next" href="../../reference/cli/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>OpenAPI / PostgREST - castiron</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-openapi-source-what-it-can-and-cannot-see" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="castiron" class="md-header__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            castiron
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              OpenAPI / PostgREST
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="castiron" class="md-nav__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    castiron
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sources
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sources
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAPI / PostgREST
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAPI / PostgREST
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-trade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The trade
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-full-picture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The full picture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The full picture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tables-views-and-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables, views and columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys and constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functions-rpcs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions (RPCs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity-and-generated-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity and generated columns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identity and generated columns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-warning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The warning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-infer-generated-primary-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --infer-generated-primary-keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-consequences-worth-knowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other consequences worth knowing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other consequences worth knowing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-lengths-survive-but-do-not-become-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String lengths survive but do not become constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#views" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Views
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#table-or-view-is-inferred-from-one-signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table or view is inferred from one signal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#privileges-filter-objects-not-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privileges filter objects, not columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-foreign-key-can-point-at-a-table-you-cannot-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A foreign key can point at a table you cannot see
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constraint-names-are-manufactured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constraint names are manufactured
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argument-order-is-only-partly-encoded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Argument order is only partly encoded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#volatility-depends-on-your-postgrest-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Volatility depends on your PostgREST version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integer-widths-depend-on-your-postgrest-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integer widths depend on your PostgREST version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unknown-types-never-fail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unknown types never fail
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/generated-code/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/exit-codes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exit codes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-trade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The trade
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-full-picture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The full picture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The full picture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tables-views-and-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables, views and columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys and constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functions-rpcs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions (RPCs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity-and-generated-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity and generated columns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identity and generated columns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-warning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The warning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-infer-generated-primary-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --infer-generated-primary-keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-consequences-worth-knowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other consequences worth knowing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other consequences worth knowing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-lengths-survive-but-do-not-become-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String lengths survive but do not become constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#views" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Views
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#table-or-view-is-inferred-from-one-signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table or view is inferred from one signal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#privileges-filter-objects-not-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privileges filter objects, not columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-foreign-key-can-point-at-a-table-you-cannot-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A foreign key can point at a table you cannot see
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constraint-names-are-manufactured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constraint names are manufactured
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argument-order-is-only-partly-encoded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Argument order is only partly encoded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#volatility-depends-on-your-postgrest-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Volatility depends on your PostgREST version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integer-widths-depend-on-your-postgrest-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integer widths depend on your PostgREST version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unknown-types-never-fail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unknown types never fail
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-openapi-source-what-it-can-and-cannot-see">The OpenAPI source: what it can and cannot see<a class="headerlink" href="#the-openapi-source-what-it-can-and-cannot-see" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>The OpenAPI source needs no database credentials and sees everything your API key can
+see — column types, nullability, primary keys, single-column foreign keys, enums, and
+RPC argument names, types and (in almost every case) declaration order. It cannot see unique
+or check constraints, identity/generated columns, exact integer widths below <code>bigint</code>
+(on PostgREST ≥ 14.8 — an older server keeps them,
+<a href="#integer-widths-depend-on-your-postgrest-version">why</a>), or function return types — and
+for a <code>VOLATILE</code> function with defaulted arguments it recovers only part of the argument
+order, telling you which part. <strong>Function volatility depends on your
+server: below PostgREST 13.0.5 the document does not encode it at all</strong>, and castiron reports
+it as unknown rather than guessing (<a href="#volatility-depends-on-your-postgrest-version">why</a>).
+Point castiron at the database itself when you need those.</p>
+</blockquote>
+<p>That is the whole page in one paragraph. The rest explains <em>why</em> each limit exists, what it
+does to your generated code, and what to do about it — because a code generator that
+overstates what it knows is worse than one that tells you where it stops.</p>
+<h2 id="the-trade">The trade<a class="headerlink" href="#the-trade" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart LR
+    PG["Postgres catalogue&lt;br/&gt;every fact about your schema"] --&gt; PR["PostgREST"]
+    PR --&gt; DOC["OpenAPI document&lt;br/&gt;filtered by your API role"]
+    DOC --&gt; IR["castiron Schema IR"]
+    IR --&gt; M["typed models"]
+    PR -.-&gt;|not encoded| LOST["UNIQUE / CHECK / EXCLUDE&lt;br/&gt;identity and nextval defaults&lt;br/&gt;smallint vs integer (PostgREST ≥ 14.8)&lt;br/&gt;numeric precision, domains&lt;br/&gt;function return types"]</code></pre>
+<p>castiron reads one document: the <strong>OpenAPI (Swagger 2.0) description PostgREST publishes
+at its API root</strong>. One authenticated <code>GET</code>, no driver, no connection string, no firewall
+rule. Every fact castiron knows about your schema is a fact PostgREST chose to encode
+there — and PostgREST built that document to describe an HTTP API, not to reproduce a
+Postgres catalogue.</p>
+<p>So the source's ceiling is PostgREST's ceiling. That is not a defect castiron can patch:
+the information is not in the file. What castiron <em>can</em> do — and does — is refuse to
+guess. Anything the document does not state stays unknown rather than becoming a
+plausible-looking lie in your models.</p>
+<p>Two further consequences of reading an API description rather than a catalogue:</p>
+<ul>
+<li><strong>You see what your API role sees — object by object, not column by column.</strong> Tables and
+  functions your key cannot access are not "hidden": they are absent, indistinguishable from
+  not existing. This is why the run summary prints the counts it read; <code>read 2 tables</code>
+  when you expected 20 is your signal. <strong>Column-level privileges are a different matter —
+  PostgREST does not apply them to the document at all</strong>, so castiron emits fields for
+  columns your key cannot read. See
+  <a href="#privileges-filter-objects-not-columns">Privileges filter objects, not columns</a>.</li>
+<li><strong>One schema per document.</strong> PostgREST serves one schema at a time, selected by
+  <code>Accept-Profile</code> (castiron's <code>--schema</code>). Cross-schema foreign keys are not resolvable
+  from a single run.</li>
+</ul>
+<h2 id="the-full-picture">The full picture<a class="headerlink" href="#the-full-picture" title="Permanent link">&para;</a></h2>
+<p>Legend: <strong>✅ full</strong> — the fact is exact. <strong>⚠ partial</strong> — something survives, degraded.
+<strong>❌ absent</strong> — not in the document at all. <strong>n/a</strong> — the comparison does not apply.</p>
+<h3 id="tables-views-and-columns">Tables, views and columns<a class="headerlink" href="#tables-views-and-columns" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>OpenAPI source</th>
+<th>Live DB source (planned)</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Table/view names, columns</td>
+<td>✅ full</td>
+<td>✅</td>
+<td><code>definitions</code></td>
+</tr>
+<tr>
+<td>Column nullability</td>
+<td>✅ full for tables; ⚠ <strong>every view column is reported nullable</strong></td>
+<td>✅</td>
+<td><code>required</code> lists exactly the NOT NULL columns; PostgREST reports view columns nullable</td>
+</tr>
+<tr>
+<td>Table vs view</td>
+<td>⚠ <strong>inferred from one signal</strong> — no view marker is emitted, so a non-empty <code>required</code> list means <code>BASE TABLE</code> and anything else means <code>VIEW</code>; see <a href="#table-or-view-is-inferred-from-one-signal">below</a></td>
+<td>✅ <code>relkind</code></td>
+<td>the document carries no marker</td>
+</tr>
+<tr>
+<td>Column type</td>
+<td>⚠ <strong>on PostgREST ≥ 14.8, <code>smallint</code> and <code>integer</code> both arrive as <code>int32</code></strong> and <code>bigint</code> as <code>int64</code>; <strong>below 14.8</strong> <code>format</code> carries the Postgres type name and all three widths stay distinct. Every other type keeps its Postgres name on either server. See <a href="#integer-widths-depend-on-your-postgrest-version">below</a></td>
+<td>✅ exact</td>
+<td>PostgREST's <code>toSwaggerFormat</code>, which only spells integers <code>int32</code>/<code>int64</code> from <strong>14.8</strong></td>
+</tr>
+<tr>
+<td>Numeric precision/scale, <code>varchar(n)</code> typmod</td>
+<td>❌ lost (<code>maxLength</code> survives, but see <a href="#string-lengths-survive-but-do-not-become-constraints">below</a>)</td>
+<td>✅</td>
+<td><code>format_type(atttypid, NULL)</code> erases them</td>
+</tr>
+<tr>
+<td>Domain types</td>
+<td>❌ collapse to their base type</td>
+<td>✅</td>
+<td>resolved before the document is built</td>
+</tr>
+<tr>
+<td>Column default</td>
+<td>⚠ <strong>only when it survives a JSON decode</strong> — string-ish defaults (<code>now()</code>, <code>gen_random_uuid()</code>, <code>'text'</code>) come through; <strong><code>nextval(...)</code> is silently dropped</strong></td>
+<td>✅</td>
+<td>PostgREST re-quotes string-ish defaults as JSON; for other types the raw default text must itself be valid JSON</td>
+</tr>
+<tr>
+<td>Identity / generated columns</td>
+<td>❌ <strong>always false</strong> — see <a href="#identity-and-generated-columns">below</a></td>
+<td>✅</td>
+<td>no <code>nextval</code> reaches the document</td>
+</tr>
+<tr>
+<td>Column comments</td>
+<td>✅ full</td>
+<td>✅</td>
+<td><code>description</code></td>
+</tr>
+<tr>
+<td>Table comments</td>
+<td>✅ full</td>
+<td>✅</td>
+<td><code>definitions.&lt;t&gt;.description</code> → the model docstring</td>
+</tr>
+<tr>
+<td>Objects (tables, views, functions) the API role cannot see</td>
+<td>❌ <strong>invisible</strong> — RLS and privileges silently shrink the schema</td>
+<td>✅</td>
+<td>PostgREST's default openapi-mode</td>
+</tr>
+<tr>
+<td>Columns the API role cannot <code>SELECT</code></td>
+<td>⚠ <strong>still described, and still emitted</strong> — column privileges are not applied to the document; see <a href="#privileges-filter-objects-not-columns">below</a></td>
+<td>n/a</td>
+<td>PostgREST filters relations, not columns — a generated model is not a privilege boundary</td>
+</tr>
+</tbody>
+</table>
+<h3 id="keys-and-constraints">Keys and constraints<a class="headerlink" href="#keys-and-constraints" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>OpenAPI source</th>
+<th>Live DB source (planned)</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Primary-key membership</td>
+<td>✅ full</td>
+<td>✅</td>
+<td><code>&lt;pk/&gt;</code> marker in a column's description</td>
+</tr>
+<tr>
+<td>Composite primary-key <strong>order</strong></td>
+<td>❌ not recoverable</td>
+<td>✅</td>
+<td>markers are per column, unordered</td>
+</tr>
+<tr>
+<td>A view's primary key</td>
+<td>⚠ recorded as <strong>UNIQUE, not PRIMARY KEY</strong> — see <a href="#views">below</a></td>
+<td>✅</td>
+<td>a downgrade, not a guess</td>
+</tr>
+<tr>
+<td>Foreign keys</td>
+<td>⚠ <strong>single-column only</strong>; no schema</td>
+<td>✅</td>
+<td><code>&lt;fk table='..' column='..'/&gt;</code> marker</td>
+</tr>
+<tr>
+<td>Composite foreign keys</td>
+<td>❌ invisible; a column in two foreign keys reports only one</td>
+<td>✅</td>
+<td>one marker per column</td>
+</tr>
+<tr>
+<td>A foreign key whose <strong>target table you cannot see</strong></td>
+<td>⚠ <strong>the relationship is dropped</strong>, the constraint is kept, and castiron warns once — see <a href="#a-foreign-key-can-point-at-a-table-you-cannot-see">below</a></td>
+<td>✅</td>
+<td>privileges filter relations, not markers</td>
+</tr>
+<tr>
+<td><strong>Constraint names</strong> (primary key, unique <strong>and</strong> foreign key)</td>
+<td>❌ <strong>never in the document</strong> — castiron synthesizes Postgres's own defaults (<code>&lt;table&gt;_pkey</code>, <code>&lt;table&gt;_&lt;cols&gt;_key</code>, <code>&lt;table&gt;_&lt;column&gt;_fkey</code>) and marks every one <code>name_is_synthesized</code> — see <a href="#constraint-names-are-manufactured">below</a></td>
+<td>✅ <code>pg_constraint.conname</code></td>
+<td>not encoded</td>
+</tr>
+<tr>
+<td><strong>UNIQUE constraints</strong></td>
+<td>❌ <strong>absent entirely</strong></td>
+<td>✅</td>
+<td>not in the document</td>
+</tr>
+<tr>
+<td><strong>CHECK constraints</strong></td>
+<td>❌ <strong>absent entirely</strong></td>
+<td>✅</td>
+<td>not in the document</td>
+</tr>
+<tr>
+<td><strong>EXCLUDE constraints</strong></td>
+<td>❌ absent</td>
+<td>✅</td>
+<td>not in the document</td>
+</tr>
+<tr>
+<td>Cross-schema / multi-schema</td>
+<td>❌ one schema per document</td>
+<td>✅</td>
+<td>PostgREST design</td>
+</tr>
+</tbody>
+</table>
+<h3 id="enums">Enums<a class="headerlink" href="#enums" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>OpenAPI source</th>
+<th>Live DB source (planned)</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Enum values on a scalar column</td>
+<td>✅ full, <strong>with the type name</strong> (schema-qualified when needed)</td>
+<td>✅</td>
+<td><code>enum</code> + <code>format</code></td>
+</tr>
+<tr>
+<td>Enum values on an <strong>array</strong> column</td>
+<td>⚠ <strong>absent</strong> — such a column links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise it degrades to <code>list[Any]</code></td>
+<td>✅</td>
+<td>PostgREST looks up <code>pg_enum</code> by base type, which misses array types</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functions-rpcs">Functions (RPCs)<a class="headerlink" href="#functions-rpcs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>OpenAPI source</th>
+<th>Live DB source (planned)</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Name, schema</td>
+<td>✅ full</td>
+<td>✅</td>
+<td>the <code>/rpc/&lt;name&gt;</code> path key</td>
+</tr>
+<tr>
+<td>Argument names, has-default</td>
+<td>✅ full</td>
+<td>✅</td>
+<td>the POST body schema's <code>properties</code> and <code>required</code></td>
+</tr>
+<tr>
+<td>Argument <strong>order</strong></td>
+<td>✅ <strong>full</strong> for a <code>STABLE</code>/<code>IMMUTABLE</code> function, and for a <code>VOLATILE</code> one whose arguments are all required; ⚠ <strong>partial</strong> for a <code>VOLATILE</code> function with defaulted arguments — the required prefix is right and the defaulted tail is name-sorted. <code>FunctionInfo.parameter_order</code> says which you got. Below PostgREST 13.0.5 a GET exists for <strong>every</strong> function, so order is recovered in <strong>full</strong> for <code>VOLATILE</code> ones too. See <a href="#argument-order-is-only-partly-encoded">below</a></td>
+<td>✅</td>
+<td>the POST body's <code>properties</code> is a sorted map, but the GET <code>parameters</code> and the body's <code>required</code> are <strong>ordered arrays</strong></td>
+</tr>
+<tr>
+<td>Argument types</td>
+<td>⚠ <strong>as degraded as a column type, plus one loss beyond it</strong> — the same version-scoped integer collapse (<code>smallint</code> and <code>integer</code> both <code>int32</code> on PostgREST ≥ 14.8, distinct below it), and <code>char(2)</code> arrives as <code>character</code> with <strong>no <code>maxLength</code></strong>, which the same column would carry</td>
+<td>✅ exact</td>
+<td><code>toSwaggerFormat</code> again; <code>maxLength</code> is emitted for columns only</td>
+</tr>
+<tr>
+<td>An argument's <strong>enum values</strong></td>
+<td>❌ <strong>never carried on the argument</strong> — it links to an enum only if the same enum also appears on a scalar column somewhere in the document; otherwise the argument keeps a bare type name and no values</td>
+<td>✅</td>
+<td>the parameter declares <code>format</code> but no <code>enum</code> list, and its type name is unqualified</td>
+</tr>
+<tr>
+<td><strong>Return type</strong></td>
+<td>❌ <strong>never available</strong></td>
+<td>✅</td>
+<td>responses carry only <code>"OK"</code></td>
+</tr>
+<tr>
+<td><strong>Set-returning</strong></td>
+<td>❌ <strong>never available</strong></td>
+<td>✅ <code>proretset</code></td>
+<td>not encoded</td>
+</tr>
+<tr>
+<td>Volatility</td>
+<td>⚠ <strong>binary only, and only on PostgREST ≥ 13.0.5</strong> — <code>VOLATILE</code> (POST-only) vs non-volatile (a GET exists); <code>STABLE</code> vs <code>IMMUTABLE</code> unknown. <strong>Below 13.0.5</strong> the document emits a GET for every <code>/rpc/</code> path, so castiron reports <code>None</code> — unknown — rather than asserting anything. See <a href="#volatility-depends-on-your-postgrest-version">below</a></td>
+<td>✅ <code>provolatile</code></td>
+<td>the GET is only gated on volatility from <strong>13.0.5</strong> onward</td>
+</tr>
+<tr>
+<td><code>is_read_only</code></td>
+<td>⚠ <strong>only on PostgREST ≥ 13.0.5</strong> — a GET operation exists. <strong>Below 13.0.5</strong> it is <code>None</code>, unknown, for every function; castiron will not tell you a mutation is read-only</td>
+<td>✅ <code>provolatile != 'v'</code></td>
+<td>the same method gating, so the same version floor</td>
+</tr>
+<tr>
+<td><strong>Overloads</strong></td>
+<td>❌ <strong>collapsed upstream</strong> — one arbitrary signature survives</td>
+<td>✅</td>
+<td>one path key per function name</td>
+</tr>
+<tr>
+<td><code>OUT</code> / <code>INOUT</code> / <code>TABLE</code> params</td>
+<td>⚠ <code>INOUT</code> appears as an input; <code>OUT</code> params are excluded</td>
+<td>✅</td>
+<td>not encoded as inputs</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Functions are read but not yet emitted</p>
+<p><code>castiron gen</code> reports the function count it read (<code>read 6 tables, 1 enum and 4
+functions</code>) and lowers them into the Schema IR, but no shipped emitter consumes them
+yet. The typed RPC client is a later milestone — and, because return types are never
+available from this source, a genuinely typed RPC client depends on the live-DB source.</p>
+</div>
+<h2 id="identity-and-generated-columns">Identity and generated columns<a class="headerlink" href="#identity-and-generated-columns" title="Permanent link">&para;</a></h2>
+<p>This is the limit you meet within thirty seconds of your first run — so it gets a
+warning, a flag, and this section.</p>
+<p>PostgREST passes each column's default text through a JSON decoder and keeps it only if it
+parses. <code>nextval('orders_id_seq'::regclass)</code> is not JSON, so it is dropped — and there is
+no separate identity flag in the document. A textbook Supabase primary key:</p>
+<div class="highlight"><pre><span></span><code><span class="k">create</span><span class="w"> </span><span class="k">table</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span>
+<span class="w">  </span><span class="n">id</span><span class="w"> </span><span class="nb">bigint</span><span class="w"> </span><span class="k">generated</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="k">identity</span><span class="w"> </span><span class="k">primary</span><span class="w"> </span><span class="k">key</span><span class="p">,</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>therefore arrives at castiron as <em>"NOT NULL, no default, not identity"</em> — which is
+exactly how a natural key like <code>year int primary key</code> arrives. The two are
+indistinguishable in the document.</p>
+<p>castiron will not guess, so by default it believes what it was told and marks the column
+<strong>required on the Insert model</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">OrdersInsert</span><span class="p">(</span><span class="n">CustomModelInsert</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Orders Insert Schema.</span>
+
+<span class="sd">    Customer orders.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Primary Keys</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="c1"># Required fields</span>
+    <span class="n">total</span><span class="p">:</span> <span class="n">Decimal</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;The customer who placed the order.&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>That is annoying but <em>safe</em>: your code is forced to be explicit, and a wrong guess never
+reaches your database. The alternative — silently assuming every integer primary key is
+generated — makes <code>year int primary key</code> optional on insert and turns a compile-time
+annoyance into a runtime constraint violation in production.</p>
+<h3 id="the-warning">The warning<a class="headerlink" href="#the-warning" title="Permanent link">&para;</a></h3>
+<p>Because the fix is one flag away, castiron says so — once per run, on stderr, and <strong>only
+when the inference would actually change the output</strong>:</p>
+<div class="highlight"><pre><span></span><code>castiron: 4 tables have an integer primary key with no visible default (orders, products, restricted_table and 1 more) -- PostgREST does not expose nextval()/identity defaults, so castiron marks those columns required on the Insert models. Pass --infer-generated-primary-keys (or set infer-generated-primary-keys = true) if they are serial/identity columns.
+</code></pre></div>
+<p>If your keys are UUIDs, or composite, or genuinely natural, the warning never fires.</p>
+<h3 id="-infer-generated-primary-keys"><code>--infer-generated-primary-keys</code><a class="headerlink" href="#-infer-generated-primary-keys" title="Permanent link">&para;</a></h3>
+<p>If you know your integer primary keys are serial/identity columns — for a Supabase project
+they almost always are — turn the inference on:</p>
+<div class="highlight"><pre><span></span><code>castiron<span class="w"> </span>gen<span class="w"> </span>--from<span class="w"> </span>./openapi.json<span class="w"> </span>--infer-generated-primary-keys
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">OrdersInsert</span><span class="p">(</span><span class="n">CustomModelInsert</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Orders Insert Schema.</span>
+
+<span class="sd">    Customer orders.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Required fields</span>
+    <span class="n">total</span><span class="p">:</span> <span class="n">Decimal</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;The customer who placed the order.&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>id</code> is gone from the Insert model, which is what you wanted.</p>
+<p>The rule is narrow on purpose: it applies only to a <strong>sole</strong> primary-key column that is
+NOT NULL, has no visible default, is not already flagged as identity, and whose type is
+<code>smallint</code>, <code>integer</code> or <code>bigint</code>. It is still an inference — it is named as one, and it is
+off by default, so nothing infers anything on your behalf unless you ask. Set it in your
+config file once you have decided:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[tool.castiron]</span>
+<span class="n">infer-generated-primary-keys</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</code></pre></div>
+<h2 id="other-consequences-worth-knowing">Other consequences worth knowing<a class="headerlink" href="#other-consequences-worth-knowing" title="Permanent link">&para;</a></h2>
+<h3 id="string-lengths-survive-but-do-not-become-constraints">String lengths survive but do not become constraints<a class="headerlink" href="#string-lengths-survive-but-do-not-become-constraints" title="Permanent link">&para;</a></h3>
+<p><code>character varying(255)</code> arrives with its <code>maxLength</code>, and the IR keeps it. But castiron's
+Pydantic emitter derives <code>Annotated[str, StringConstraints(...)]</code> from <strong><code>length()</code> CHECK
+constraints</strong>, which this source never provides. So a <code>varchar(255)</code> column generates a
+plain <code>str</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+<p>Nothing is wrong and nothing is invented — the length is simply not expressed as a
+constraint in the generated model today.</p>
+<h3 id="views">Views<a class="headerlink" href="#views" title="Permanent link">&para;</a></h3>
+<p>Every column of a view is reported nullable by PostgREST, so every field on a view model
+is optional:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ActiveUsersViewBaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ActiveUsersView Base Schema.</span>
+
+<span class="sd">    Users with a recent login.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Columns</span>
+    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="n">favorite_product_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>PostgREST <em>does</em> propagate key markers through views, but castiron's IR defines a view as
+having no primary key — so the marker is retained one step down, as a <strong>UNIQUE</strong>
+constraint. That is a deliberate downgrade rather than a discard: it keeps the fact the
+document actually stated, and it is what tells a foreign key pointing <em>at</em> the view that
+the relationship is many-to-one rather than many-to-many.</p>
+<h3 id="table-or-view-is-inferred-from-one-signal">Table or view is inferred from one signal<a class="headerlink" href="#table-or-view-is-inferred-from-one-signal" title="Permanent link">&para;</a></h3>
+<p>The document carries <strong>no view marker at all</strong> — PostgREST computes <code>relkind IN ('v','m')</code>
+internally and never writes it down — so castiron infers the relation kind, and it infers it
+from exactly one thing: the definition's <code>required</code> array.</p>
+<div class="highlight"><pre><span></span><code>required is non-empty  →  BASE TABLE
+anything else          →  VIEW
+</code></pre></div>
+<p>That is the whole rule. It rests on a Postgres catalogue fact rather than on a PostgREST
+behaviour: <code>required</code> is exactly the NOT NULL set, and a view column's
+<code>pg_attribute.attnotnull</code> is always false, so <strong>a view never carries <code>required</code></strong>.</p>
+<p><strong>Both directions of the inference can be wrong, and it is worth knowing how:</strong></p>
+<ul>
+<li>A <strong>base table whose every column is nullable</strong> is classified as a <code>VIEW</code>. Nothing in the
+  document distinguishes it from one.</li>
+<li>A <strong>view with at least one column reported NOT NULL</strong> would be classified as a
+  <code>BASE TABLE</code>. Postgres does not produce that shape today, which is why the rule is worth
+  making, but the inference is what it is — the document is not being read for a fact it
+  states, it is being read for a fact that correlates.</li>
+</ul>
+<p>Misreading a table as a view has a bounded cost: a view has no primary key in castiron's IR,
+so a <code>&lt;pk/&gt;</code> marker on it is retained one step down as a UNIQUE constraint (above). A base
+table that lands in the ambiguous cell has no NOT NULL column at all, and a Postgres PRIMARY
+KEY column is NOT NULL — so it has no primary key to lose.</p>
+<p><strong>Write verbs are not a signal.</strong> An earlier release also read <code>post</code>/<code>patch</code>/<code>delete</code> on the
+relation's path as evidence of table-ness. Measured against PostgREST v12.2.3 and v14.14, the
+verbs track Postgres <em>auto-updatability</em>, not relation kind: a <code>GRANT SELECT</code>-only simple view
+is auto-updatable and gets all three. On the captured 26-relation schema the verb signal was
+present on 24 relations including 3 of the 5 views. It was noise, and it is gone.</p>
+<h3 id="privileges-filter-objects-not-columns">Privileges filter objects, not columns<a class="headerlink" href="#privileges-filter-objects-not-columns" title="Permanent link">&para;</a></h3>
+<p>This one runs in the unsafe direction, so read it even if you skip the rest.</p>
+<p>PostgREST's default <code>openapi-mode</code> hides <em>relations</em> the API role cannot reach: a table your
+key cannot read is absent from <code>definitions</code>, and a function it cannot execute has no
+<code>/rpc/</code> path. <strong>That filtering stops at the relation boundary.</strong> A column carrying a
+column-level <code>REVOKE</code> is still described in its table's <code>properties</code> — measured against
+PostgREST v12.2.3 and v14.14, and still present when <code>openapi-mode = ignore-privileges</code> is
+set, so its presence is not an artifact of the privilege filter. It is simply not filtered.</p>
+<div class="highlight"><pre><span></span><code><span class="k">REVOKE</span><span class="w"> </span><span class="k">ALL</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">partially_visible</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">anon</span><span class="p">;</span>
+<span class="k">GRANT</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">)</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">partially_visible</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="n">anon</span><span class="p">;</span>
+</code></pre></div>
+<p><code>secret_body</code> is not readable by <code>anon</code>. It arrives in the document anyway, so castiron emits
+a field for it:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">PartiallyVisibleBaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;PartiallyVisible Base Schema.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Primary Keys</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="c1"># Columns</span>
+    <span class="n">secret_body</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+<p><strong>A generated model is not a privilege boundary.</strong> It describes the schema PostgREST
+published, not the subset of it your key may read — so a model can name a column that fails
+with a permission error the moment you select it. Treat the models as a description of the
+schema's <em>shape</em>; get "what may this role read?" from <code>information_schema.column_privileges</code>,
+never from generated code.</p>
+<h3 id="a-foreign-key-can-point-at-a-table-you-cannot-see">A foreign key can point at a table you cannot see<a class="headerlink" href="#a-foreign-key-can-point-at-a-table-you-cannot-see" title="Permanent link">&para;</a></h3>
+<p>PostgREST's privilege filter removes the <em>relation</em>, not the marker that references it. So a
+column can carry <code>&lt;fk table='private_ledger' column='id'/&gt;</code> while <code>private_ledger</code> is nowhere in
+<code>definitions</code> — the normal state of a locked-down project, not a misconfiguration.</p>
+<p>castiron cannot build a relationship it has no target for, so:</p>
+<ul>
+<li><strong><code>is_foreign_key</code> is <code>False</code></strong> for that column. The flag means <em>"castiron can build a
+  relationship from this column"</em>, not <em>"the database has a foreign key here"</em>.</li>
+<li><strong>The <code>FOREIGN KEY</code> constraint is kept</strong> in the IR, with its
+  <code>FOREIGN KEY (ledger_id) REFERENCES private_ledger(id)</code> definition. That is the record that the
+  database really does have one, and it is what a later live-database run can be diffed against.</li>
+<li><strong>The column is emitted as a plain value.</strong> No nested model, no embed.</li>
+<li><strong><code>castiron gen</code> warns once per run</strong>, naming up to three of them:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>1 foreign key points at a table this schema does not contain (ledger_refs.ledger_id -&gt;
+private_ledger) -- the target is not visible to the API role, so castiron cannot build the
+relationship. The column is emitted as a plain value and no nested model is generated for it;
+the foreign-key constraint is still recorded in the IR.
+</code></pre></div>
+<p>If you did not expect that line, the API role is missing a <code>GRANT</code> on the target table. If you
+did, nothing is wrong — the warning is telling you which relationship the models do not have.</p>
+<h3 id="constraint-names-are-manufactured">Constraint names are manufactured<a class="headerlink" href="#constraint-names-are-manufactured" title="Permanent link">&para;</a></h3>
+<p>The document carries <strong>no constraint name at all</strong> — not for primary keys, not for unique
+constraints, not for foreign keys. castiron fills in Postgres's own default spellings
+(<code>orders_pkey</code>, <code>active_users_view_id_key</code>, <code>order_lines_order_id_fkey</code>) so that every constraint
+has the stable key the IR needs.</p>
+<p>Those names are right whenever the constraint was created without an explicit name, and wrong
+whenever it was not:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CONSTRAINT</span><span class="w"> </span><span class="n">order_lines_order_fk</span><span class="w"> </span><span class="k">FOREIGN</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">order_id</span><span class="p">)</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
+</code></pre></div>
+<p>castiron reports <code>order_lines_order_id_fkey</code> for that one. A guessed name is byte-identical to a
+real default name, so nothing downstream could tell them apart — which is why the IR records the
+provenance explicitly: every <code>ConstraintInfo</code> and <code>ForeignKeyInfo</code> this source produces carries
+<code>name_is_synthesized = True</code>. A live-database source reads <code>pg_constraint.conname</code> and leaves it
+<code>False</code>. Consumers are meant to read the flag rather than the string: compare constraint names
+only when both sides report <code>False</code>, and omit <code>name=</code> from generated DDL when it is <code>True</code>.</p>
+<h3 id="argument-order-is-only-partly-encoded">Argument order is only partly encoded<a class="headerlink" href="#argument-order-is-only-partly-encoded" title="Permanent link">&para;</a></h3>
+<p>This one used to run in the unsafe direction, because nothing about the result <em>looked</em> wrong.</p>
+<p>A PostgREST document serializes one parameter list <strong>three</strong> ways, and the difference that
+matters is JSON's: a <strong>map</strong> has no meaningful order, an <strong>array</strong> does.</p>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Shape</th>
+<th>Order</th>
+<th>Emitted for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST body <code>properties</code></td>
+<td>object (map)</td>
+<td><strong>alphabetical</strong></td>
+<td>every function</td>
+</tr>
+<tr>
+<td>GET operation <code>parameters</code></td>
+<td>array</td>
+<td><strong>declaration</strong></td>
+<td><code>STABLE</code> / <code>IMMUTABLE</code> only on PostgREST ≥ 13.0.5 — <strong>every</strong> function below it</td>
+</tr>
+<tr>
+<td>POST body <code>required</code></td>
+<td>array</td>
+<td><strong>declaration</strong>, non-defaulted arguments only</td>
+<td>every function</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>search_products(p_terms text[], p_limit integer default 20)</code> the body arrives sorted:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;p_limit&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;format&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;int32&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;integer&quot;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;p_terms&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;format&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text[]&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;array&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;items&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>...while the GET operation for the same function lists <code>p_terms</code> before <code>p_limit</code>. castiron
+reads the ordered encodings, so it reports <code>p_terms, p_limit</code> — as declared.</p>
+<p><strong>What you get, and how to tell.</strong> Every <code>FunctionInfo</code> carries a <code>parameter_order</code>:</p>
+<ul>
+<li><code>DECLARED</code> — <code>parameters</code> is in declaration order, in full. Either a GET operation existed
+  (<code>STABLE</code>/<code>IMMUTABLE</code>), or every argument was required so <code>required</code> covered the whole list,
+  or the function takes at most one argument.</li>
+<li><code>DECLARED_PREFIX</code> — the arguments <strong>without</strong> a default are in declaration order and come
+  first; the defaulted tail is name-sorted. This is a <code>VOLATILE</code> function with at least one
+  defaulted argument: there is no GET operation, and <code>required</code> lists only the non-defaulted
+  ones. Postgres forbids a defaulted parameter before a non-defaulted one, so what you have is
+  a correct prefix followed by an unknown tail — never a scrambled middle.</li>
+<li><code>UNKNOWN</code> — nothing was established: a <code>VOLATILE</code> function whose arguments are <em>all</em>
+  defaulted, so <code>required</code> is empty. The names are reported in alphabetical order, which is not
+  a claim that the order is wrong — the function may simply be declared that way.</li>
+</ul>
+<p>A live-database source reads <code>pg_proc.proargnames</code>, an ordered array for every function
+regardless of volatility, so it always reports <code>DECLARED</code>.</p>
+<p>Nothing shipped is affected today — no emitter consumes function parameters (see the note
+above). It matters the moment one does: a client that generated a <strong>positional</strong> call from a
+<code>DECLARED_PREFIX</code> function's full list would swap the defaulted arguments silently, which is
+exactly why the IR states the limit rather than leaving it to be assumed. Call PostgREST
+functions by argument name, which is what the JSON body is anyway, and the order never matters.</p>
+<div class="admonition note">
+<p class="admonition-title">Below PostgREST 13.0.5, order is recovered in <em>more</em> cases, not fewer</p>
+<p>An old server emits the GET operation for every function, including <code>VOLATILE</code> ones — so
+<code>DECLARED_PREFIX</code> and <code>UNKNOWN</code> largely disappear and you get full declaration order even for
+a mutation. That half is a genuine gain; the volatility signal is what you lose, and the next
+section is about that.</p>
+</div>
+<h3 id="volatility-depends-on-your-postgrest-version">Volatility depends on your PostgREST version<a class="headerlink" href="#volatility-depends-on-your-postgrest-version" title="Permanent link">&para;</a></h3>
+<p>This is the one limit on this page that is a property of <strong>your server build</strong> rather than of the
+document format, so it is the one you can fix by upgrading.</p>
+<p>PostgREST decides a function's path item in <code>makeProcPathItem</code>
+(<code>src/PostgREST/Response/OpenAPI.hs</code>). Until 13.0.5 that decision did not exist:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">-- v12.2.3, v12.2.12 (the last 12.x) and v13.0.4 — UNCONDITIONAL</span>
+<span class="nf">pe</span><span class="w"> </span><span class="ow">=</span><span class="w"> </span><span class="p">(</span><span class="n">mempty</span><span class="w"> </span><span class="ow">::</span><span class="w"> </span><span class="kt">PathItem</span><span class="p">)</span>
+<span class="w">  </span><span class="o">&amp;</span><span class="w"> </span><span class="n">get</span><span class="w">  </span><span class="o">?~</span><span class="w"> </span><span class="n">getOp</span>
+<span class="w">  </span><span class="o">&amp;</span><span class="w"> </span><span class="n">post</span><span class="w"> </span><span class="o">?~</span><span class="w"> </span><span class="n">postOp</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1">-- v13.0.5 and later — GATED ON VOLATILITY</span>
+<span class="nf">pe</span><span class="w"> </span><span class="ow">=</span><span class="w"> </span><span class="kr">case</span><span class="w"> </span><span class="n">pdVolatility</span><span class="w"> </span><span class="n">pd</span><span class="w"> </span><span class="kr">of</span>
+<span class="w">  </span><span class="kt">Volatile</span><span class="w"> </span><span class="ow">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="n">mempty</span><span class="w"> </span><span class="ow">::</span><span class="w"> </span><span class="kt">PathItem</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">post</span><span class="w"> </span><span class="o">?~</span><span class="w"> </span><span class="n">postOp</span>
+<span class="w">  </span><span class="kr">_</span><span class="w">        </span><span class="ow">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="n">mempty</span><span class="w"> </span><span class="ow">::</span><span class="w"> </span><span class="kt">PathItem</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">get</span><span class="w"> </span><span class="o">?~</span><span class="w"> </span><span class="n">getOp</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">post</span><span class="w"> </span><span class="o">?~</span><span class="w"> </span><span class="n">postOp</span>
+</code></pre></div>
+<p>The change is <a href="https://github.com/PostgREST/postgrest/pull/4174">PR #4174</a>, released in
+<strong>13.0.5</strong> (2025-08-24) as <em>"Fix OpenAPI specification incorrectly exposing GET methods for
+volatile functions"</em>.</p>
+<p><strong>So the floor is 13.0.5, not "13", and not "not 12".</strong> Releases 13.0.0 through 13.0.4 are
+affected too, and <strong>no 12.x release carries the fix</strong> — the 12.x line ends at 12.2.12
+(2025-05-01), which predates it. Self-hosted Supabase and long-lived deployments do run these.</p>
+<p><strong>What castiron does below the floor.</strong> For every function:</p>
+<ul>
+<li><code>FunctionInfo.volatility</code> is <code>None</code> and <code>FunctionInfo.is_read_only</code> is <code>None</code> — <em>unknown</em>, both
+  of them, together.</li>
+<li><code>Schema.postgrest_version</code> records the document's verbatim <code>info.version</code> (<code>'12.2.3 (519615d)'</code>,
+  <code>'14.14'</code>), so a consumer can tell "unknown because the format cannot say" from "unknown because
+  the server is too old". It is provenance only: <strong>no emitter writes it into generated code</strong>, so
+  upgrading your server never shows up as drift in <code>castiron check</code>.</li>
+<li><code>castiron gen</code> prints <strong>one</strong> warning naming the observed version and the affected function count.</li>
+</ul>
+<p>Everything else in the document is unaffected — tables, columns, nullability, enums, foreign keys,
+argument names, argument types and argument order are all exactly as good as they are on a current
+server. Only those two fields degrade.</p>
+<p><strong>Why <em>unknown</em> and not "assume <code>VOLATILE</code>".</strong> Assuming <code>VOLATILE</code> would be exactly as unfounded as
+the old behaviour's implicit assumption of non-volatile; castiron does not guess in either
+direction. The asymmetry that matters is in the consequences: <code>is_read_only=None</code> makes a consumer
+fall back to <code>POST</code>, which is correct and merely unoptimised, while <code>is_read_only=True</code> for a
+mutation is a <code>GET</code> request for an <code>INSERT</code>.</p>
+<p><strong>The remedy</strong> is to upgrade PostgREST to 13.0.5 or later. (A live-database source reads
+<code>pg_proc.provolatile</code> and never has this problem — it is on the roadmap.)</p>
+<h3 id="integer-widths-depend-on-your-postgrest-version">Integer widths depend on your PostgREST version<a class="headerlink" href="#integer-widths-depend-on-your-postgrest-version" title="Permanent link">&para;</a></h3>
+<p>This is the second version-scoped limit on this page, and it runs the <strong>opposite</strong> way from the
+one above: here the <em>older</em> server tells you more.</p>
+<p>From <strong>PostgREST 14.8</strong> an integer's <code>format</code> is Swagger's own <code>int32</code>/<code>int64</code>, so <code>smallint</code> and
+<code>integer</code> are the same token in the document and only <code>bigint</code> stays distinct. Below 14.8 the
+field carries the Postgres type name and all three are distinguishable:</p>
+<table>
+<thead>
+<tr>
+<th>Column declared</th>
+<th>PostgREST ≥ 14.8</th>
+<th>PostgREST &lt; 14.8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smallint</code></td>
+<td><code>"format": "int32"</code></td>
+<td><code>"format": "smallint"</code></td>
+</tr>
+<tr>
+<td><code>integer</code></td>
+<td><code>"format": "int32"</code></td>
+<td><code>"format": "integer"</code></td>
+</tr>
+<tr>
+<td><code>bigint</code></td>
+<td><code>"format": "int64"</code></td>
+<td><code>"format": "bigint"</code></td>
+</tr>
+</tbody>
+</table>
+<p>The change is <a href="https://github.com/PostgREST/postgrest/pull/4641">PR #4641</a> (2026-04-03), <em>"Fix
+invalid OpenAPI 2.0 format for integer types"</em> — OpenAPI 2.0 defines <code>int32</code>/<code>int64</code> as <em>the</em>
+formats for <code>type: integer</code>, and a raw Postgres type name there is not legal. Diffing a full
+v14.14 document against a v12.2.3 one for the same schema, key order included, gives <strong>49
+differing values</strong>: 43 column properties and 6 function parameters, and nothing else.</p>
+<p><strong>castiron reads both spellings correctly, with no special case.</strong> <code>int32</code>/<code>int64</code> are aliased to
+<code>integer</code>/<code>bigint</code>, and every type map already keys <code>smallint</code>, <code>integer</code> and <code>bigint</code> directly —
+as does the surrogate-primary-key inference, which tests membership of <code>{smallint, integer,
+bigint}</code>. Your generated models do not depend on which server answered.</p>
+<p>What does depend on it is what castiron <em>can know</em>. On ≥ 14.8 the width below <code>bigint</code> is
+genuinely gone. For the Pydantic emitter that is invisible — both resolve to <code>int</code> — but it is
+real, and it will matter to an emitter that cares about storage, such as a future SQLAlchemy
+emitter choosing between <code>SmallInteger</code> and <code>Integer</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">14.8 is not 13.0.5 — there is no single 'minimum PostgREST'</p>
+<p>The <a href="#volatility-depends-on-your-postgrest-version">volatility floor</a> is <strong>13.0.5</strong>; this one
+is <strong>14.8</strong>. They are unrelated upstream changes pointing in opposite directions, so no one
+version is best at everything: below 13.0.5 you get exact integer widths and no volatility;
+from 13.0.5 to 14.7 you get both; from 14.8 you get volatility and the widths collapse.
+castiron scopes each fact to its own version and asks you to do the same.</p>
+</div>
+<h3 id="unknown-types-never-fail">Unknown types never fail<a class="headerlink" href="#unknown-types-never-fail" title="Permanent link">&para;</a></h3>
+<p>A type token castiron does not recognise is recorded verbatim and resolved to <code>Any</code> rather
+than aborting the run. You get models, and the unrecognised column is honestly untyped.</p>
+<h2 id="when-to-upgrade">When to upgrade<a class="headerlink" href="#when-to-upgrade" title="Permanent link">&para;</a></h2>
+<p>Use the OpenAPI source when you want reach: no credentials, no driver, CI-friendly, and a
+document you can save and replay offline. That covers most day-to-day model generation.</p>
+<p>Reach for a live-database source when any of these are load-bearing for you:</p>
+<ul>
+<li>UNIQUE, CHECK or EXCLUDE constraints (and the validation you would derive from them)</li>
+<li>identity/generated columns as fact rather than inference</li>
+<li>exact integer widths (only lost on PostgREST ≥ 14.8 —
+  <a href="#integer-widths-depend-on-your-postgrest-version">why</a>), numeric precision/scale,
+  <code>varchar(n)</code>, domain types</li>
+<li>composite foreign keys, composite primary-key order, cross-schema relationships</li>
+<li>function return types, set-returning functions, overloads, or the declared order of a
+  function's arguments</li>
+<li>function <strong>volatility</strong>, if you are stuck on a PostgREST below 13.0.5
+  (<a href="#volatility-depends-on-your-postgrest-version">why</a>)</li>
+<li>anything your API role cannot see</li>
+</ul>
+<p>The live-database source is on the roadmap and is not shipped yet. Until it lands, this
+page is the complete list of what a generated model can and cannot be trusted to know.
+Every claim above about <em>castiron's</em> behaviour is asserted by a test under <code>tests/unit/</code>
+(<code>sources/openapi/</code> for the parser, <code>corpus/</code> for the emitted bytes), so the floor cannot
+move quietly; the claims about <em>PostgREST's</em> behaviour were measured against a live
+Postgres + PostgREST apparatus on two versions, because no test castiron owns can pin
+somebody else's server.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,1462 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A schema→typed-code compiler for Python.">
+      
+      
+      
+        <link rel="canonical" href="https://kmbhm1.github.io/castiron/reference/cli/">
+      
+      
+        <link rel="prev" href="../../sources/openapi/">
+      
+      
+        <link rel="next" href="../generated-code/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>CLI - castiron</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cli-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="castiron" class="md-header__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            castiron
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="castiron" class="md-nav__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    castiron
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sources
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sources
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sources/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAPI / PostgREST
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#two-ways-to-name-a-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two ways to name a source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two ways to name a source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#credentials-in-the-url-are-refused-not-fetched" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials in the URL are refused, not fetched
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verbosity-quietness-and-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verbosity, quietness and debugging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#castiron" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="castiron">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#castiron-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castiron-gen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-on-individual-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on individual options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#castiron-check_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron check
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="castiron check">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#it-writes-nothing-ever" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It writes nothing, ever
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-difference-is-drift-including-a-missing-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every difference is drift, including a missing file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#it-tells-a-castiron-upgrade-apart-from-a-schema-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It tells a castiron upgrade apart from a schema change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#line-endings-are-normalized-before-the-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Line endings are normalized before the comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-q-suppresses-the-summary-never-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        -q suppresses the summary, never the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generated-code/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../exit-codes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exit codes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#two-ways-to-name-a-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two ways to name a source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two ways to name a source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#credentials-in-the-url-are-refused-not-fetched" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials in the URL are refused, not fetched
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verbosity-quietness-and-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verbosity, quietness and debugging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#castiron" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="castiron">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#castiron-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castiron-gen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-on-individual-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on individual options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#castiron-check_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron check
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="castiron check">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#it-writes-nothing-ever" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It writes nothing, ever
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-difference-is-drift-including-a-missing-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every difference is drift, including a missing file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#it-tells-a-castiron-upgrade-apart-from-a-schema-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It tells a castiron upgrade apart from a schema change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#line-endings-are-normalized-before-the-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Line endings are normalized before the comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-q-suppresses-the-summary-never-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        -q suppresses the summary, never the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cli-reference">CLI reference<a class="headerlink" href="#cli-reference" title="Permanent link">&para;</a></h1>
+<p>Everything on this page is generated from the <code>castiron</code> command itself, so it cannot
+drift from <code>castiron --help</code>.</p>
+<p>There is exactly one console command, <code>castiron</code>, and no short alias — one name to
+document, one name to put in a bug report.</p>
+<h2 id="two-ways-to-name-a-source">Two ways to name a source<a class="headerlink" href="#two-ways-to-name-a-source" title="Permanent link">&para;</a></h2>
+<p><code>--from</code> accepts either kind of value and decides by URL scheme:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>What castiron does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>https://&lt;ref&gt;.supabase.co</code></td>
+<td>Rewrites it to the REST root <code>https://&lt;ref&gt;.supabase.co/rest/v1/</code> and fetches the OpenAPI document</td>
+</tr>
+<tr>
+<td><code>https://api.example.com/</code> (any PostgREST root)</td>
+<td>Fetches the OpenAPI document from that root, appending a trailing slash if needed</td>
+</tr>
+<tr>
+<td><code>https://user:pw@api.example.com/</code> (any <code>http(s)</code> URL with a <code>user@</code> or <code>user:password@</code>)</td>
+<td><strong>Refuses it</strong> — exits <code>2</code> before any request, without echoing the URL back</td>
+</tr>
+<tr>
+<td><code>./openapi.json</code> (any existing file)</td>
+<td>Reads and parses the file — <strong>no network access at all</strong></td>
+</tr>
+<tr>
+<td>anything else</td>
+<td>Exits <code>2</code>: <em>"is neither a URL nor an existing file"</em> — castiron never silently prepends <code>https://</code></td>
+</tr>
+</tbody>
+</table>
+<p>Two of those rows exit <code>2</code>, and they are not the only ones: see <a href="../exit-codes/">exit codes</a>
+for the full list.</p>
+<h3 id="credentials-in-the-url-are-refused-not-fetched">Credentials in the URL are refused, not fetched<a class="headerlink" href="#credentials-in-the-url-are-refused-not-fetched" title="Permanent link">&para;</a></h3>
+<p>A <code>--from</code> URL on <code>http</code> or <code>https</code> that carries credentials in its userinfo — the
+<code>user:password@</code>, or a bare <code>token@</code>, before the host — is rejected at the command line,
+before castiron opens a socket:</p>
+<div class="highlight"><pre><span></span><code>Usage: castiron gen [OPTIONS]
+Try &#39;castiron gen --help&#39; for help.
+
+Error: The --from URL carries credentials in its userinfo (the `user:password@` before the host). castiron will not use it: the HTTP client rejects such a URL before it opens a socket, and the error it raises quotes the host back -- which would print your password. Drop the `user:password@` and pass the key with --key or CASTIRON_KEY.
+</code></pre></div>
+<p><strong>The message never contains the URL you passed</strong> — printing it back is exactly the leak
+this refusal exists to prevent. Nothing is lost by refusing: Python's HTTP client does not
+apply userinfo as HTTP Basic auth, so such a URL could never have fetched anything. Pass
+the credential as <code>--key</code> or <code>CASTIRON_KEY</code> instead.</p>
+<p>The check is attached to the resolved value rather than to the flag, so it fires however
+you supplied the source — <code>--from</code>, <code>CASTIRON_FROM</code>, <code>SUPABASE_URL</code>, or <code>from = "..."</code>
+under <code>[tool.castiron]</code>.</p>
+<p><strong>Only <code>http</code> and <code>https</code> are refused, deliberately.</strong> A <code>postgresql://</code>, <code>postgres://</code> or
+<code>mysql://</code> value keeps its userinfo, because a password in the connection string is the
+normal, correct form for a database DSN and the planned live-database source will read
+them. None of those is a source <code>gen</code> can read today, so passing one still fails — but
+with the password masked:</p>
+<div class="highlight"><pre><span></span><code>Error: --from &#39;postgresql://user:***@localhost/db&#39; is neither a URL nor an existing file. Pass a Supabase/PostgREST URL (https://...) or a path to an OpenAPI JSON document.
+</code></pre></div>
+<h2 id="verbosity-quietness-and-debugging">Verbosity, quietness and debugging<a class="headerlink" href="#verbosity-quietness-and-debugging" title="Permanent link">&para;</a></h2>
+<p>Three orthogonal knobs, worth keeping straight:</p>
+<ul>
+<li><code>-v</code> / <code>-vv</code> set the <strong>log</strong> level on stderr (<code>-v</code> = info, <code>-vv</code> = debug). <code>-v</code> tells
+  you which config file was read and prints the OpenAPI fidelity note.</li>
+<li><code>-q</code> suppresses the <strong>summary</strong> on stdout. Errors still print.</li>
+<li><code>--debug</code> logs at debug level <em>and</em> shows the full traceback when castiron itself
+  fails unexpectedly (exit <code>70</code>).</li>
+</ul>
+<p>Secrets are masked in every string the CLI prints, at every verbosity — including debug
+logs, the traceback <code>--debug</code> shows, and the URL echoed back in an error. That covers the
+<code>--key</code> value, a URL's <code>user:password@</code>, and the value of any query- or fragment-parameter
+whose name reads as a credential (<code>?apikey=</code>, <code>?service_role_key=</code>), each replaced by
+<code>***</code>.</p>
+<h2 id="castiron">castiron<a class="headerlink" href="#castiron" title="Permanent link">&para;</a></h2>
+<p>A schema→typed-code compiler for Python.</p>
+<p><strong>Usage:</strong></p>
+<div class="highlight"><pre><span></span><code>castiron [OPTIONS] COMMAND [ARGS]...
+</code></pre></div>
+<p><strong>Options:</strong></p>
+<div class="highlight"><pre><span></span><code>  -V, --version  Show the version and exit.
+  --help         Show this message and exit.
+</code></pre></div>
+<h3 id="castiron-check">castiron check<a class="headerlink" href="#castiron-check" title="Permanent link">&para;</a></h3>
+<p>Fail if the committed generated code no longer matches the schema.</p>
+<p>Reads the schema exactly as <code>castiron gen</code> would, re-emits every file in memory, and
+compares it against the files already under --output. Nothing is written, ever.</p>
+<p>Exits 0 when every file is up to date and 3 when any of them is not -- including
+when a file castiron would write is missing. No database connection is required.</p>
+<p>Examples:
+  castiron check --from ./openapi.json --output src/myapp/models
+  castiron check   # with from/emit/output in [tool.castiron]</p>
+<p><strong>Usage:</strong></p>
+<div class="highlight"><pre><span></span><code>castiron check [OPTIONS]
+</code></pre></div>
+<p><strong>Options:</strong></p>
+<div class="highlight"><pre><span></span><code>  --config FILE                   Read settings from this TOML file&#39;s
+                                  [tool.castiron] table (default: the nearest
+                                  pyproject.toml).  [env var: CASTIRON_CONFIG]
+  -f, --from TEXT                 The schema source: a Supabase project or
+                                  PostgREST URL, or a path to an OpenAPI JSON
+                                  document.  [env var: CASTIRON_FROM,
+                                  SUPABASE_URL]
+  -k, --key TEXT                  API key for the source. Prefer the
+                                  environment variable -- a key on the command
+                                  line lands in your shell history.  [env var:
+                                  CASTIRON_KEY, SUPABASE_KEY]
+  -e, --emit [pydantic]           Emitter to run. Repeat the flag for more
+                                  than one.  [default: pydantic]
+  -o, --output DIRECTORY          Directory to write generated files into
+                                  (created if missing).  [default: (.)]
+  --filename TEXT                 Override the generated file name (single-
+                                  emitter runs only; default: the emitter&#39;s
+                                  own).
+  -s, --schema TEXT               Database schema to read (sent to PostgREST
+                                  as Accept-Profile).  [default: public]
+  --timeout FLOAT                 Seconds to wait for the source URL.
+                                  [default: 30.0]
+  --infer-generated-primary-keys / --no-infer-generated-primary-keys
+                                  Treat a sole NOT NULL integer primary key
+                                  with no visible default as identity, so it
+                                  is optional on Insert models. PostgREST
+                                  hides nextval() defaults, so this is an
+                                  inference.  [default: no-infer-generated-
+                                  primary-keys]
+  --crud-models / --no-crud-models
+                                  Emit Insert/Update model variants alongside
+                                  the Row models.  [default: crud-models]
+  --enums / --no-enums            Emit Enum classes for enum columns.
+                                  [default: enums]
+  --foreign-keys / --no-foreign-keys
+                                  Emit nested foreign-key relationship fields.
+                                  [default: foreign-keys]
+  --null-parent-classes / --no-null-parent-classes
+                                  Also emit an all-nullable parent class per
+                                  table.  [default: no-null-parent-classes]
+  --singular-names / --no-singular-names
+                                  Singularize generated class names (Product,
+                                  not Products).  [default: no-singular-names]
+  --model-prefix-protection / --no-model-prefix-protection
+                                  Rename columns starting with &#39;model_&#39;
+                                  (Pydantic&#39;s protected namespace). --no-
+                                  emits ConfigDict(protected_namespaces=())
+                                  instead.  [default: model-prefix-protection]
+  -v, --verbose                   Increase log verbosity: -v = info, -vv =
+                                  debug.
+  -q, --quiet                     Suppress the summary output (errors still
+                                  print).
+  --debug                         Log at debug level and show full tracebacks
+                                  on unexpected errors.
+  --help                          Show this message and exit.
+</code></pre></div>
+<h3 id="castiron-gen">castiron gen<a class="headerlink" href="#castiron-gen" title="Permanent link">&para;</a></h3>
+<p>Generate typed code from a schema source.</p>
+<p>Reads a schema from a source (a Supabase/PostgREST URL, or a local OpenAPI JSON
+document), lowers it into castiron's Schema IR, and writes one file per emitter.
+No database connection is required.</p>
+<p>Examples:
+  castiron gen --from https://abcdefgh.supabase.co --emit pydantic
+  castiron gen --from ./openapi.json --emit pydantic --output src/myapp/models</p>
+<p><strong>Usage:</strong></p>
+<div class="highlight"><pre><span></span><code>castiron gen [OPTIONS]
+</code></pre></div>
+<p><strong>Options:</strong></p>
+<div class="highlight"><pre><span></span><code>  --config FILE                   Read settings from this TOML file&#39;s
+                                  [tool.castiron] table (default: the nearest
+                                  pyproject.toml).  [env var: CASTIRON_CONFIG]
+  -f, --from TEXT                 The schema source: a Supabase project or
+                                  PostgREST URL, or a path to an OpenAPI JSON
+                                  document.  [env var: CASTIRON_FROM,
+                                  SUPABASE_URL]
+  -k, --key TEXT                  API key for the source. Prefer the
+                                  environment variable -- a key on the command
+                                  line lands in your shell history.  [env var:
+                                  CASTIRON_KEY, SUPABASE_KEY]
+  -e, --emit [pydantic]           Emitter to run. Repeat the flag for more
+                                  than one.  [default: pydantic]
+  -o, --output DIRECTORY          Directory to write generated files into
+                                  (created if missing).  [default: (.)]
+  --filename TEXT                 Override the generated file name (single-
+                                  emitter runs only; default: the emitter&#39;s
+                                  own).
+  -s, --schema TEXT               Database schema to read (sent to PostgREST
+                                  as Accept-Profile).  [default: public]
+  --timeout FLOAT                 Seconds to wait for the source URL.
+                                  [default: 30.0]
+  --overwrite / --no-overwrite    Overwrite existing generated files. --no-
+                                  overwrite fails if any target already
+                                  exists.  [default: overwrite]
+  --dry-run                       Do everything except write files; report
+                                  what would be written.
+  --infer-generated-primary-keys / --no-infer-generated-primary-keys
+                                  Treat a sole NOT NULL integer primary key
+                                  with no visible default as identity, so it
+                                  is optional on Insert models. PostgREST
+                                  hides nextval() defaults, so this is an
+                                  inference.  [default: no-infer-generated-
+                                  primary-keys]
+  --crud-models / --no-crud-models
+                                  Emit Insert/Update model variants alongside
+                                  the Row models.  [default: crud-models]
+  --enums / --no-enums            Emit Enum classes for enum columns.
+                                  [default: enums]
+  --foreign-keys / --no-foreign-keys
+                                  Emit nested foreign-key relationship fields.
+                                  [default: foreign-keys]
+  --null-parent-classes / --no-null-parent-classes
+                                  Also emit an all-nullable parent class per
+                                  table.  [default: no-null-parent-classes]
+  --singular-names / --no-singular-names
+                                  Singularize generated class names (Product,
+                                  not Products).  [default: no-singular-names]
+  --model-prefix-protection / --no-model-prefix-protection
+                                  Rename columns starting with &#39;model_&#39;
+                                  (Pydantic&#39;s protected namespace). --no-
+                                  emits ConfigDict(protected_namespaces=())
+                                  instead.  [default: model-prefix-protection]
+  -v, --verbose                   Increase log verbosity: -v = info, -vv =
+                                  debug.
+  -q, --quiet                     Suppress the summary output (errors still
+                                  print).
+  --debug                         Log at debug level and show full tracebacks
+                                  on unexpected errors.
+  --help                          Show this message and exit.
+</code></pre></div>
+<h2 id="notes-on-individual-options">Notes on individual options<a class="headerlink" href="#notes-on-individual-options" title="Permanent link">&para;</a></h2>
+<dl>
+<dt><code>--key</code></dt>
+<dd>Whitespace and line endings around the value are trimmed, so a key read from a file with
+  Windows (CRLF) endings just works. A control character <strong>inside</strong> the value — a key
+  pasted across two lines — is refused instead, exiting <code>2</code> with an explanation and never
+  the key itself, because such a value cannot be sent as an HTTP header at all.</dd>
+<dt><code>--emit</code></dt>
+<dd>Repeat the flag to run more than one emitter (<code>--emit pydantic --emit sqlalchemy</code>).
+  <code>pydantic</code> is the only emitter registered today, so repeating the flag currently just
+  names the same emitter twice — which castiron rejects as a filename collision (exit <code>1</code>)
+  rather than writing the same file twice. A list in the config file is <strong>replaced</strong>, not
+  merged, by any <code>--emit</code> on the command line.</dd>
+<dt><code>--output</code></dt>
+<dd>A <strong>directory</strong>, created (with parents) when missing. The file name comes from the
+  emitter — <code>schema.py</code> for <code>pydantic</code> — unless <code>--filename</code> overrides it.</dd>
+<dt><code>--filename</code></dt>
+<dd>Single-emitter runs only. With two or more <code>--emit</code> values it exits <code>2</code>, because two
+  emitters writing one file name is a collision, not a preference.</dd>
+<dt><code>--overwrite / --no-overwrite</code></dt>
+<dd>Overwriting is the default: regeneration is the whole point. <code>--no-overwrite</code> checks
+  <strong>every</strong> target for existence before writing <strong>any</strong> of them, so a clash leaves the
+  output tree untouched rather than half-generated.</dd>
+<dt><code>--dry-run</code></dt>
+<dd>Runs the full pipeline and reports what would be written, creating no file and no
+  directory. Reported sizes match a real run exactly.</dd>
+<dt><code>--infer-generated-primary-keys</code></dt>
+<dd>An inference, off by default. See
+  <a href="../../sources/openapi/#identity-and-generated-columns">What the OpenAPI source can and cannot see</a>.</dd>
+<dt><code>--schema</code></dt>
+<dd>Sent to PostgREST as <code>Accept-Profile</code>. PostgREST serves one schema per document, so
+  one run reads one schema.</dd>
+<dt><code>--timeout</code></dt>
+<dd>Applies to the source URL only. Ignored on the <code>--from ./openapi.json</code> path, which
+  makes no request.</dd>
+</dl>
+<h2 id="castiron-check_1"><code>castiron check</code><a class="headerlink" href="#castiron-check_1" title="Permanent link">&para;</a></h2>
+<p><code>check</code> is <code>gen</code> minus the write. It reads the schema from the same source with the same
+options, re-emits every file in memory, compares against the files already under <code>--output</code>,
+and exits <strong><code>3</code></strong> if any of them has drifted:</p>
+<div class="highlight"><pre><span></span><code>castiron<span class="w"> </span>check<span class="w"> </span>--from<span class="w"> </span>./openapi.json<span class="w"> </span>--output<span class="w"> </span>src/myapp/models
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>castiron: read 6 tables, 1 enum and 4 functions from openapi.json
+castiron: drift detected in 1 of 1 generated file(s).
+
+  file:     src/myapp/models/schema.py
+  size:     8982 chars on disk -&gt; 8975 chars from the schema
+  sha256:   e1788d043dd84bb2 on disk -&gt; 457423efdf479c44 from the schema
+  lines:    +1 / -1
+  showing 1 of 1 hunk(s):
+    --- on disk
+    +++ produced from the schema
+    @@ -87,7 +87,7 @@
+         id: int
+
+         # Columns
+    -    name: str | None
+    +    name: str
+  generated by castiron 0.5.0, and you are running 0.5.0 --
+  this difference is your schema or a hand edit.
+
+castiron: run `castiron gen` to regenerate.
+</code></pre></div>
+<p>It is the same option surface as <code>gen</code> minus <code>--overwrite/--no-overwrite</code> and <code>--dry-run</code>,
+which are write-path only — passing either exits <code>2</code>. It reads the same <code>[tool.castiron]</code>
+table, so <code>from</code>/<code>emit</code>/<code>output</code> written once are honoured by both commands, and a
+config-file <code>output</code> is anchored to the config file's directory so the verdict does not
+depend on which directory you ran from.</p>
+<h3 id="it-writes-nothing-ever">It writes nothing, ever<a class="headerlink" href="#it-writes-nothing-ever" title="Permanent link">&para;</a></h3>
+<p>There is no <code>--fix</code> and no <code>--write</code>. <code>check</code> creates no file and no directory — not even
+<code>--output</code> when it is missing — on the clean path and on the drift path alike. <strong><code>gen</code> is
+the fix.</strong></p>
+<h3 id="every-difference-is-drift-including-a-missing-file">Every difference is drift, including a missing file<a class="headerlink" href="#every-difference-is-drift-including-a-missing-file" title="Permanent link">&para;</a></h3>
+<p>A file castiron would write that is not there exits <code>3</code>, not <code>1</code>. The rule: <em>every outcome
+in which the comparison ran and the answer is "not identical" is <code>3</code>; <code>1</code> is for "castiron
+could not perform the comparison at all"</em> (an unreadable file, an unreachable source, a bad
+config). See <a href="../exit-codes/">exit codes</a>.</p>
+<h3 id="it-tells-a-castiron-upgrade-apart-from-a-schema-change">It tells a castiron upgrade apart from a schema change<a class="headerlink" href="#it-tells-a-castiron-upgrade-apart-from-a-schema-change" title="Permanent link">&para;</a></h3>
+<p>Every generated module records the castiron version that wrote it in <a href="../generated-code/#the-provenance-header">its provenance
+header</a>, and <code>check</code> reads it back. When the
+recorded version differs from the one you are running, the report says so:</p>
+<div class="highlight"><pre><span></span><code>  generated by castiron 0.5.0; you are running 0.6.0. Some or all of this difference
+  may be castiron&#39;s own output changing rather than your schema.
+  Run `castiron gen` to adopt the current output.
+</code></pre></div>
+<p>That is deliberately hedged: castiron knows a version change is in play, but it cannot
+re-emit as the old version, so it cannot attribute individual hunks to it. A file with no
+header at all — hand-written, or generated before castiron <code>0.5.0</code> — says so instead.</p>
+<p>Either way the exit code is <code>3</code>. A version-only difference is still a difference between
+the committed file and what <code>gen</code> produces, and a <code>check</code> that called that clean would be
+lying about the file's currency.</p>
+<h3 id="line-endings-are-normalized-before-the-comparison">Line endings are normalized before the comparison<a class="headerlink" href="#line-endings-are-normalized-before-the-comparison" title="Permanent link">&para;</a></h3>
+<p>The file on disk is decoded in universal-newline mode, so <code>\r\n</code> and lone <code>\r</code> become
+<code>\n</code> before anything is compared. castiron always <em>writes</em> LF, but git does not always
+<em>check out</em> LF: a contributor with <code>core.autocrlf=true</code> would otherwise see permanent,
+unfixable drift on every CI run.</p>
+<p>The accepted cost is a false negative confined to line endings — a genuinely CRLF-ified
+file reports clean, while <code>gen</code> would rewrite it to LF. A UTF-8 BOM is <strong>not</strong> normalized
+away: it is real drift, and because it is invisible in a diff the report renders the two
+lines with <code>repr()</code> instead.</p>
+<h3 id="-q-suppresses-the-summary-never-the-report"><code>-q</code> suppresses the summary, never the report<a class="headerlink" href="#-q-suppresses-the-summary-never-the-report" title="Permanent link">&para;</a></h3>
+<p><code>--quiet</code> drops the "read N tables" line and the per-file "is up to date" lines. It does
+not drop the drift report — that is the payload, not a summary, and a CI log that said only
+"exit 3" would send someone back to run the command again.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

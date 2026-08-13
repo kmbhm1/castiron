@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/getting-started/quickstart/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/reference/cli/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/reference/configuration/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/reference/environment-variables/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/reference/exit-codes/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/reference/generated-code/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+    <url>
+         <loc>https://kmbhm1.github.io/castiron/sources/openapi/</loc>
+         <lastmod>2026-08-13</lastmod>
+    </url>
+</urlset>

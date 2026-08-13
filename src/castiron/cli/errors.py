@@ -78,9 +78,32 @@ _SECRET_WORD = (
 #: almost everywhere — hence the scoped ``(?i:...)`` on the word list alone.
 _SECRET_PARAM_NAME = re.compile(rf'(?:^|[-_.]|(?<=[a-z0-9])(?=[A-Z])){_SECRET_WORD}(?=$|[-_.]|[A-Z])')
 
-#: One ``?name=value`` / ``&name=value`` / ``#name=value`` pair. ``#`` is in the leading class
-#: because a Supabase auth redirect puts ``access_token`` in the URL *fragment*, not the query.
-_QUERY_PARAM = re.compile(r'([?&#])([^&\s=#]*)=([^&\s#]*)')
+#: One ``?name=value`` / ``&name=value`` / ``#name=value`` pair, split into the three scans
+#: :func:`_mask_secret_parameters` needs. ``#`` is a lead because a Supabase auth redirect puts
+#: ``access_token`` in the URL *fragment*, not the query.
+#:
+#: ⚠ These replace a single ``([?&#])([^&\s=#]*)=([^&\s#]*)`` (CI-144). ``?`` is a member of both
+#: the lead class and the old name class, so on a run containing k of them the greedy name walk ran
+#: once per ``?`` -- Θ(k · run), and **57.9 s on 160 000 characters**. The scan is not merely
+#: repeated, it is *wasted*: the name class excludes ``=``, so every character the engine gives back
+#: while backtracking is by construction not the ``=`` it is looking for. The pattern therefore
+#: matches at a lead ``i`` **iff the first character of ``[&\s=#]`` at or after i+1 is ``=``** -- a
+#: closed form with no search in it, which is what :func:`_mask_secret_parameters` evaluates once
+#: per lead instead.
+#:
+#: ⚠ **``?`` is the only character that leads a parameter and terminates nothing** -- it is not in
+#: the name-end class, not in the value-end class, and not a :data:`_SECRET_PARAM_NAME` boundary.
+#: That one asymmetry was two separate credential leaks (CI-150), both live in ``0.5.0``:
+#: ``?a?token=<secret>`` made ``a?token`` one name in which ``token`` had no delimiter in front of
+#: it, and ``?a=1?token=<secret>`` made the whole of ``1?token=<secret>`` the value of ``a``. Both
+#: printed the credential verbatim. Nothing here may put ``?`` into either terminator class: adding
+#: it to :data:`_PARAM_NAME_END` unmasks ``?jwt.x?y=<secret>``, which is masked today, and adding it
+#: to :data:`_PARAM_VALUE_END` shortens the value on the branch that **masks** it too, so
+#: ``?token=ab?cd`` prints ``?token=***?cd``. Both measured; see
+#: ``TestRedactQueryParamAwkwardShapes`` and ``TestRedactQueryParamHalfPrint``.
+_PARAM_LEAD = re.compile(r'[?&#]')
+_PARAM_NAME_END = re.compile(r'[&\s=#]')
+_PARAM_VALUE_END = re.compile(r'[&\s#]')
 
 #: ``scheme://userinfo@host``. ``[^/?#\s]*`` is greedy on purpose: it backtracks to the **last**
 #: ``@`` before the path, which is how ``urllib.parse.SplitResult`` derives userinfo
@@ -314,11 +337,40 @@ def _mask_url_userinfo(text: str) -> tuple[str, list[str]]:
     return masked, [secret for secret, _ in found if secret]
 
 
+def _names_a_credential(name: str) -> bool:
+    """Report whether a parameter name reads as credential-bearing.
+
+    The name is tested **decoded**, so ``api%5Fkey`` and ``a%3Ftoken`` are both caught, and it is
+    split on ``?`` first: a ``?`` inside a name means the name is really several candidate names
+    (``a?token`` is ``a`` and ``token``), because ``?`` starts a parameter but is not a
+    :data:`_SECRET_PARAM_NAME` segment delimiter (CI-150).
+
+    ⚠ Splitting can only **add** masking, by construction: no credential word contains ``?``, the
+    leading boundary ``[-_.]`` never consumes one, and neither ``$|[-_.]|[A-Z]`` nor the camelCase
+    hump can match one. Every name that qualified before still qualifies inside its own segment.
+
+    Args:
+        name: The parameter name exactly as it was found in the text, still percent-encoded.
+
+    Returns:
+        ``True`` when any ``?``-delimited segment of the decoded name carries a credential word.
+    """
+    return any(_SECRET_PARAM_NAME.search(segment) for segment in unquote(name).split('?'))
+
+
 def _mask_secret_parameters(text: str) -> str:
     """Mask the value of any query or fragment parameter whose name names a credential.
 
-    The name is matched **decoded** (so ``?api%5Fkey=`` is caught) but rewritten exactly as it
-    was found, so the message keeps the user's own spelling of their URL.
+    The name is matched decoded (see :func:`_names_a_credential`) but rewritten exactly as it was
+    found, so the message keeps the user's own spelling of their URL.
+
+    ⚠ **A hand-written scan, not a ``re.sub``, and that is load-bearing twice over.** It carries
+    the next name-terminator forward across leads, which is the one thing ``re`` cannot do and the
+    only reason the old pattern was quadratic (CI-144); and it chooses its own resume position,
+    which is the only way to stop an **unmasked** parameter's value from swallowing the credential
+    behind it without also truncating a **masked** one (CI-150). The asymmetry below is the whole
+    fix: the value's end is computed only on the branch that masks it. Nothing here may be changed
+    back into a single pattern whose name class admits ``?``.
 
     Args:
         text: The message about to be shown to the user.
@@ -326,14 +378,44 @@ def _mask_secret_parameters(text: str) -> str:
     Returns:
         ``text`` with each credential-bearing parameter's value replaced by :data:`REDACTED`.
     """
-
-    def mask(match: re.Match[str]) -> str:
-        lead, name = match.group(1), match.group(2)
-        if _SECRET_PARAM_NAME.search(unquote(name)):
-            return f'{lead}{name}={REDACTED}'
-        return match.group(0)
-
-    return _QUERY_PARAM.sub(mask, text)
+    # Every match contains a literal `=`, so a text without one cannot contain a match. Cheap,
+    # C-level, and the common case for a log line.
+    if '=' not in text:
+        return text
+    pieces: list[str] = []
+    emitted = 0
+    scan = 0
+    while (lead := _PARAM_LEAD.search(text, scan)) is not None:
+        start = lead.start()
+        name_end = _PARAM_NAME_END.search(text, start + 1)
+        if name_end is None:
+            # No terminator after this lead means no `=` after it either: no match can follow.
+            break
+        stop = name_end.start()
+        if text[stop] != '=':
+            # No lead in (start, stop) can match either -- `&` and `#` would BE `stop`, and every
+            # `?` in between shares this same terminator. Skipping the run in one step is what
+            # turns Θ(k · run) into Θ(run) (CI-144).
+            scan = stop
+            continue
+        name = text[start + 1 : stop]
+        if not _names_a_credential(name):
+            # CI-150. Resume just past the `=`, NOT past the value: the text is echoed verbatim
+            # either way, so the only effect is that a `?` inside this value is finally seen as the
+            # lead it is. `?a=1?token=<secret>` printed the credential in full before this line.
+            # The value's end is deliberately not computed here -- computing it per lead is what
+            # would make a `?`-dense value quadratic again.
+            scan = stop + 1
+            continue
+        value_end = _PARAM_VALUE_END.search(text, stop + 1)
+        end = len(text) if value_end is None else value_end.start()
+        pieces.append(text[emitted:start])
+        pieces.append(f'{text[start]}{name}={REDACTED}')
+        # Past the whole value: it is gone, so nothing inside it needs reconsidering. Keeping the
+        # greedy end HERE, and only here, is why a masked value containing `?` is not half-printed.
+        emitted = scan = end
+    pieces.append(text[emitted:])
+    return ''.join(pieces)
 
 
 def _mask_spellings(text: str, spellings: Sequence[str]) -> str:

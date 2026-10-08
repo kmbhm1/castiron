@@ -45,6 +45,11 @@ castiron: read 6 tables, 1 enum and 4 functions from https://abcdefgh.supabase.c
 castiron: wrote schema.py (14.2 kB)
 ```
 
+The key must be a **secret** (`sb_secret_...`) or `service_role` key. Since April 2026
+hosted Supabase refuses the OpenAPI document to the `anon`/publishable key, so the key
+`supabase-py` apps usually keep in `SUPABASE_KEY` will not work here — see
+[Which key](https://kmbhm1.github.io/castiron/getting-started/quickstart/#which-key).
+
 `--from` also takes a path, so a saved OpenAPI document regenerates offline — useful in
 CI and air-gapped builds:
 

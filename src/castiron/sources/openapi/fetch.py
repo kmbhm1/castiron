@@ -107,8 +107,10 @@ def build_request_headers(key: str | None, schema: str) -> dict[str, str]:
     """Build the headers for the OpenAPI root request.
 
     Args:
-        key: The API key (a Supabase anon/service key, or a PostgREST JWT). When ``None``,
-            the request is anonymous.
+        key: The API key (a Supabase secret or ``service_role`` key, or a PostgREST JWT). When
+            ``None``, the request is anonymous. Since 2026-04-08 hosted Supabase answers the
+            OpenAPI root with 403 for the ``anon``/publishable key (changelog 42949), so that
+            key no longer works here even though it still works for ordinary Data API calls.
         schema: The database schema to request (sent as ``Accept-Profile``).
 
     Returns:
@@ -213,16 +215,58 @@ def _decode_document(target: str, body: bytes) -> dict[str, Any]:
     return result
 
 
+#: Supabase's refusal to serve the OpenAPI root to the ``anon``/publishable key (changelog 42949).
+#: Matched case-insensitively against the server's ``message``/``hint`` so the user gets the real
+#: remedy -- a different *kind* of key -- instead of being sent to audit role privileges.
+_SECRET_KEY_REQUIRED_MARKER = 'secret api key'
+
+#: Appended when the server said the OpenAPI root needs a secret key.
+SECRET_KEY_REQUIRED_ADVICE = (
+    'Supabase no longer serves the OpenAPI document to the anon/publishable key; use a secret '
+    '(sb_secret_...) or service_role key for castiron -- the anon key still works for ordinary Data API calls.'
+)
+
+
 def _http_error_message(target: str, exc: HTTPError) -> str:
     """Build an actionable message for a failed HTTP status."""
     if exc.code in (401, 403):
-        return (
+        message = (
             f"{target} returned HTTP {exc.code}: check the API key and the role's privileges "
             f'(PostgREST hides objects the API role cannot access).'
         )
+        server_said = _server_explanation(_read_error_body(exc))
+        if server_said:
+            message = f'{message} The server said: {server_said}'
+            if _SECRET_KEY_REQUIRED_MARKER in server_said.lower():
+                message = f'{message} {SECRET_KEY_REQUIRED_ADVICE}'
+        return message
     if exc.code == 404:
         return f'{target} returned HTTP 404: is {target} the PostgREST API root?'
     return f'{target} returned HTTP {exc.code}: {_snippet(_read_error_body(exc))}'
+
+
+def _server_explanation(body: bytes) -> str:
+    """Return the ``message`` and ``hint`` of a PostgREST/Supabase JSON error body, or ``''``.
+
+    Both PostgREST and the Supabase gateway answer a refused request with
+    ``{"message": ..., "hint": ...}`` -- and for an auth failure that body is the only place the
+    *reason* lives, so discarding it left the user with a status code and a guess. A body that is
+    not JSON, not an object, or carries neither field yields ``''`` so the caller adds nothing.
+
+    Args:
+        body: The raw error response body.
+
+    Returns:
+        ``'message hint'`` (whichever are present, in that order), truncated like any other snippet.
+    """
+    try:
+        document = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return ''
+    if not isinstance(document, dict):
+        return ''
+    parts = [str(document[field]) for field in ('message', 'hint') if document.get(field)]
+    return _snippet(' '.join(parts).encode('utf-8')) if parts else ''
 
 
 def _read_error_body(exc: HTTPError) -> bytes:

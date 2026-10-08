@@ -57,12 +57,56 @@ castiron: wrote schema.py (14.2 kB)
 The counts and the size come from your schema; the two-line shape is fixed. That counts
 line is worth reading: PostgREST only exposes what your API key's role can see, so
 "read 2 tables" when you expected 20 means row-level security or a role grant is hiding
-things — not that castiron missed them.
+things — not that castiron missed them. On Supabase that now includes **every table
+created after 2026-10-30** until it is explicitly granted; see
+[New tables need a grant](#new-tables-need-a-grant).
 
 A bare Supabase project URL is rewritten to its REST root
 (`https://<ref>.supabase.co/rest/v1/`); a plain PostgREST deployment works too — pass its
 API root. Put the key in `CASTIRON_KEY` rather than on the command line, where it lands
 in your shell history. See [Environment variables](../reference/environment-variables.md).
+
+### Which key
+
+On hosted Supabase, use a **secret key** (`sb_secret_...`, from *Project Settings → API
+Keys*) or the legacy `service_role` key. **The `anon`/publishable key no longer works for
+castiron**: since 8 April 2026 the Data API answers the OpenAPI root with HTTP 403 for it
+([changelog 42949](https://supabase.com/changelog/42949-breaking-change-removing-access-to-openapi-spec-via-the-anon-key)),
+even though the same key keeps working for ordinary table reads. castiron quotes the
+server's refusal and says which kind of key to switch to:
+
+```
+Error: https://abcdefgh.supabase.co/rest/v1/ returned HTTP 403: check the API key and the role's privileges (PostgREST hides objects the API role cannot access). The server said: Access to schema is forbidden Accessing the schema via the Data API is only allowed using a secret API key. Supabase no longer serves the OpenAPI document to the anon/publishable key; use a secret (sb_secret_...) or service_role key for castiron -- the anon key still works for ordinary Data API calls.
+```
+
+Two consequences worth knowing. The key is a schema-reading credential for a developer's
+shell or a CI secret, never something that ships in an app — castiron
+[masks it](../reference/environment-variables.md#prefer-the-key-in-the-environment) from
+everything it prints, but keep it out of committed files. And because the request runs as
+the *privileged* role, the document describes **every** table the API roles can reach, not
+the subset an `anon` user would see — which is what you want from a schema compiler.
+
+Self-hosted PostgREST is unaffected: any JWT whose role can read the schema still works.
+
+### New tables need a grant
+
+From **30 October 2026** Supabase stops granting `anon`, `authenticated` and `service_role`
+on new tables in `public` automatically
+([changelog 45329](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically);
+new projects have behaved this way since 30 May 2026). A table created after that date is
+invisible to the Data API — and therefore to castiron — until a migration grants it:
+
+```sql
+grant select, insert, update, delete on public.orders to authenticated;
+grant select on public.orders to anon;            -- only if it really is public
+grant all on public.orders to service_role;
+```
+
+Nothing errors: the table is simply absent from the document, the `read N tables` count is
+one short, and `castiron check` reports it as drift. If the table is the target of a foreign
+key, `castiron gen` [warns](../sources/openapi.md#a-foreign-key-can-point-at-a-table-you-cannot-see)
+and names it. Grant per role, per table, in the migration that creates the table; do not
+reach for `grant all ... to public`, which re-opens exactly the exposure the change closes.
 
 ## Offline: generate from a saved OpenAPI document
 

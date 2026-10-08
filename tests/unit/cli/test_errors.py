@@ -1723,6 +1723,15 @@ class TestKeyHint:
     def test_the_command_line_case_recommends_the_environment_variable(self) -> None:
         assert 'shell history' in key_hint('--key')
 
+    @pytest.mark.parametrize('provenance', [None, 'CASTIRON_KEY', 'SUPABASE_KEY'])
+    def test_it_names_the_kind_of_key_supabase_now_requires(self, provenance: str | None) -> None:
+        # Since 2026-04-08 hosted Supabase refuses the OpenAPI root to the anon key (changelog
+        # 42949), so "check the key" is incomplete advice without saying which kind.
+        assert 'secret or service_role key' in key_hint(provenance)
+
+    def test_the_supabase_fallback_says_it_is_usually_the_anon_key(self) -> None:
+        assert 'usually the anon key' in key_hint('SUPABASE_KEY')
+
 
 @pytest.mark.unit
 class TestSchemaHint:

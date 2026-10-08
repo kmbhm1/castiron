@@ -240,6 +240,53 @@ class TestFetchErrors:
         assert 'API key' in message
         assert 'privileges' in message
 
+    def test_an_auth_failure_quotes_the_server_s_message_and_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The body is the only place the *reason* lives; a status code alone is a guess.
+        body = b'{"message":"JWSError JWSInvalidSignature","hint":"Check the signing secret."}'
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(http_error(401, body)))
+        with pytest.raises(SourceFetchError) as excinfo:
+            fetch_openapi_document('https://abc.supabase.co', key='bad')
+        message = str(excinfo.value)
+        assert 'The server said: JWSError JWSInvalidSignature Check the signing secret.' in message
+        assert fetch_module.SECRET_KEY_REQUIRED_ADVICE not in message
+
+    def test_supabase_s_anon_key_refusal_names_the_kind_of_key_to_use(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The exact body hosted Supabase returns to the anon/publishable key since 2026-04-08
+        # (changelog 42949). The remedy is a different KIND of key, not an audit of role grants.
+        body = (
+            b'{"message":"Access to schema is forbidden",'
+            b'"hint":"Accessing the schema via the Data API is only allowed using a secret API key."}'
+        )
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(http_error(403, body)))
+        with pytest.raises(SourceFetchError) as excinfo:
+            fetch_openapi_document('https://abc.supabase.co', key='eyJanon')
+        message = str(excinfo.value)
+        assert message.startswith('https://abc.supabase.co/rest/v1/ returned HTTP 403')
+        assert 'Access to schema is forbidden' in message
+        assert fetch_module.SECRET_KEY_REQUIRED_ADVICE in message
+        assert 'sb_secret_' in message
+
+    @pytest.mark.parametrize(
+        'body',
+        [b'', b'not json', b'[1, 2]', b'{"code":"42501"}', b'{"message":"","hint":null}'],
+        ids=['empty', 'text', 'array', 'no-fields', 'blank-fields'],
+    )
+    def test_an_unhelpful_auth_body_adds_nothing(self, monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(http_error(403, body)))
+        with pytest.raises(SourceFetchError) as excinfo:
+            fetch_openapi_document('https://abc.supabase.co', key='bad')
+        message = str(excinfo.value)
+        assert 'The server said' not in message
+        assert message.endswith('(PostgREST hides objects the API role cannot access).')
+
+    def test_a_long_auth_body_is_truncated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        body = json.dumps({'message': 'm' * 500}).encode()
+        monkeypatch.setattr(fetch_module, 'urlopen', raiser(http_error(401, body)))
+        with pytest.raises(SourceFetchError) as excinfo:
+            fetch_openapi_document('https://abc.supabase.co', key='bad')
+        assert str(excinfo.value).endswith('...')
+        assert 'm' * 201 not in str(excinfo.value)
+
     def test_a_malformed_url_honours_the_documented_raises_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The contract as written: "Raises: SourceFetchError ... Nothing else." Asserted at the
         # `fetch_openapi_document` boundary, not only on the helper, because the defect was that

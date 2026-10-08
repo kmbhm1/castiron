@@ -338,11 +338,54 @@ castiron cannot build a relationship it has no target for, so:
 1 foreign key points at a table this schema does not contain (ledger_refs.ledger_id ->
 private_ledger) -- the target is not visible to the API role, so castiron cannot build the
 relationship. The column is emitted as a plain value and no nested model is generated for it;
-the foreign-key constraint is still recorded in the IR.
+the foreign-key constraint is still recorded in the IR. If the target is a table you expected
+to see, the API role is missing a GRANT on it -- on Supabase, tables created after 2026-10-30
+are not granted to the API roles automatically.
 ```
 
 If you did not expect that line, the API role is missing a `GRANT` on the target table. If you
 did, nothing is wrong — the warning is telling you which relationship the models do not have.
+
+### New Supabase tables are invisible until granted
+
+Until 2026 a Supabase project granted `select`/`insert`/`update`/`delete` on every new
+`public` table to `anon`, `authenticated` and `service_role` through default privileges, so
+a table existed in the Data API — and in this document — the moment it was created. That
+stopped: for projects created since 30 May 2026, and for **every** project from
+**30 October 2026**, a new table in `public` needs an explicit `grant` before PostgREST can see
+it ([changelog 45329](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)).
+Existing tables keep the grants they have.
+
+For castiron this is the [object-level privilege filter](#privileges-filter-objects-not-columns)
+applied to a table you did not revoke anything on. The symptoms are the same, and all of them
+are quiet:
+
+- the table is absent from `definitions`, so **no model is emitted** and nothing errors;
+- the `read N tables` summary is one lower than you expect;
+- `castiron check` reports the table's models as **drift to be removed**, not as missing;
+- a foreign key pointing at it raises the [dangling-FK warning](#a-foreign-key-can-point-at-a-table-you-cannot-see) above — the one place castiron can *observe* the change.
+
+The remedy belongs in the migration that creates the table, scoped per role:
+
+```sql
+create table public.invoices (...);
+grant select, insert, update, delete on public.invoices to authenticated;
+grant all on public.invoices to service_role;
+-- grant select on public.invoices to anon;  -- only if it is genuinely public
+```
+
+Grants to `public` or blanket `grant all ... to anon` re-open exactly the exposure the change
+closed; prefer the per-role form. To find what is already reachable:
+
+```sql
+select grantee, table_name, privilege_type
+from information_schema.role_table_grants
+where table_schema = 'public' and grantee in ('anon', 'authenticated', 'service_role')
+order by table_name, grantee;
+```
+
+A live-database source reads `pg_class` directly and is unaffected by any of this — one more
+reason it is on the roadmap.
 
 ### Constraint names are manufactured
 

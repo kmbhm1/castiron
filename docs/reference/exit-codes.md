@@ -20,9 +20,15 @@ and nothing was written, which is exactly what you want in a "would this work?" 
 failed, and where a next step exists castiron adds a `Hint:` line:
 
 ```
-Error: https://abcdefgh.supabase.co/rest/v1/ returned HTTP 401: check the API key and the role's privileges (PostgREST hides objects the API role cannot access).
-Hint: the key came from CASTIRON_KEY. Check it is current and that its role can read the schema.
+Error: https://abcdefgh.supabase.co/rest/v1/ returned HTTP 401: check the API key and the role's privileges (PostgREST hides objects the API role cannot access). The server said: JWSError JWSInvalidSignature
+Hint: the key came from CASTIRON_KEY. Check it is current, that it is a secret or service_role key rather than the anon key, and that its role can read the schema.
 ```
+
+When the server's JSON error body carries a `message` or `hint`, castiron quotes it after
+`The server said:` — for a 401/403 that body is the only place the *reason* lives. One
+body gets a sentence of its own: hosted Supabase's refusal to serve the OpenAPI root to the
+`anon`/publishable key, where the fix is a different *kind* of key rather than a privilege
+audit ([which key](../getting-started/quickstart.md#which-key)).
 
 A `--from` URL that is not a URL Python can parse is exit `1` too, not a castiron bug — you
 typo'd it, and the message says so and quotes it back:

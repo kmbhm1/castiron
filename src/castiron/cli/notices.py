@@ -310,7 +310,9 @@ def dangling_foreign_key_warning(entries: list[str]) -> str:
         f'{len(entries)} {subject} at a table this schema does not contain ({named}) -- the target is '
         f'not visible to the API role, so castiron cannot build the relationship. The column is '
         f'emitted as a plain value and no nested model is generated for it; the foreign-key '
-        f'constraint is still recorded in the IR.'
+        f'constraint is still recorded in the IR. If the target is a table you expected to see, the API '
+        f'role is missing a GRANT on it -- on Supabase, tables created after 2026-10-30 are not granted to '
+        f'the API roles automatically.'
     )
 
 

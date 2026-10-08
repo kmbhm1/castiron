@@ -578,6 +578,13 @@ class TestDanglingForeignKeyWarning:
         # The whole point of the ruling: the flag is dropped, the evidence is not.
         assert 'still recorded in the IR' in dangling_foreign_key_warning(['a.x -> p'])
 
+    def test_it_names_the_missing_grant_and_the_supabase_cutover(self) -> None:
+        # Supabase changelog 45329: from 2026-10-30 new public tables are not granted to the API
+        # roles, so this warning is the one place castiron can observe that symptom.
+        message = dangling_foreign_key_warning(['a.x -> p'])
+        assert 'missing a GRANT' in message
+        assert '2026-10-30' in message
+
 
 @pytest.mark.unit
 class TestReportDanglingForeignKeys:

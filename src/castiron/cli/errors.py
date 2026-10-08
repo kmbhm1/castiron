@@ -753,16 +753,22 @@ def key_hint(key_source: str | None) -> str:
     """Build the 401/403 hint, naming where the key came from and never its value."""
     if key_source is None:
         return (
-            'no key was given. Pass --key or set CASTIRON_KEY -- a Supabase project needs one even to read its schema.'
+            'no key was given. Pass --key or set CASTIRON_KEY -- a Supabase project needs a secret or '
+            'service_role key even to read its schema.'
         )
     if key_source == '--key':
         return 'the key came from --key. Set CASTIRON_KEY instead to keep it out of your shell history.'
     if key_source == 'SUPABASE_KEY':
         return (
             'the key came from SUPABASE_KEY, which castiron falls back to when CASTIRON_KEY is unset -- '
-            'check it belongs to this project, and set CASTIRON_KEY to be explicit.'
+            'check it belongs to this project and is a secret or service_role key (SUPABASE_KEY is usually '
+            'the anon key, which Supabase no longer accepts for the OpenAPI document), and set CASTIRON_KEY '
+            'to be explicit.'
         )
-    return f'the key came from {key_source}. Check it is current and that its role can read the schema.'
+    return (
+        f'the key came from {key_source}. Check it is current, that it is a secret or service_role key '
+        f'rather than the anon key, and that its role can read the schema.'
+    )
 
 
 def schema_hint(schema: str, origin: str | None) -> str:

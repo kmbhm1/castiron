@@ -395,7 +395,7 @@ class TestRedactSecretParameters:
         assert SERVICE_ROLE_KEY not in masked
         assert 'OTHERSECRET1' not in masked
 
-    # ⚠ Fix round. One assertion per alternative in `_SECRET_WORD`, enumerated rather than
+    # ⚠ Fix round. One assertion per alternative in `_CREDENTIAL_WORD`, enumerated rather than
     # sampled. Eight of the sixteen (auth, credentials, credential, passwd, pwd, signature, sig,
     # bearer) could each be deleted with the whole 880-test suite green -- a typo in any of them
     # was invisible. That is the CI-061 failure mode in new code: a harness only proves the
@@ -919,7 +919,7 @@ class TestRedactStaysLinear:
             ),
             # ⚠ CI-144. `?` was a member of BOTH the lead class and the old name class, so the
             # greedy name walk ran once per `?` in a run -- 57.9 s at 160 000 characters. The `=`
-            # must sit OUTSIDE the `?`-dense run: `_mask_secret_parameters`'s cheap `'=' not in
+            # must sit OUTSIDE the `?`-dense run: `_mask_credential_parameters`'s cheap `'=' not in
             # text` guard skips a text without one, and a run whose own terminator IS the `=`
             # matched on the first try and was never slow. Measured through `redact` at these
             # sizes: 64.2x on `main` @ aca5577 against a budget of 30 -- it failed, which is the
@@ -1006,13 +1006,13 @@ class TestRedactQueryParamStaysLinear:
         # as the one mutant that must NOT be killed -- if this ever stops holding, the guard has
         # quietly become load-bearing and the proof of equivalence is gone with it.
         assert '=' not in text  # not vacuous: the guard is the branch under test
-        assert errors._mask_secret_parameters(text) == text
+        assert errors._mask_credential_parameters(text) == text
 
     def test_an_unmasked_value_is_echoed_byte_for_byte(self) -> None:
         # Guards the `emitted`/`pos` bookkeeping: a text with no credential parameter in it must
         # come back out of the scan unchanged, character for character.
         text = 'https://x.supabase.co/rest/v1/table?select=*&order=id&limit=10#anchor=1'
-        assert errors._mask_secret_parameters(text) == text
+        assert errors._mask_credential_parameters(text) == text
         assert redact(text) == text
 
 
@@ -1066,7 +1066,7 @@ class TestRedactQueryParamAwkwardShapes:
 #: value back in the "neither a URL nor an existing file" `UsageError`).
 UNDER_MASKED_SHAPES: tuple[tuple[str, str], ...] = (
     # (a) `?` inside a NAME. The old single-pattern name class admitted `?`, so `a?token` was one name
-    # and `token` had no `_SECRET_PARAM_NAME` delimiter in front of it -- `?` is not `^`, not
+    # and `token` had no `_CREDENTIAL_PARAM_NAME` delimiter in front of it -- `?` is not `^`, not
     # `[-_.]`, and not the camelCase hump.
     ('?a?token=hunter2pass', '?a?token=***'),
     ('?x?apikey=hunter2pass', '?x?apikey=***'),

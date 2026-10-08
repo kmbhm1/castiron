@@ -1,0 +1,1680 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A schema→typed-code compiler for Python.">
+      
+      
+      
+        <link rel="canonical" href="https://kmbhm1.github.io/castiron/reference/generated-code/">
+      
+      
+        <link rel="prev" href="../cli/">
+      
+      
+        <link rel="next" href="../configuration/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Generated code - castiron</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-generated-code" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="castiron" class="md-header__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            castiron
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Generated code
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="red"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="castiron" class="md-nav__button md-logo" aria-label="castiron" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    castiron
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/kmbhm1/castiron" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    kmbhm1/castiron
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sources
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sources
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sources/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAPI / PostgREST
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated code
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#it-is-clean-as-emitted-not-cleaned-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It is clean as emitted, not cleaned afterwards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-provenance-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The provenance header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-class-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model class names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model class names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#colliding-tables-get-an-ordinal-suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Colliding tables get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enum-class-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum class names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enum class names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#collisions-get-an-ordinal-suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collisions get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enum-member-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum member names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enum member names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-a-label-becomes-a-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a label becomes a name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-reserves-shapes-that-python-allows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum reserves shapes that Python allows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names-are-compared-after-nfkc-normalization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Names are compared after NFKC normalization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collisions-get-an-ordinal-suffix_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collisions get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#column-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Column names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rule
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castiron-tells-you-when-it-renames-something" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron tells you when it renames something
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../exit-codes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exit codes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#it-is-clean-as-emitted-not-cleaned-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        It is clean as emitted, not cleaned afterwards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-provenance-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The provenance header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-class-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model class names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model class names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#colliding-tables-get-an-ordinal-suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Colliding tables get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enum-class-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum class names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enum class names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#collisions-get-an-ordinal-suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collisions get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enum-member-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum member names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enum member names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-a-label-becomes-a-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a label becomes a name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-reserves-shapes-that-python-allows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum reserves shapes that Python allows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names-are-compared-after-nfkc-normalization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Names are compared after NFKC normalization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collisions-get-an-ordinal-suffix_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collisions get an ordinal suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#column-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column names
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Column names">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rule
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castiron-tells-you-when-it-renames-something" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        castiron tells you when it renames something
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-generated-code">The generated code<a class="headerlink" href="#the-generated-code" title="Permanent link">&para;</a></h1>
+<p>What castiron writes into your repository, and what it promises about it. This page is about
+the <em>output</em> — the fidelity of the input is <a href="../../sources/openapi/">a separate
+page</a>.</p>
+<h2 id="it-is-clean-as-emitted-not-cleaned-afterwards">It is clean as emitted, not cleaned afterwards<a class="headerlink" href="#it-is-clean-as-emitted-not-cleaned-afterwards" title="Permanent link">&para;</a></h2>
+<p>castiron runs no formatter over its output. There is no post-hoc <code>ruff</code> or <code>black</code> pass whose
+version could change the bytes, no timestamp, and no source URL in the file — the same schema,
+the same options <strong>and the same castiron version</strong> produce the same bytes, every time. The one
+thing the file records about how it was made is the castiron version, on its first line; see
+<a href="#the-provenance-header">The provenance header</a> below. That is what makes generated models safe
+to commit and to diff, and it is the foundation <a href="../cli/#castiron-check"><code>castiron check</code></a> stands
+on.</p>
+<h2 id="the-provenance-header">The provenance header<a class="headerlink" href="#the-provenance-header" title="Permanent link">&para;</a></h2>
+<p>Every generated module opens with exactly two comment lines and one blank line:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Generated by castiron 0.5.0</span>
+<span class="c1"># Do not edit by hand. Regenerate with `castiron gen` -- https://github.com/kmbhm1/castiron</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+</code></pre></div>
+<p>It is a <strong>comment block, not a module docstring</strong>, so it never becomes your module's <code>__doc__</code>
+and it never displaces <code>from __future__ import annotations</code> — a <code>__future__</code> import must be the
+first <em>statement</em>, and a comment is not a statement.</p>
+<p><strong>What is in it, and what deliberately is not.</strong> The castiron version, and nothing else. No
+timestamp: the file would then change on every run and stop being diffable. No source URL: a
+<code>--from https://project.supabase.co/?apikey=…</code> would write a credential into a file you commit.
+No configuration summary: every flag you flipped would show up as a header diff. The version is
+the only varying input, which is what keeps the output byte-stable.</p>
+<p><strong>Line 1 is a stable, machine-readable contract.</strong> The version is the last whitespace-delimited
+token of the first line, with no trailing punctuation:</p>
+<div class="highlight"><pre><span></span><code># Generated by castiron &lt;version&gt;
+</code></pre></div>
+<p>Parse that and nothing else. Line 2 is prose and may be reworded in any release. A file
+generated by one castiron will always be readable by a later one — which is the whole point of
+recording the version: <code>castiron check</code> tells you <em>"generated by castiron 0.5.0; you are running
+0.6.0"</em> instead of merely failing, so a castiron upgrade does not look like a schema change.</p>
+<p>Being unformatted afterwards means the emitter has to get it right the first time, so it does:</p>
+<div class="admonition success">
+<p class="admonition-title">The promise</p>
+<p>Emitted output is clean under ruff's <strong><code>F</code></strong> (Pyflakes), <strong><code>UP</code></strong> (pyupgrade) and <strong><code>I</code></strong>
+(isort) rules, <strong>at ruff's own default settings</strong> — not castiron's. A generated module does
+not trip the linter of the project it was just added to.</p>
+</div>
+<p>The import block in particular is written pre-sorted: sections in <code>__future__</code> → standard
+library → third party order, <code>import X</code> before <code>from X import ...</code>, same-module <code>from</code> imports
+merged onto one line with names ordered constant → class → rest, all case-insensitive. It is
+byte-identical to what <code>ruff check --select I --fix</code> would have written.</p>
+<p><strong>What is <em>not</em> promised, stated as plainly as the promise:</strong></p>
+<ul>
+<li><strong>Nothing about <code>E501</code>.</strong> castiron's own house limit is 120 columns and the longest line it has
+  been measured to emit is 101 characters, but that is an observation, not a guarantee — the
+  length is driven by <code>Field(description=...)</code> carrying your own SQL comment, and your comments
+  are as long as you wrote them. At ruff's 88-column default, a long comment will be flagged.</li>
+<li><strong>Nothing about non-default rule sets.</strong> <code>D</code>, <code>ANN</code>, <code>PL</code>, and friends are not considered.</li>
+</ul>
+<p>The promise is enforced, not asserted: every reachable emission (4 corpus inputs × 128
+configuration points = <strong>512 modules</strong>) is written to disk as <code>.py</code> and linted by a real ruff
+subprocess with <code>--isolated</code>, on every leg of the test matrix. Adding an allowance list back is a
+deliberate decision, not a way to turn a red test green.</p>
+<p>That sweep covers <strong>all four</strong> corpus inputs, including the deliberately identifier-hostile one.
+Until <code>0.1.0</code> it covered three: the hostile input emitted a module that did not parse, and a
+linter has nothing to say about a file it cannot read. <a href="#column-names">Column names are now
+repaired</a>, so the carve-out is gone rather than merely unused.</p>
+<h2 id="model-class-names">Model class names<a class="headerlink" href="#model-class-names" title="Permanent link">&para;</a></h2>
+<p>Every table produces a <strong>class stem</strong> — <code>orders</code> → <code>Orders</code> — and five classes hang off it:
+<code>OrdersBaseSchema</code>, <code>OrdersParent</code>, <code>OrdersInsert</code>, <code>OrdersUpdate</code> and the operational <code>Orders</code>.
+A table name is a quoted identifier in Postgres, so <code>CREATE TABLE "order lines"</code> is legal and
+PostgREST reports it verbatim.</p>
+<p>The rule, in order:</p>
+<ol>
+<li><strong>Sanitize, then PascalCase.</strong> Every character Python will not accept inside an identifier
+   becomes <code>_</code> — the same map the <a href="#column-names">column</a> and <a href="#enum-member-names">enum label</a>
+   paths use — and <code>to_pascal_case</code> then splits on <code>_</code>. So a space or a hyphen becomes a word
+   boundary: <code>"order lines"</code> → <code>OrderLines</code>. A leading digit gains one <code>_</code>. Unicode is <strong>kept</strong>:
+   <code>Ünïcödé</code> comes through untouched.</li>
+<li><strong>Singularize first, when <code>--singular-names</code> is set.</strong> <code>orders</code> → <code>Order</code>.</li>
+<li><strong>Collision resolution</strong> — see below.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Postgres table</th>
+<th>Class stem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>order_lines</code></td>
+<td><code>OrderLines</code></td>
+</tr>
+<tr>
+<td><code>"order lines"</code></td>
+<td><code>OrderLines</code></td>
+</tr>
+<tr>
+<td><code>"order-lines"</code></td>
+<td><code>OrderLines</code></td>
+</tr>
+<tr>
+<td><code>ORDER_LINES</code></td>
+<td><code>OrderLines</code></td>
+</tr>
+<tr>
+<td><code>"2fast"</code></td>
+<td><code>_2fast</code></td>
+</tr>
+<tr>
+<td><code>"a""b"</code></td>
+<td><code>AB</code></td>
+</tr>
+<tr>
+<td><code>"Ünïcödé"</code></td>
+<td><code>Ünïcödé</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Until <code>0.1.2</code> these emitted a module that did not parse</p>
+<p><code>"order lines"</code> emitted <code>class Order linesBaseSchema(CustomModel):</code> — a <code>SyntaxError</code>, with
+<code>castiron gen</code> exiting <code>0</code> — and the bad stem reached all five class headers, every relationship
+field pointing at that table, and each class's docstring. <strong>No name that was already valid
+changed</strong>, so regenerating moves nothing unless your schema contains one of these.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title"><code>orderLines</code> becomes <code>Orderlines</code>, not <code>OrderLines</code></p>
+<p>The table path capitalizes each <code>_</code>-separated word and lowercases the rest, so a camelCase
+table name loses its inner capitals. That is what castiron has always emitted and it is not a
+parse problem, so it was left alone. (Enum <em>type</em> names do have a camelCase branch — the two
+transforms are not the same function.)</p>
+</div>
+<h3 id="colliding-tables-get-an-ordinal-suffix">Colliding tables get an ordinal suffix<a class="headerlink" href="#colliding-tables-get-an-ordinal-suffix" title="Permanent link">&para;</a></h3>
+<p>Three different things collapse two tables onto one set of class names, and <strong>all three predate
+the repair above</strong>:</p>
+<ul>
+<li><strong>The assembly is not injective</strong>: <code>order_lines</code>, <code>ORDER_LINES</code>, <code>"order lines"</code> and
+  <code>"order-lines"</code> all become <code>OrderLines</code>.</li>
+<li><strong><code>--singular-names</code> merges names</strong>: <code>orders</code> and <code>order</code> both become <code>Order</code>.</li>
+<li><strong>A stem binds five class names, not one</strong>: the tables <code>order</code> and <code>order_insert</code> have obviously
+  distinct stems and both want the name <code>OrderInsert</code>.</li>
+</ul>
+<p>Nothing is ever dropped or merged. Every table gets its own five classes; the ones that cannot keep
+the natural stem get <code>_2</code>, <code>_3</code>, … and a comment saying what took it. A stem is only allocated when
+<strong>every</strong> name derived from it is free — including against castiron's own <code>CustomModel</code> bases and
+everything the import block binds, so a table called <code>custom_model</code> or <code>base_model</code> cannot rebind
+them.</p>
+<div class="admonition note">
+<p class="admonition-title">Well-behaved names are allocated first</p>
+<p>Tables whose name needed <strong>no</strong> repair claim their stem <strong>before</strong> repaired ones do, the same
+way <a href="#enum-class-names">enum classes</a> do. Adding <code>CREATE TABLE "order lines"</code> to a database that
+already had <code>order_lines</code> should not rename a class you already import. Two <em>equally</em>
+well-behaved colliders still need an arbitration, and there the first in schema order keeps it.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="ss">&quot;order lines&quot;</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="w"> </span><span class="nb">int</span><span class="w"> </span><span class="k">primary</span><span class="w"> </span><span class="k">key</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="ss">&quot;order-lines&quot;</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="w"> </span><span class="nb">int</span><span class="w"> </span><span class="k">primary</span><span class="w"> </span><span class="k">key</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">order_lines</span><span class="w">   </span><span class="p">(</span><span class="n">id</span><span class="w"> </span><span class="nb">int</span><span class="w"> </span><span class="k">primary</span><span class="w"> </span><span class="k">key</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># original name was &quot;order lines&quot; (name collision, OrderLines is taken by &quot;order_lines&quot;)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderLines_2BaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;OrderLines_2 Base Schema.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Columns</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="c1"># original name was &quot;order-lines&quot; (name collision, OrderLines is taken by &quot;order_lines&quot;)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderLines_3BaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;OrderLines_3 Base Schema.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Columns</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderLinesBaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;OrderLines Base Schema.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Columns</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+</code></pre></div>
+<p>The comment is repeated above <strong>every</strong> class the stem produces, because a class header carries
+nothing else of the source: once the stem is repaired the Postgres table name is otherwise
+unrecoverable from the module. It is emitted <strong>only</strong> when the name changed.</p>
+<p><strong>Relationship fields follow the resolved class</strong>, never the one the table name suggests — a
+foreign key into <code>"order lines"</code> is annotated <code>list[OrderLines_2]</code> above, not <code>list[OrderLines]</code>.
+Their <em>field</em> names are model fields, so they follow the <a href="#the-rule">column rule</a> instead: a table
+called <code>"order lines"</code> gives <code>order_lines: list[...]</code>, and one called <code>class</code> gives <code>field_class</code>.</p>
+<p><code>castiron gen</code> prints one aggregated line to stderr when a table is renamed:</p>
+<div class="highlight"><pre><span></span><code>castiron: 2 tables are not emitted under the class name their name suggests
+(order lines -&gt; OrderLines_2 (name collision, OrderLines is taken by order_lines),
+order-lines -&gt; OrderLines_3 (name collision, OrderLines is taken by order_lines)) -- the
+original table name is preserved in a comment above each generated class, so the module
+still records which table it came from; only the Python class name differs.
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">The same positional caveat as everywhere else</p>
+<p>Ordinal suffixes are positional, so adding a table upstream that sorts before an existing
+collider renumbers the later ones. Allocating unrepaired names first removes the common case —
+a hostile name displacing a well-behaved one — but not the general one.</p>
+</div>
+<h2 id="enum-class-names">Enum class names<a class="headerlink" href="#enum-class-names" title="Permanent link">&para;</a></h2>
+<p>The class header is built from two pieces of raw Postgres text — the <strong>schema</strong> and the <strong>type
+name</strong> — and PostgREST reports both verbatim. A Postgres type name is a quoted identifier, so
+<code>CREATE TYPE public."order status"</code> and <code>CREATE SCHEMA "2fa"</code> are both perfectly legal and neither
+produces a usable Python class name on its own.</p>
+<p>The rule, in order:</p>
+<ol>
+<li><strong>PascalCase assembly</strong> — <code>public.order_status</code> → <code>PublicOrderStatusEnum</code>. snake_case,
+   camelCase (<code>thirdType</code> → <code>PublicThirdTypeEnum</code>), PascalCase and a leading underscore
+   (<code>_first_type</code> → <code>PublicFirstTypeEnum</code>) are each handled; the schema is capitalized and
+   prefixed, and <code>Enum</code> is always appended.</li>
+<li><strong>Identifier repair</strong> — every character that cannot appear in a Python identifier becomes <code>_</code>,
+   and a leading digit gains one <code>_</code>. Unicode is <strong>kept</strong>, not folded to ASCII: <code>public.Ünïcödé</code>
+   stays <code>PublicÜnïcödéEnum</code>.</li>
+<li><strong>Collision resolution</strong> — see below.</li>
+</ol>
+<p>This is the same character map the <a href="#column-names">column</a> and <a href="#enum-member-names">enum label</a>
+paths use, so a name that is repaired one way in one place is repaired the same way everywhere.</p>
+<table>
+<thead>
+<tr>
+<th>Postgres type</th>
+<th>Class name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>public.order_status</code></td>
+<td><code>PublicOrderStatusEnum</code></td>
+</tr>
+<tr>
+<td><code>public."order status"</code></td>
+<td><code>PublicOrderStatusEnum</code></td>
+</tr>
+<tr>
+<td><code>public."order-status"</code></td>
+<td><code>PublicOrderStatusEnum</code></td>
+</tr>
+<tr>
+<td><code>public."a""b"</code></td>
+<td><code>PublicABEnum</code></td>
+</tr>
+<tr>
+<td><code>"my schema".order_status</code></td>
+<td><code>My_schemaOrderStatusEnum</code></td>
+</tr>
+<tr>
+<td><code>"2fa".mood</code></td>
+<td><code>_2faMoodEnum</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Until <code>0.1.1</code> these emitted a module that did not parse</p>
+<p><code>public."order status"</code> emitted <code>class PublicOrder statusEnum(str, Enum):</code> — a <code>SyntaxError</code>,
+with <code>castiron gen</code> exiting <code>0</code>. A type name containing a newline split the header across two
+lines. The bad name also propagated into every column annotation referencing the type, so a
+fix that repaired only the header would not have been one. <strong>No name that was already valid
+changed</strong>, so regenerating moves nothing unless your schema contains one of these.</p>
+</div>
+<h3 id="collisions-get-an-ordinal-suffix">Collisions get an ordinal suffix<a class="headerlink" href="#collisions-get-an-ordinal-suffix" title="Permanent link">&para;</a></h3>
+<p>Two distinct Postgres types can want the same class name, and this is not exotic:
+<code>order_status</code>, <code>orderStatus</code>, <code>OrderStatus</code>, <code>Order_Status</code>, <code>_order_status</code> and <code>ORDER_STATUS</code>
+all assemble to <code>PublicOrderStatusEnum</code>. The collision domain is the <strong>whole module</strong>, not just
+the enums — a table named <code>order_status_enum</code> produces a model class called <code>OrderStatusEnum</code>,
+which an enum <code>order.status</code> also wants.</p>
+<p>Nothing is ever dropped or merged. Every type gets its own class; the ones that cannot keep the
+natural name get <code>_2</code>, <code>_3</code>, … and a comment saying what took it.</p>
+<div class="admonition note">
+<p class="admonition-title">Well-behaved names are allocated first</p>
+<p>Enum types whose name needed <strong>no repair</strong> claim their class name <strong>before</strong> repaired ones do.
+Without that, adding <code>CREATE TYPE "order status"</code> to a database that already had <code>order_status</code>
+would hand the new hostile type the clean <code>PublicOrderStatusEnum</code> and silently rename the
+working one — because <code>' '</code> and <code>'-'</code> sort before <code>'_'</code>. A schema addition should not rename a
+class you already import.</p>
+<p>Two <em>equally</em> well-behaved colliders still need an arbitration, and there the first in schema
+order keeps the name.</p>
+</div>
+<p><strong><a href="#model-class-names">Table model class names</a> always win.</strong> Model class stems are allocated
+first and an enum yields to them — including to a stem that itself carries an ordinal — because a
+table's model is the stable thing your imports point at.</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TYPE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="ss">&quot;order status&quot;</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">ENUM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;open&#39;</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TYPE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="ss">&quot;order-status&quot;</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">ENUM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;shut&#39;</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TYPE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">order_status</span><span class="w">   </span><span class="k">AS</span><span class="w"> </span><span class="n">ENUM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;done&#39;</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TYPE</span><span class="w"> </span><span class="ss">&quot;2fa&quot;</span><span class="p">.</span><span class="n">mood</span><span class="w">            </span><span class="k">AS</span><span class="w"> </span><span class="n">ENUM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;ok&#39;</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># original name was &quot;public.order status&quot; (name collision, PublicOrderStatusEnum is taken by &quot;public.order_status&quot;)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PublicOrderStatusEnum_2</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">OPEN_</span> <span class="o">=</span> <span class="s2">&quot;open&quot;</span>  <span class="c1"># original name was &quot;open&quot; (reserved keyword)</span>
+
+
+<span class="c1"># original name was &quot;public.order-status&quot; (name collision, PublicOrderStatusEnum is taken by &quot;public.order_status&quot;)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PublicOrderStatusEnum_3</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">SHUT</span> <span class="o">=</span> <span class="s2">&quot;shut&quot;</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PublicOrderStatusEnum</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">DONE</span> <span class="o">=</span> <span class="s2">&quot;done&quot;</span>
+
+
+<span class="c1"># original name was &quot;2fa.mood&quot; (identifier repair)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_2faMoodEnum</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">OK</span> <span class="o">=</span> <span class="s2">&quot;ok&quot;</span>
+</code></pre></div>
+<p>A class header carries nothing else of the source, so the <code># original name was …</code> comment is the
+only record of which Postgres type a class came from — unlike a member line, where the value
+literal on the same line already is the label. It is emitted <strong>only</strong> when the name changed.</p>
+<p><code>castiron gen</code> also prints one aggregated line to stderr when this happens, so a rename is not
+something you have to find by reading the file:</p>
+<div class="highlight"><pre><span></span><code>castiron: 1 enum type is not emitted under the class name their Postgres type name suggests
+(public.order status -&gt; PublicOrderStatusEnum_2 (name collision, PublicOrderStatusEnum is taken by
+public.order_status)) -- the original type name is preserved in a comment above each class, so the
+generated module still records which type it came from; only the Python class name differs.
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">The same positional caveat as label collisions</p>
+<p>Ordinal suffixes are positional. Adding a type upstream that sorts before an existing collider
+renumbers the later ones, so <code>PublicOrderStatusEnum_2</code> can come to mean a different Postgres
+type after a <code>CREATE TYPE</code>. Allocating unrepaired names first removes the common case — a
+hostile name displacing a well-behaved one — but not the general one.</p>
+</div>
+<h2 id="enum-member-names">Enum member names<a class="headerlink" href="#enum-member-names" title="Permanent link">&para;</a></h2>
+<p>A Postgres enum becomes a <code>str, Enum</code> class. The <strong>member value is always the label, verbatim</strong> —
+whatever castiron has to do to the <em>name</em>, nothing is ever lost, dropped or merged, and every
+label gets exactly one member.</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TYPE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">ticket_state</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">ENUM</span>
+<span class="w">  </span><span class="p">(</span><span class="s1">&#39;in progress&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;in-progress&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;done&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;2nd pass&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;(none)&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;import&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">PublicTicketStateEnum</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">IN_PROGRESS</span> <span class="o">=</span> <span class="s2">&quot;in progress&quot;</span>
+    <span class="n">IN_PROGRESS_2</span> <span class="o">=</span> <span class="s2">&quot;in-progress&quot;</span>  <span class="c1"># original name was &quot;in-progress&quot; (name collision)</span>
+    <span class="n">DONE</span> <span class="o">=</span> <span class="s2">&quot;done&quot;</span>
+    <span class="n">_2ND_PASS</span> <span class="o">=</span> <span class="s2">&quot;2nd pass&quot;</span>
+    <span class="n">_NONE__</span> <span class="o">=</span> <span class="s2">&quot;(none)&quot;</span>  <span class="c1"># original name was &quot;(none)&quot; (reserved by Enum)</span>
+    <span class="n">IMPORT_</span> <span class="o">=</span> <span class="s2">&quot;import&quot;</span>  <span class="c1"># original name was &quot;import&quot; (reserved keyword)</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</code></pre></div>
+<p>The trailing comment appears <strong>only when the name is not the straight transform of the label</strong>.
+The value literal is right there on the same line and already <em>is</em> the label, so glossing every
+member would be noise in every user's file forever.</p>
+<h3 id="how-a-label-becomes-a-name">How a label becomes a name<a class="headerlink" href="#how-a-label-becomes-a-name" title="Permanent link">&para;</a></h3>
+<p>In this order:</p>
+<ol>
+<li><strong>Sanitize.</strong> Every character Python will not accept inside an identifier becomes <code>_</code>, one
+   character out per character in. Nothing is collapsed and nothing is stripped: <code>'a b'</code> and
+   <code>'a  b'</code> stay distinguishable attempts. Non-ASCII identifier characters are <strong>kept</strong>, not
+   folded to ASCII — <code>'Ünïcödé'</code> becomes <code>ÜNÏCÖDÉ</code>, not <code>________</code>.</li>
+<li><strong>Uppercase.</strong> <code>pending</code> → <code>PENDING</code>, as it always has been.</li>
+<li><strong>Empty label guard.</strong> <code>CREATE TYPE t AS ENUM ('')</code> is legal Postgres; the empty label becomes
+   <code>_</code>.</li>
+<li><strong>Leading-digit guard.</strong> <code>'2nd pass'</code> → <code>_2ND_PASS</code>, addressable as <code>E._2ND_PASS</code>.</li>
+<li><strong>Enum-shape repair</strong> — see below.</li>
+<li><strong>Reserved-name guard.</strong> A name that spells a Python keyword or builtin gets a trailing
+   underscore: <code>import</code> → <code>IMPORT_</code>. A short curated list of builtins — <code>id</code>, <code>credits</code>,
+   <code>copyright</code>, <code>license</code>, <code>help</code>, <code>property</code>, <code>sum</code> — is <strong>exempt</strong> and keeps its plain name.</li>
+<li><strong>Collision resolution</strong> — see below.</li>
+</ol>
+<h3 id="enum-reserves-shapes-that-python-allows"><code>Enum</code> reserves shapes that Python allows<a class="headerlink" href="#enum-reserves-shapes-that-python-allows" title="Permanent link">&para;</a></h3>
+<p><code>str.isidentifier()</code> is necessary and <strong>not sufficient</strong>. Four name shapes are legal Python
+identifiers that <code>EnumMeta</code> will not give you back, and step 1 produces all of them from
+ordinary labels — a trailing space in a <code>CREATE TYPE</code> is enough:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>What <code>Enum</code> does</th>
+<th>Reached from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_sunder_</code></td>
+<td><strong>raises <code>ValueError</code> when the class body runs</strong> — the whole generated module is unusable at import</td>
+<td><code>'(none)'</code> → <code>_NONE_</code></td>
+</tr>
+<tr>
+<td><code>__dunder__</code></td>
+<td>the member is <strong>silently dropped</strong></td>
+<td><code>'__init__'</code> → <code>__INIT__</code></td>
+</tr>
+<tr>
+<td><code>__private</code> (two leading underscores, fewer than two trailing)</td>
+<td>name-mangled at compile time, so the member never has the name that was written; 3.11+ drop it, 3.10 keeps it under a different name</td>
+<td>the collision suffix itself: <code>_</code> + <code>_2</code> → <code>__2</code></td>
+</tr>
+<tr>
+<td><code>_&lt;ClassName&gt;__x</code> (<strong>class-private</strong>)</td>
+<td>treated as a normal attribute rather than a member — 3.11+ drop it, 3.10 keeps it mangled</td>
+<td>a label whose NFKC form spells the enclosing class name; see below</td>
+</tr>
+</tbody>
+</table>
+<p>castiron repairs those shapes by appending <code>_</code> until the name is usable — at most three times,
+which is a bound rather than an observation. That is why <code>'(none)'</code> emits <code>_NONE__</code> and not
+<code>_NONE_</code>.</p>
+<p>Three of those four would violate the one thing enum naming never does — drop a label — and they
+would do it at exit code <code>0</code>, which is why the repair exists rather than a warning.</p>
+<div class="admonition note">
+<p class="admonition-title">The fourth shape depends on the class name, not just the label</p>
+<p><code>Enum</code>'s private-name check also consults the <strong>enclosing class name</strong>, so whether a name is
+reserved is a property of the <em>pair</em>. castiron checks members against the class name it
+<strong>actually writes in the header</strong> — including the <code>_2</code> a <a href="#collisions-get-an-ordinal-suffix">collision</a>
+allocated — so the two cannot disagree.</p>
+<p>Reaching this shape takes deliberately-crafted Unicode and is <strong>impossible from ASCII-only
+labels</strong>: the generated class name always ends in <code>Enum</code>, whose lowercase <code>num</code> cannot survive
+<code>.upper()</code>. But 389 codepoints are <code>upper()</code>-invariant <em>and</em> NFKC-fold to an ASCII lowercase
+letter, so <code>'_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X'</code> normalizes to <code>_PublicOrderStatusEnum__X</code>. It is
+repaired to <code>_PᵘᵇˡᵢᶜOʳᵈᵉʳSᵗªᵗᵘˢEⁿᵘᵐ__X__</code> and the label survives <strong>identically on Python 3.10
+through 3.13</strong> — before this was repaired, the generated module's meaning depended on which
+interpreter imported it.</p>
+</div>
+<h3 id="names-are-compared-after-nfkc-normalization">Names are compared after NFKC normalization<a class="headerlink" href="#names-are-compared-after-nfkc-normalization" title="Permanent link">&para;</a></h3>
+<p>CPython normalizes identifiers to NFKC <strong>at compile time</strong>, so two strings that look different
+can be one binding: <code>ﬁ = 1; fi = 2</code> leaves a single name worth <code>2</code>. <code>str.upper()</code> performs the
+same folding (<code>'ﬁ'.upper() == 'FI'</code>, <code>'ß'.upper() == 'SS'</code>). castiron therefore tests both the
+reserved shapes and uniqueness against the <strong>normalized</strong> candidate — the string the compiler
+will actually see — rather than the one it wrote.</p>
+<p>Without that, a perfectly legal Postgres enum would emit a module raising <code>TypeError</code> at import.
+With it:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">PublicKindEnum</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">FI</span> <span class="o">=</span> <span class="s2">&quot;ﬁ&quot;</span>
+    <span class="n">FI_2</span> <span class="o">=</span> <span class="s2">&quot;fi&quot;</span>  <span class="c1"># original name was &quot;fi&quot; (name collision)</span>
+    <span class="n">ID</span> <span class="o">=</span> <span class="s2">&quot;id&quot;</span>
+    <span class="n">SS</span> <span class="o">=</span> <span class="s2">&quot;ß&quot;</span>
+    <span class="n">SS_2</span> <span class="o">=</span> <span class="s2">&quot;SS&quot;</span>  <span class="c1"># original name was &quot;SS&quot; (name collision)</span>
+</code></pre></div>
+<h3 id="collisions-get-an-ordinal-suffix_1">Collisions get an ordinal suffix<a class="headerlink" href="#collisions-get-an-ordinal-suffix_1" title="Permanent link">&para;</a></h3>
+<p>When two labels want the same name, the first keeps it and each later one gets <code>_2</code>, <code>_3</code>, … until
+the normalized candidate is free. The suffix can itself create a reserved shape, so the result is
+re-repaired before it is accepted.</p>
+<div class="admonition warning">
+<p class="admonition-title">The cost, stated up front</p>
+<p>Ordinal suffixes are positional, so <strong>inserting a label upstream that sorts before an existing
+collider renumbers the later ones</strong> — <code>E.IN_PROGRESS_2</code> can come to mean a different label
+after an <code>ALTER TYPE</code>. The effect is bounded to colliding labels and it is visible on the line,
+because the value literal sits right next to the name. The alternative, a label-derived digest
+suffix, is stable but permanently unreadable; refusing to generate is not an option while there
+is no override mechanism to point you at.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title"><code>id</code>, <code>license</code>, <code>help</code> and four others are <em>exempt</em></p>
+<p>A short curated list — <code>id</code>, <code>credits</code>, <code>copyright</code>, <code>license</code>, <code>help</code>, <code>property</code>, <code>sum</code> — is
+<strong>exempt</strong> from step 6, so those labels keep their plain names: <code>id</code> emits <code>ID = "id"</code>, with no
+trailing underscore and no comment. The same list exempts the same names on the <a href="#column-names">column
+path</a>, so the two read it identically.</p>
+<p>Until <code>0.1.0</code> the enum path applied that list as an <em>addition</em> rather than an exemption, so
+<code>id</code> emitted <code>ID_ = "id"  # original name was "id" (reserved keyword)</code> — a rename the list
+exists to prevent, annotated with the opposite of the reason. <strong>If you generated with <code>0.1.0</code>,
+regenerating will drop the trailing underscore from those seven names.</strong> The label in the value
+literal was never affected.</p>
+</div>
+<h2 id="column-names">Column names<a class="headerlink" href="#column-names" title="Permanent link">&para;</a></h2>
+<p>A column name is a <em>quoted identifier</em> in Postgres, which means it can be almost any string —
+<code>"2fast"</code>, <code>"space name"</code>, <code>"kebab-case"</code>, <code>"_private"</code> — and PostgREST carries it through
+verbatim. Almost none of those are usable as a Pydantic field name, so castiron repairs the
+<strong>attribute</strong> and keeps the <strong>wire name</strong> on a <code>Field(alias=...)</code>.</p>
+<p><strong>The value on the wire is always the real column name.</strong> The generated models read and write the
+column your database actually has; only the attribute you type in Python differs.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">HostileColumnsBaseSchema</span><span class="p">(</span><span class="n">CustomModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Hostile Columns Base Schema.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Primary Keys</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="c1"># Columns</span>
+    <span class="n">field_2fast</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;2fast&quot;</span><span class="p">)</span>
+    <span class="n">kebab_case</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;kebab-case&quot;</span><span class="p">)</span>
+    <span class="n">ok_column</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="n">space_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;space name&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="the-rule">The rule<a class="headerlink" href="#the-rule" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Sanitize.</strong> Every character Python will not accept inside an identifier becomes <code>_</code>, one
+   character out per character in — the same map the enum path uses. There is no run-collapsing
+   and no stripping, so <code>'a b'</code> and <code>'a  b'</code> stay distinguishable attempts. Non-ASCII identifier
+   characters are <strong>kept</strong>: a column named <code>Ünïcödé</code> is already legal Python and comes through
+   untouched, with no alias.</li>
+<li><strong>Prefix <code>field_</code> if the result still is not usable.</strong> That covers an empty name, a leading
+   digit (<code>2fast</code> → <code>field_2fast</code>), and a <strong>leading underscore</strong> (<code>_private</code> →
+   <code>field__private</code>) — Pydantic reserves leading-underscore names for private attributes and
+   raises <code>NameError</code> when the class body runs, so a leading underscore is unusable even though
+   it compiles.</li>
+<li><strong>Prefix <code>field_</code> if it is a Python keyword, a builtin, or starts with <code>model_</code>.</strong> This is the
+   long-standing rule: <code>class</code> → <code>field_class</code>. Seven names are exempt and keep their spelling —
+   <code>id</code>, <code>credits</code>, <code>copyright</code>, <code>license</code>, <code>help</code>, <code>property</code>, <code>sum</code>.</li>
+<li><strong>Uniquify, per table.</strong> The first column to want a name keeps it; each later collider gets
+   <code>_2</code>, <code>_3</code>, … <code>'space name'</code>, <code>'space-name'</code> and <code>'space_name'</code> in one table become
+   <code>space_name</code>, <code>space_name_2</code> and <code>space_name_3</code>. <strong>Nothing is ever dropped or merged.</strong></li>
+</ol>
+<p>Ordering is the column order the source reported — Postgres <code>attnum</code> — so the result is
+deterministic for a given schema.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>ﬁ</code> and <code>fi</code> are the same identifier to Python</p>
+<p>CPython normalizes identifiers to NFKC at compile time, so two column names that look
+different can be one attribute. castiron tests every guard, the uniqueness key <strong>and</strong> the
+alias rule against the normalized form — the string the compiler will actually see. Without
+that, a column named <code>ﬁ</code> would bind the attribute <code>fi</code>, carry no alias, and its wire name
+would be silently lost.</p>
+</div>
+<h3 id="castiron-tells-you-when-it-renames-something">castiron tells you when it renames something<a class="headerlink" href="#castiron-tells-you-when-it-renames-something" title="Permanent link">&para;</a></h3>
+<p>A repair changes the attribute you have to type, so <code>gen</code> says so — <strong>once per run</strong>, at
+<code>WARNING</code>, and the run still exits <code>0</code> because the generated code is correct:</p>
+<div class="highlight"><pre><span></span><code>castiron: 3 column names are not usable as a Python field name and were renamed
+(t.2fast -&gt; field_2fast, t.space name -&gt; space_name, t.kebab-case -&gt; kebab_case) --
+the original name is preserved on the wire via Field(alias=...), so the generated
+models still read and write the real column; only the attribute you type in Python differs.
+</code></pre></div>
+<p>The long-standing keyword rename (<code>class</code> → <code>field_class</code>) does <strong>not</strong> warn: that behaviour has
+not changed, and a schema that worked yesterday should not grow a new warning today.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>field_</code> and <code>_2</code> are part of the public shape</p>
+<p>The attribute name is what your code types, so changing this scheme later would be a breaking
+change. Two consequences worth knowing up front: the <code>field_</code> prefix is permanent, and ordinal
+suffixes are <strong>positional</strong> — adding a column upstream that sorts before an existing collider
+can renumber the later ones. <code>ALTER TABLE … ADD COLUMN</code> appends at the end, so in practice a
+new column can only take a <em>higher</em> ordinal. The alias on each line disambiguates them for a
+reader either way.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -182,7 +182,7 @@ def load_schema(
     """
     if looks_like_url(source):
         origin = source_origin(source, key)
-        logger.debug(f"Reading the schema from {redact(origin, key)}")
+        logger.debug("Reading the schema from URL source")
         schema_ir = load_openapi_schema(
             source,
             key=key,

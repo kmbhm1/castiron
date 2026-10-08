@@ -26,7 +26,11 @@ from castiron.emitters.base import parse_header_version
 from castiron.ir import Schema
 from castiron.sources import SourceFetchError, SourceParseError, build_schema_from_document
 
-SECRET = 'eyJhbGciOiJIUzI1NiJ9-SUPERSECRET'
+#: The value that must never reach stdout, stderr or a generated file. Named CANARY rather than
+#: SECRET on purpose: CodeQL's ``py/clear-text-logging-sensitive-data`` reads a ``.*secret.*``
+#: variable name as a source of real secret data, so the tests that deliberately log this value to
+#: prove `RedactingFilter` masks it were themselves reported as high-severity leaks.
+CANARY = 'eyJhbGciOiJIUzI1NiJ9-SUPERSECRET'
 
 
 def run(runner: CliRunner, *args: str, **kwargs: Any) -> Result:
@@ -157,7 +161,7 @@ class TestSourceDispatch:
             '--from',
             'https://abcdefgh.supabase.co',
             '--key',
-            SECRET,
+            CANARY,
             '--schema',
             'billing',
             '--timeout',
@@ -169,7 +173,7 @@ class TestSourceDispatch:
         assert result.exit_code == 0, result.output
         assert seen == {
             'url': 'https://abcdefgh.supabase.co',
-            'key': SECRET,
+            'key': CANARY,
             'schema': 'billing',
             'timeout': 7.5,
             'infer_generated_primary_keys': True,
@@ -205,12 +209,12 @@ class TestSourceDispatch:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        monkeypatch.setenv('CASTIRON_KEY', SECRET)
+        monkeypatch.setenv('CASTIRON_KEY', CANARY)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--output', 'out')
         assert result.exit_code == 0, result.output
         assert captured[0].full_url == 'https://abcdefgh.supabase.co/rest/v1/'
-        assert captured[0].get_header('Apikey') == SECRET
-        assert captured[0].get_header('Authorization') == f'Bearer {SECRET}'
+        assert captured[0].get_header('Apikey') == CANARY
+        assert captured[0].get_header('Authorization') == f'Bearer {CANARY}'
 
     def test_the_supabase_key_variable_is_the_fallback(
         self,
@@ -226,10 +230,10 @@ class TestSourceDispatch:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        monkeypatch.setenv('SUPABASE_KEY', SECRET)
+        monkeypatch.setenv('SUPABASE_KEY', CANARY)
         monkeypatch.setenv('SUPABASE_URL', 'https://abcdefgh.supabase.co')
         assert run(runner, '--output', 'out').exit_code == 0
-        assert captured[0].get_header('Apikey') == SECRET
+        assert captured[0].get_header('Apikey') == CANARY
 
     def test_castiron_key_wins_over_supabase_key(
         self,
@@ -245,10 +249,10 @@ class TestSourceDispatch:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        monkeypatch.setenv('CASTIRON_KEY', SECRET)
+        monkeypatch.setenv('CASTIRON_KEY', CANARY)
         monkeypatch.setenv('SUPABASE_KEY', 'the-other-project-key')
         assert run(runner, '--from', 'https://abcdefgh.supabase.co', '--output', 'out').exit_code == 0
-        assert captured[0].get_header('Apikey') == SECRET
+        assert captured[0].get_header('Apikey') == CANARY
 
     def test_a_local_document_that_is_not_json_fails_with_exit_one(self, runner: CliRunner, project: Path) -> None:
         (project / 'broken.json').write_text('{not json', encoding='utf-8')
@@ -364,9 +368,9 @@ class TestFailureMapping:
     ) -> None:
         # Both surfaces at once, because this message is new: the --key value and a credential
         # parameter inside the malformed URL that the message quotes back verbatim.
-        result = run(runner, '--from', f'http://[::1/?apikey={SECRET}', '--key', SECRET, '--debug')
+        result = run(runner, '--from', f'http://[::1/?apikey={CANARY}', '--key', CANARY, '--debug')
         assert result.exit_code == 1
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert 'apikey=***' in result.output
 
     def test_an_unexpected_exception_exits_seventy_without_a_traceback(
@@ -388,15 +392,15 @@ class TestFailureMapping:
         # CI-062. Against main this exits 1 with the interpreter's own unredacted traceback;
         # castiron now prints it, through `redact`, and keeps the documented exit code.
         def boom(url: str, **kwargs: Any) -> Schema:
-            raise RuntimeError(f'a castiron bug on {url}?service_role_key={SECRET}')
+            raise RuntimeError(f'a castiron bug on {url}?service_role_key={CANARY}')
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug')
         assert result.exit_code == 70
         assert 'Traceback (most recent call last)' in result.stderr  # not vacuous
         assert 'RuntimeError: a castiron bug' in result.stderr
-        assert SECRET not in result.stderr
-        assert SECRET not in result.output
+        assert CANARY not in result.stderr
+        assert CANARY not in result.output
 
     def test_the_debug_traceback_of_a_chained_failure_is_redacted(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -405,16 +409,16 @@ class TestFailureMapping:
         # `Error:` line is clean either way; the chained block below it was not.
         def boom(url: str, **kwargs: Any) -> Schema:
             try:
-                raise SourceFetchError(f'{url}?apikey={SECRET} failed')
+                raise SourceFetchError(f'{url}?apikey={CANARY} failed')
             except SourceFetchError:
                 raise RuntimeError('inner blew up while handling the fetch failure')  # noqa: B904
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
-        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', '--key', SECRET)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--debug', '--key', CANARY)
         assert result.exit_code == 70
         assert 'During handling of the above exception' in result.stderr  # not vacuous
-        assert SECRET not in result.stderr
-        assert SECRET not in result.output
+        assert CANARY not in result.stderr
+        assert CANARY not in result.output
 
     def test_no_overwrite_with_an_existing_target_exits_one(self, runner: CliRunner, project: Path) -> None:
         (project / 'schema.py').write_text('mine\n', encoding='utf-8')
@@ -450,9 +454,9 @@ class TestSecrets:
             raise URLError('down')
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}')
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={CANARY}')
         assert result.exit_code == 1
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert 'apikey=***' in result.output
 
     @pytest.mark.parametrize('name', ['apikey', 'service_role_key'])
@@ -470,9 +474,9 @@ class TestSecrets:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?{name}={SECRET}', '--output', 'out')
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?{name}={CANARY}', '--output', 'out')
         assert result.exit_code == 0, result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert f'{name}=***' in result.stdout
 
     def test_the_literal_key_value_never_reaches_the_terminal(
@@ -482,9 +486,9 @@ class TestSecrets:
             raise SourceFetchError(f'{url} returned HTTP 401 while presenting {kwargs["key"]}')
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', CANARY)
         assert result.exit_code == 1
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert 'HTTP 401' in result.output
 
     # ⚠ Every case above ran at the default verbosity, which is how the original leak shipped:
@@ -496,13 +500,13 @@ class TestSecrets:
     @pytest.mark.parametrize(
         ('source', 'expected_exit'),
         [
-            (f'https://x.supabase.co/rest/v1/?apikey={SECRET}', 1),
+            (f'https://x.supabase.co/rest/v1/?apikey={CANARY}', 1),
             # CI-066: the old pattern anchored the credential word to the `?`/`&`, so every
             # prefixed spelling printed in full -- and a service-role key is the worst one.
-            (f'https://x.supabase.co/rest/v1/?service_role_key={SECRET}', 1),
+            (f'https://x.supabase.co/rest/v1/?service_role_key={CANARY}', 1),
             # CI-066/CI066-Q1: a userinfo URL is refused at the boundary (exit 2) rather than
             # handed to an HTTP client that quotes the password back in its InvalidURL.
-            (f'https://user:{SECRET}@x.supabase.co/rest/v1/', 2),
+            (f'https://user:{CANARY}@x.supabase.co/rest/v1/', 2),
         ],
         ids=['apikey', 'service_role_key', 'url-userinfo'],
     )
@@ -521,8 +525,8 @@ class TestSecrets:
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
         result = run(runner, '--from', source, *verbosity)
         assert result.exit_code == expected_exit
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     @pytest.mark.parametrize('verbosity', [[], ['-v'], ['-vv'], ['--debug']])
     def test_the_literal_key_is_redacted_at_every_verbosity(
@@ -534,14 +538,14 @@ class TestSecrets:
         verbosity: list[str],
     ) -> None:
         def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
-            logging.getLogger('castiron.sources.openapi.fetch').debug(f'presenting {SECRET}')
+            logging.getLogger('castiron.sources.openapi.fetch').debug(f'presenting {CANARY}')
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET, '--output', 'out', *verbosity)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', CANARY, '--output', 'out', *verbosity)
         assert result.exit_code == 0, result.output
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     def test_the_debug_fetch_line_is_redacted(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -552,7 +556,7 @@ class TestSecrets:
             raise URLError('down')
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--debug')
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={CANARY}', '--debug')
         assert 'Fetching the OpenAPI document from https://x.supabase.co/rest/v1/?apikey=***' in result.stderr
 
     @pytest.mark.parametrize('name', ['apikey', 'service_role_key'])
@@ -563,10 +567,10 @@ class TestSecrets:
         # the value back verbatim. Omitting `https://` while pasting a project URL is a very
         # plausible typo, and that pasted URL carries the key -- so this path really does
         # print a secret. It was the one printed surface with no test on it.
-        result = run(runner, '--from', f'x.supabase.co/rest/v1/?{name}={SECRET}')
+        result = run(runner, '--from', f'x.supabase.co/rest/v1/?{name}={CANARY}')
         assert result.exit_code == 2
         assert 'neither a URL nor an existing file' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert f'{name}=***' in result.output
 
     # ⚠ CI-068, folded in by captain ruling. The sibling of the test above: the same echo, but
@@ -579,8 +583,8 @@ class TestSecrets:
     @pytest.mark.parametrize(
         'source',
         [
-            f'postgres:{SECRET}@db.x.supabase.co:5432/postgres',
-            f'user:{SECRET}@x.supabase.co',
+            f'postgres:{CANARY}@db.x.supabase.co:5432/postgres',
+            f'user:{CANARY}@x.supabase.co',
         ],
     )
     def test_a_schemeless_userinfo_source_is_redacted_out_of_the_usage_error(
@@ -589,8 +593,8 @@ class TestSecrets:
         result = run(runner, '--from', source)
         assert result.exit_code == 2
         assert 'neither a URL nor an existing file' in result.output  # not vacuous
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     def test_a_schemeless_userinfo_source_from_the_environment_is_redacted_too(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -598,26 +602,26 @@ class TestSecrets:
         # The secret does NOT have to be on the command line, so "it was in the shell history
         # anyway" does not hold: CASTIRON_FROM, SUPABASE_URL and a `from = "..."` in
         # pyproject.toml all reach the same echo.
-        monkeypatch.setenv('SUPABASE_URL', f'postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        monkeypatch.setenv('SUPABASE_URL', f'postgres:{CANARY}@db.x.supabase.co:5432/postgres')
         result = run(runner)
         assert result.exit_code == 2
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_a_schemeless_userinfo_source_from_the_config_file_is_redacted_too(
         self, runner: CliRunner, project: Path
     ) -> None:
         (project / 'pyproject.toml').write_text(
-            f'[tool.castiron]\nfrom = "postgres:{SECRET}@db.x.supabase.co:5432/postgres"\n', encoding='utf-8'
+            f'[tool.castiron]\nfrom = "postgres:{CANARY}@db.x.supabase.co:5432/postgres"\n', encoding='utf-8'
         )
         result = run(runner, '--output', 'out')
         assert result.exit_code == 2
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     @pytest.mark.parametrize(
         'source',
         [
-            f'nosuchfile-{SECRET}.json',
-            f'nope.json?bearerthing={SECRET}',
+            f'nosuchfile-{CANARY}.json',
+            f'nope.json?bearerthing={CANARY}',
         ],
     )
     def test_the_key_is_redacted_out_of_the_usage_error_too(
@@ -626,17 +630,17 @@ class TestSecrets:
         # ⚠ Round 3. Surface 7 with a --key in play. `redact_source` replaced `redact(source,
         # key)` and dropped the key, so the API key printed in full here -- a leak introduced by
         # the commit that closed one, on the same surface. Every CI-068 test ran without --key.
-        result = run(runner, '--from', source, '--key', SECRET)
+        result = run(runner, '--from', source, '--key', CANARY)
         assert result.exit_code == 2
         assert 'neither a URL nor an existing file' in result.output  # not vacuous
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     @pytest.mark.parametrize(
         'source',
         [
-            f'https://user:{SECRET}@[::1',
-            f'https://u:{SECRET}@h:notaport/',
+            f'https://user:{CANARY}@[::1',
+            f'https://u:{CANARY}@h:notaport/',
         ],
     )
     def test_a_malformed_userinfo_url_does_not_escape_the_error_boundary(
@@ -655,8 +659,8 @@ class TestSecrets:
         result = run(runner, '--from', source)
         assert isinstance(result.exception, SystemExit), f'{type(result.exception).__name__} escaped the CLI'
         assert result.exit_code == 2
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     def test_a_postgres_dsn_is_not_refused_at_the_boundary(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -665,10 +669,10 @@ class TestSecrets:
         # A postgresql:// DSN is the canonical libpq connection string that CI-010's live-database
         # source will consume, so it must reach the source layer -- where it fails as an unknown
         # source, not as a usage error -- with its password still masked out of the message.
-        result = run(runner, '--from', f'postgresql://postgres:{SECRET}@db.x.supabase.co:5432/postgres')
+        result = run(runner, '--from', f'postgresql://postgres:{CANARY}@db.x.supabase.co:5432/postgres')
         assert 'userinfo' not in result.output  # the boundary did NOT refuse it
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     def test_the_internal_error_message_is_redacted(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -676,13 +680,13 @@ class TestSecrets:
         # An unexpected exception is a castiron bug, and its str() is echoed to the user with
         # an invitation to paste it into an issue -- so it is a printed surface like any other.
         def boom(url: str, **kwargs: Any) -> Schema:
-            raise RuntimeError(f'{url}?apikey={SECRET} broke while presenting {kwargs["key"]}')
+            raise RuntimeError(f'{url}?apikey={CANARY} broke while presenting {kwargs["key"]}')
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', boom)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', CANARY)
         assert result.exit_code == 70
         assert 'internal error (RuntimeError' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_an_exception_logged_by_a_source_is_redacted_at_default_verbosity(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -692,17 +696,17 @@ class TestSecrets:
         # threshold, with no --debug asked for.
         def fail(url: str, **kwargs: Any) -> Schema:
             try:
-                raise RuntimeError(f'GET {url}?apikey={SECRET} failed')
+                raise RuntimeError(f'GET {url}?apikey={CANARY} failed')
             except RuntimeError:
                 logging.getLogger('castiron.sources.openapi.fetch').exception('the source call failed')
             raise SourceFetchError('Could not reach the source')
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET)
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', CANARY)
         assert result.exit_code == 1
         assert 'Traceback (most recent call last)' in result.stderr
-        assert SECRET not in result.stderr
-        assert SECRET not in result.output
+        assert CANARY not in result.stderr
+        assert CANARY not in result.output
 
     def test_a_key_with_a_trailing_carriage_return_is_trimmed_before_it_is_sent(
         self,
@@ -722,11 +726,11 @@ class TestSecrets:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\r\n', '--output', 'out')
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{CANARY}\r\n', '--output', 'out')
         assert result.exit_code == 0, result.output
-        assert captured[0].get_header('Apikey') == SECRET
-        assert captured[0].get_header('Authorization') == f'Bearer {SECRET}'
-        assert SECRET not in result.output
+        assert captured[0].get_header('Apikey') == CANARY
+        assert captured[0].get_header('Authorization') == f'Bearer {CANARY}'
+        assert CANARY not in result.output
 
     def test_a_key_from_the_environment_is_trimmed_too(
         self,
@@ -744,9 +748,9 @@ class TestSecrets:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        monkeypatch.setenv('CASTIRON_KEY', f'{SECRET}\r')
+        monkeypatch.setenv('CASTIRON_KEY', f'{CANARY}\r')
         assert run(runner, '--from', 'https://x.supabase.co', '--output', 'out').exit_code == 0
-        assert captured[0].get_header('Apikey') == SECRET
+        assert captured[0].get_header('Apikey') == CANARY
 
     def test_a_key_with_an_interior_control_character_is_refused_without_echoing_it(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -757,11 +761,11 @@ class TestSecrets:
             raise AssertionError('a refused key must never reach the fetcher')
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', explode)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{SECRET}\rmore')
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', f'{CANARY}\rmore')
         assert result.exit_code == 2
         assert 'control character' in result.output
         assert 'CRLF' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_the_origin_description_is_redacted_even_on_its_defensive_fallback(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -774,8 +778,8 @@ class TestSecrets:
             raise SourceFetchError('nope')
 
         monkeypatch.setattr('castiron.cli.pipeline.normalize_postgrest_url', explode)
-        origin = source_origin(f'https://x.supabase.co/rest/v1/?apikey={SECRET}', SECRET)
-        assert SECRET not in origin
+        origin = source_origin(f'https://x.supabase.co/rest/v1/?apikey={CANARY}', CANARY)
+        assert CANARY not in origin
         assert 'apikey=***' in origin
 
     def test_a_local_path_that_carries_a_key_is_redacted_in_the_summary(self, runner: CliRunner, project: Path) -> None:
@@ -789,12 +793,12 @@ class TestSecrets:
         # shell metacharacter, not a filesystem-reserved one, so it is legal on every supported
         # platform, and it is in the leading class of the parameter pattern just like `?`. Do
         # not "restore" the `?`. The `?` spelling keeps its coverage file-free, one test below,
-        # through `source_origin(f'dump.json?apikey={SECRET}', SECRET)`.
-        weird = project / f'openapi.json&apikey={SECRET}'
+        # through `source_origin(f'dump.json?apikey={CANARY}', CANARY)`.
+        weird = project / f'openapi.json&apikey={CANARY}'
         weird.write_bytes((project / 'openapi.json').read_bytes())
         result = run(runner, '--from', weird.name, '--output', 'out')
         assert result.exit_code == 0, result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert 'apikey=***' in result.stdout
 
     # ⚠ CI-066's userinfo class, across the surfaces of §11.2's enumeration. The boundary
@@ -810,14 +814,14 @@ class TestSecrets:
             raise AssertionError('a refused source must never reach the fetcher')
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', explode)
-        result = run(runner, '--from', f'https://user:{SECRET}@x.supabase.co')
+        result = run(runner, '--from', f'https://user:{CANARY}@x.supabase.co')
         assert result.exit_code == 2
         assert 'userinfo' in result.output
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
     def test_the_refusal_names_the_shape_and_never_the_value(self, runner: CliRunner, project: Path) -> None:
-        result = run(runner, '--from', f'https://user:{SECRET}@x.supabase.co')
+        result = run(runner, '--from', f'https://user:{CANARY}@x.supabase.co')
         assert 'user:password@' in result.output
         assert '--key' in result.output
         assert 'x.supabase.co' not in result.output
@@ -827,18 +831,18 @@ class TestSecrets:
     ) -> None:
         # The check hangs off the option, not the command body, so it covers CASTIRON_FROM /
         # SUPABASE_URL and the [tool.castiron] default map as well as the flag.
-        monkeypatch.setenv('SUPABASE_URL', f'https://user:{SECRET}@x.supabase.co')
+        monkeypatch.setenv('SUPABASE_URL', f'https://user:{CANARY}@x.supabase.co')
         result = run(runner)
         assert result.exit_code == 2
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_a_userinfo_url_from_the_config_file_is_refused_too(self, runner: CliRunner, project: Path) -> None:
         (project / 'pyproject.toml').write_text(
-            f'[tool.castiron]\nfrom = "https://user:{SECRET}@x.supabase.co"\n', encoding='utf-8'
+            f'[tool.castiron]\nfrom = "https://user:{CANARY}@x.supabase.co"\n', encoding='utf-8'
         )
         result = run(runner, '--output', 'out')
         assert result.exit_code == 2
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_a_dsn_password_never_reaches_the_terminal(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -847,12 +851,12 @@ class TestSecrets:
         # postgresql://user:password@host/db in its failures, and this is the surface they print
         # on. Fails against main -- the password prints in full on the `Error:` line at exit 1.
         def fail(url: str, **kwargs: Any) -> Schema:
-            raise SourceFetchError(f'Could not connect to postgresql://postgres:{SECRET}@db.x.supabase.co:5432/db')
+            raise SourceFetchError(f'Could not connect to postgresql://postgres:{CANARY}@db.x.supabase.co:5432/db')
 
         monkeypatch.setattr('castiron.cli.pipeline.load_openapi_schema', fail)
         result = run(runner, '--from', 'https://x.supabase.co')
         assert result.exit_code == 1
-        assert SECRET not in result.output
+        assert CANARY not in result.output
         assert 'postgresql://postgres:***@db.x.supabase.co' in result.output
 
     def test_a_logged_dsn_password_is_redacted_on_a_successful_run(
@@ -866,7 +870,7 @@ class TestSecrets:
         # succeeds, so nothing about the failure path is doing the work.
         def fake_urlopen(request: Request, timeout: float | None = None) -> FakeResponse:
             logging.getLogger('castiron.sources.openapi.fetch').debug(
-                f'connected via postgresql://postgres:{SECRET}@db.x.supabase.co:5432/db'
+                f'connected via postgresql://postgres:{CANARY}@db.x.supabase.co:5432/db'
             )
             return FakeResponse(openapi_fixture_path.read_bytes())
 
@@ -874,21 +878,21 @@ class TestSecrets:
         result = run(runner, '--from', 'https://x.supabase.co', '--output', 'out', '-vv')
         assert result.exit_code == 0, result.output
         assert 'postgres:***@db.x.supabase.co' in result.stderr
-        assert SECRET not in result.stderr
-        assert SECRET not in result.output
+        assert CANARY not in result.stderr
+        assert CANARY not in result.output
 
     def test_the_summary_origin_masks_a_userinfo_password(self) -> None:
         # §11.2 row 6, reached directly: `source_origin` feeds both the exit-0 summary line and
         # `schema_hint`'s "castiron read ..." line, and the boundary rejection means no CLI run
         # can carry a userinfo URL this far any more.
-        origin = source_origin(f'https://user:{SECRET}@x.supabase.co/rest/v1/', None)
-        assert SECRET not in origin
+        origin = source_origin(f'https://user:{CANARY}@x.supabase.co/rest/v1/', None)
+        assert CANARY not in origin
         assert 'https://user:***@x.supabase.co' in origin
 
     def test_the_origin_of_a_local_path_is_redacted_for_the_hint_too(self) -> None:
         # The same value reaches `schema_hint`'s "castiron read <origin>" line through
         # `source_origin`'s non-URL branch, which is a separate return statement.
-        assert SECRET not in source_origin(f'dump.json?apikey={SECRET}', SECRET)
+        assert CANARY not in source_origin(f'dump.json?apikey={CANARY}', CANARY)
 
     def test_the_key_never_reaches_the_generated_file(
         self,
@@ -901,18 +905,18 @@ class TestSecrets:
             return FakeResponse(openapi_fixture_path.read_bytes())
 
         monkeypatch.setattr('castiron.sources.openapi.fetch.urlopen', fake_urlopen)
-        result = run(runner, '--from', 'https://x.supabase.co', '--key', SECRET, '--output', 'out')
+        result = run(runner, '--from', 'https://x.supabase.co', '--key', CANARY, '--output', 'out')
         assert result.exit_code == 0, result.output
-        assert SECRET not in (project / 'out' / 'schema.py').read_text(encoding='utf-8')
+        assert CANARY not in (project / 'out' / 'schema.py').read_text(encoding='utf-8')
 
     def test_help_names_the_environment_variables_but_never_a_value(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv('CASTIRON_KEY', SECRET)
+        monkeypatch.setenv('CASTIRON_KEY', CANARY)
         result = run(runner, '--help')
         assert 'CASTIRON_KEY' in result.output
         assert 'SUPABASE_KEY' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1055,10 +1059,10 @@ class TestHints:
     @pytest.mark.parametrize(
         ('args', 'env', 'expected'),
         [
-            (['--key', SECRET], {}, 'the key came from --key'),
-            ([], {'CASTIRON_KEY': SECRET}, 'the key came from CASTIRON_KEY'),
-            ([], {'SUPABASE_KEY': SECRET}, 'the key came from SUPABASE_KEY'),
-            ([], {'CASTIRON_KEY': SECRET, 'SUPABASE_KEY': 'other'}, 'the key came from CASTIRON_KEY'),
+            (['--key', CANARY], {}, 'the key came from --key'),
+            ([], {'CASTIRON_KEY': CANARY}, 'the key came from CASTIRON_KEY'),
+            ([], {'SUPABASE_KEY': CANARY}, 'the key came from SUPABASE_KEY'),
+            ([], {'CASTIRON_KEY': CANARY, 'SUPABASE_KEY': 'other'}, 'the key came from CASTIRON_KEY'),
             ([], {}, 'no key was given'),
         ],
     )
@@ -1079,20 +1083,20 @@ class TestHints:
         result = run(runner, '--from', 'https://abcdefgh.supabase.co', *args)
         assert result.exit_code == 1
         assert f'Hint: {expected}' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_a_403_earns_the_key_hint_too(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._http(monkeypatch, 403)
-        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--key', SECRET)
+        result = run(runner, '--from', 'https://abcdefgh.supabase.co', '--key', CANARY)
         assert 'Hint: the key came from --key' in result.output
 
     def test_the_supabase_fallback_hint_says_it_may_be_another_project_s(
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._http(monkeypatch, 401)
-        monkeypatch.setenv('SUPABASE_KEY', SECRET)
+        monkeypatch.setenv('SUPABASE_KEY', CANARY)
         result = run(runner, '--from', 'https://abcdefgh.supabase.co')
         assert 'belongs to this project' in result.output
 
@@ -1109,9 +1113,9 @@ class TestHints:
         self, runner: CliRunner, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._http(monkeypatch, 401)
-        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={SECRET}', '--key', SECRET)
-        assert SECRET not in result.output
-        assert SECRET not in result.stderr
+        result = run(runner, '--from', f'https://x.supabase.co/rest/v1/?apikey={CANARY}', '--key', CANARY)
+        assert CANARY not in result.output
+        assert CANARY not in result.stderr
 
 
 @pytest.mark.unit

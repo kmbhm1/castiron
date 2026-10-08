@@ -30,7 +30,7 @@ from castiron.cli.check import FileComparison, render_report
 from castiron.emitters.base import parse_header_version
 from tests.unit.cli.conftest import write_config
 
-SECRET = 'eyJhbGciOiJIUzI1NiJ9.SUPERSECRETVALUE'
+CANARY = 'eyJhbGciOiJIUzI1NiJ9.SUPERSECRETVALUE'
 
 
 def run_check(runner: CliRunner, *args: str, **kwargs: Any) -> Result:
@@ -346,24 +346,24 @@ class TestErrorsAndUsage:
             assert 'No such option' in result.output, flag
 
     def test_a_userinfo_url_is_refused_before_anything_runs(self, runner: CliRunner, project: Path) -> None:
-        result = run_check(runner, '--from', f'https://user:{SECRET}@abcdefgh.supabase.co', '--output', 'out')
+        result = run_check(runner, '--from', f'https://user:{CANARY}@abcdefgh.supabase.co', '--output', 'out')
         assert result.exit_code == 2
         assert 'carries credentials in its userinfo' in result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_the_key_is_redacted_from_check_output(self, runner: CliRunner, project: Path) -> None:
         # CI6-D7 applies to EVERY printed string, and `check` is a new set of printed strings.
         generate(runner)
-        result = run_check(runner, '--from', 'openapi.json', '--key', SECRET, '--output', 'out', '-vv')
+        result = run_check(runner, '--from', 'openapi.json', '--key', CANARY, '--output', 'out', '-vv')
         assert result.exit_code == 0, result.output
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
     def test_a_key_in_the_source_is_redacted_from_the_summary(self, runner: CliRunner, project: Path) -> None:
         generate(runner)
-        result = run_check(runner, '--from', f'openapi.json?apikey={SECRET}', '--output', 'out')
+        result = run_check(runner, '--from', f'openapi.json?apikey={CANARY}', '--output', 'out')
         # The path does not exist with the query string attached, so this is the usage-error path;
         # what matters is that the echoed value is masked.
-        assert SECRET not in result.output
+        assert CANARY not in result.output
 
 
 # ---------------------------------------------------------------------------

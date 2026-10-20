@@ -67,7 +67,7 @@ dependencies = [
 # minor nobody has locked against. Measured today: uv 0.12.1 leaves this lock byte-identical, so
 # the ceiling costs nothing now — it is insurance against the lock-format `revision` bump uv has
 # shipped in minor releases before. Move this pin when the developer toolchain moves.
-build = ["uv~=0.11.32"]
+build = ["uv>=0.11.32,<0.14.0"]
 
 [project.urls]
 Homepage = "https://github.com/kmbhm1/castiron"
